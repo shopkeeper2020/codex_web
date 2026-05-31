@@ -1,0 +1,36 @@
+{
+  "name": "codex-web-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "dev": "pnpm build:packages && pnpm --parallel --filter @codex-web/server --filter @codex-web/web dev",
+    "dev:server": "pnpm --filter @codex-web/server dev",
+    "dev:web": "pnpm --filter @codex-web/web dev",
+    "start": "pnpm --filter @codex-web/server start",
+    "build:packages": "pnpm -r --filter \"./packages/**\" build",
+    "build": "pnpm -r --filter \"./packages/**\" --filter @codex-web/server --filter @codex-web/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:e2e": "playwright test",
+    "test:e2e:ui-fidelity": "playwright test tests/e2e/ui-fidelity-baseline.spec.ts",
+    "test:e2e:ui": "playwright test --ui",
+    "sync:doctor": "pnpm --filter @codex-web/server sync:doctor",
+    "db:generate": "drizzle-kit generate",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write .",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "drizzle-kit": "^0.31.10",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
+  }
+}

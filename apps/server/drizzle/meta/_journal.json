@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1779999201967,
+      "tag": "0000_fantastic_vengeance",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1779999219545,
+      "tag": "0001_right_black_bolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1780001088761,
+      "tag": "0002_dry_spyke",
+      "breakpoints": true
+    }
+  ]
+}

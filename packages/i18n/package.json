@@ -1,0 +1,21 @@
+{
+  "name": "@codex-web/i18n",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ./scripts/copy-locales.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

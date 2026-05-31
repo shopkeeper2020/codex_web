@@ -1,0 +1,102 @@
+{
+  "common": {
+    "add": "Add",
+    "close": "Close"
+  },
+  "header": {
+    "navigation": {
+      "open": "Open navigation"
+    },
+    "localEnvironment": {
+      "label": "Local environment",
+      "open": "Open local environment",
+      "vscode": "VS Code",
+      "fileExplorer": "File Explorer",
+      "terminal": "Terminal",
+      "wsl": "WSL"
+    },
+    "pinnedSummary": {
+      "open": "Open pinned summary",
+      "collapse": "Collapse pinned summary"
+    },
+    "bottomTerminal": {
+      "open": "Open terminal",
+      "collapse": "Collapse terminal"
+    },
+    "rightSidebar": {
+      "open": "Open right sidebar",
+      "collapse": "Collapse right sidebar"
+    },
+    "mobile": {
+      "more": "More actions",
+      "threadActions": "Thread actions",
+      "search": "Search",
+      "rename": "Rename thread",
+      "archive": "Archive thread",
+      "stop": "Stop current reply",
+      "settings": "Settings and diagnostics"
+    }
+  },
+  "rightSidebar": {
+    "aria": {
+      "newTab": "Create right sidebar tab",
+      "tabList": "Right sidebar tabs",
+      "panel": "Right sidebar",
+      "closeTab": "Close {{label}} tab"
+    },
+    "tabs": {
+      "chat": {
+        "label": "Side chat",
+        "description": "Start a side conversation"
+      },
+      "files": {
+        "label": "Open file",
+        "description": "Browse project files"
+      },
+      "browser": {
+        "label": "Browser",
+        "description": "Open a website"
+      },
+      "review": {
+        "label": "Review",
+        "description": "Review code changes"
+      },
+      "terminal": {
+        "label": "Terminal",
+        "description": "Open a terminal"
+      }
+    },
+    "chat": {
+      "active": "Generating",
+      "idle": "Waiting for current thread",
+      "noThread": "Select a thread",
+      "contextCount": "{{count}} context items",
+      "emptyContext": "No context",
+      "boundToThread": "Attached to current main thread",
+      "desktopSyncPending": "Waiting for Desktop side chat sync",
+      "desktopSyncDescription": "This panel should mirror the official Desktop side chat. Until the protocol is confirmed, Web will not create private side conversations.",
+      "waitingPlaceholder": "Waiting for official side chat sync",
+      "generatingPlaceholder": "Waiting for the current side reply",
+      "placeholder": "Ask for follow-up changes",
+      "input": "Side chat input",
+      "add": "Add context",
+      "send": "Send side message",
+      "sending": "Sending to Desktop...",
+      "sendFailed": "Side chat send failed"
+    }
+  },
+  "message": {
+    "fileReference": {
+      "copyPath": "Copy path",
+      "copyRelativePath": "Copy relative path",
+      "openInFiles": "Open in Files tab"
+    }
+  },
+  "settings": {
+    "language": {
+      "system": "Use system language",
+      "zhCN": "简体中文",
+      "enUS": "English"
+    }
+  }
+}

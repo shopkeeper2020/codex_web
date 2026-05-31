@@ -1,0 +1,47 @@
+:root {
+  --color-bg-app: #f4f4f5;
+  --color-bg-sidebar: #f4f4f5;
+  --color-bg-main: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-subtle: #fafafa;
+  --color-bg-hover: #ededf0;
+  --color-bg-selected: #e4e4e7;
+  --color-text-primary: #18181b;
+  --color-text-secondary: #52525b;
+  --color-text-muted: #71717a;
+  --color-border-subtle: #e4e4e7;
+  --color-border-strong: #a1a1aa;
+  --color-accent: #18181b;
+  --color-success: #15803d;
+  --color-success-bg: #ecfdf5;
+  --color-warning: #b45309;
+  --color-warning-bg: #fff7ed;
+  --color-danger: #991b1b;
+  --color-danger-bg: #fef2f2;
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --radius-row: 8px;
+  --radius-control: 8px;
+  --radius-composer: 16px;
+  --size-sidebar-min: 260px;
+  --size-sidebar-default: 320px;
+  --size-sidebar-max: 360px;
+  --size-header-height: 56px;
+  --size-thread-row-height: 28px;
+  --size-icon-button: 32px;
+  --size-composer-button: 36px;
+  --chat-column-max: 58rem;
+  --chat-card-max: 76ch;
+  --desktop-right-rail-width: 320px;
+  --desktop-chat-gap: 72px;
+  --z-drawer: 40;
+  --z-header: 20;
+  --z-popover: 50;
+}

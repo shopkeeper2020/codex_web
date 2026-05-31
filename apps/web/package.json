@@ -1,0 +1,36 @@
+{
+  "name": "@codex-web/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 18931",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 18931",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests --exclude \"dist-types/**\"",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@codex-web/api": "workspace:*",
+    "@codex-web/domain": "workspace:*",
+    "@codex-web/i18n": "workspace:*",
+    "@codex-web/ui": "workspace:*",
+    "@tanstack/react-virtual": "^3.13.26",
+    "@vitejs/plugin-react": "^5.0.2",
+    "i18next": "^26.3.0",
+    "lucide-react": "^0.542.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-i18next": "^17.0.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "vite": "^7.1.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,17 @@
+export const codexWebTokens = {
+  colorBackgroundApp: "var(--color-bg-app)",
+  colorBackgroundMain: "var(--color-bg-main)",
+  colorBackgroundElevated: "var(--color-bg-elevated)",
+  colorTextPrimary: "var(--color-text-primary)",
+  colorTextSecondary: "var(--color-text-secondary)",
+  colorTextMuted: "var(--color-text-muted)",
+  colorBorderSubtle: "var(--color-border-subtle)",
+  colorAccent: "var(--color-accent)",
+  radiusRow: "var(--radius-row)",
+  radiusControl: "var(--radius-control)",
+  radiusComposer: "var(--radius-composer)",
+  sidebarWidth: "var(--size-sidebar-default)",
+  headerHeight: "var(--size-header-height)",
+  iconButtonSize: "var(--size-icon-button)",
+  chatColumnMax: "var(--chat-column-max)",
+} as const;

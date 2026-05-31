@@ -1,0 +1,102 @@
+{
+  "common": {
+    "add": "新增",
+    "close": "关闭"
+  },
+  "header": {
+    "navigation": {
+      "open": "打开导航"
+    },
+    "localEnvironment": {
+      "label": "本地环境",
+      "open": "打开本地环境",
+      "vscode": "VS Code",
+      "fileExplorer": "File Explorer",
+      "terminal": "Terminal",
+      "wsl": "WSL"
+    },
+    "pinnedSummary": {
+      "open": "打开置顶摘要",
+      "collapse": "折叠置顶摘要"
+    },
+    "bottomTerminal": {
+      "open": "打开命令行",
+      "collapse": "折叠命令行"
+    },
+    "rightSidebar": {
+      "open": "打开右侧栏",
+      "collapse": "折叠右侧栏"
+    },
+    "mobile": {
+      "more": "更多操作",
+      "threadActions": "会话操作",
+      "search": "搜索",
+      "rename": "重命名会话",
+      "archive": "归档会话",
+      "stop": "停止当前回复",
+      "settings": "设置与诊断"
+    }
+  },
+  "rightSidebar": {
+    "aria": {
+      "newTab": "新建侧栏标签",
+      "tabList": "右侧栏标签",
+      "panel": "右侧栏",
+      "closeTab": "关闭 {{label}} 标签"
+    },
+    "tabs": {
+      "chat": {
+        "label": "侧边聊天",
+        "description": "发起侧边对话"
+      },
+      "files": {
+        "label": "打开文件",
+        "description": "浏览项目文件"
+      },
+      "browser": {
+        "label": "浏览器",
+        "description": "打开网站"
+      },
+      "review": {
+        "label": "审查",
+        "description": "查看代码更改"
+      },
+      "terminal": {
+        "label": "终端",
+        "description": "打开命令行"
+      }
+    },
+    "chat": {
+      "active": "正在生成",
+      "idle": "等待当前会话",
+      "noThread": "选择会话",
+      "contextCount": "{{count}} 条上下文",
+      "emptyContext": "暂无上下文",
+      "boundToThread": "依附当前主会话",
+      "desktopSyncPending": "等待 Desktop 侧边聊天同步",
+      "desktopSyncDescription": "这里应该展示官方 Desktop 同步过来的侧边聊天。协议确认前不会创建 Web 私有会话，避免三端分叉。",
+      "waitingPlaceholder": "等待官方侧边聊天同步",
+      "generatingPlaceholder": "等待当前侧边回复完成",
+      "placeholder": "要求后续变更",
+      "input": "侧边聊天输入",
+      "add": "添加上下文",
+      "send": "发送侧边消息",
+      "sending": "正在发送到 Desktop...",
+      "sendFailed": "侧边聊天发送失败"
+    }
+  },
+  "message": {
+    "fileReference": {
+      "copyPath": "复制路径",
+      "copyRelativePath": "复制相对路径",
+      "openInFiles": "在右侧“文件”标签页打开"
+    }
+  },
+  "settings": {
+    "language": {
+      "system": "跟随系统",
+      "zhCN": "简体中文",
+      "enUS": "English"
+    }
+  }
+}
