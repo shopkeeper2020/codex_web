@@ -107,7 +107,7 @@ $detail = Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread-detai
 $detail.data.sideConversations | Select-Object id,title,turnCount,inProgress
 ```
 
-期望：Desktop/VS Code 当前打开的侧边聊天会出现在列表里，标题优先使用官方标题或首条用户消息；空白侧聊按实际顺序显示为 `侧边聊天`、`侧边聊天 2`。Web 当前只读展示官方侧聊 turns，不能创建 Web 私有 side thread 来冒充同步。
+期望：Desktop/VS Code 当前打开、且明确绑定到该主会话的侧边聊天会出现在列表里，标题优先使用官方标题或首条用户消息；只有 boundary/空内容的侧聊不展示。Web 新建侧聊必须通过官方 app-server `thread/fork` + side conversation boundary 注入路径，后续发送使用该 `sideConversation.id`，不能创建 Web 私有 side thread 来冒充同步。关闭 Web 右侧栏侧聊标签应按 Desktop 的缓存移除行为关闭对应侧聊。
 
 ## 手机添加到主屏幕
 

@@ -8,6 +8,7 @@ const skillPath = "C:\\codex-web-test\\skills\\docs\\SKILL.md";
 const secondSkillPath = "C:\\codex-web-test\\skills\\edge-web-ops\\SKILL.md";
 
 type JsonBody = Record<string, unknown>;
+type ActiveTurnOption = boolean | (() => boolean);
 
 async function fulfillJson(route: Route, body: JsonBody): Promise<void> {
   await route.fulfill({
@@ -19,13 +20,19 @@ async function fulfillJson(route: Route, body: JsonBody): Promise<void> {
 async function installComposerRuntimeMocks(
   page: Page,
   onTurnStart: (body: JsonBody) => void,
-  options: { activeTurn?: boolean; runtimeOptions?: JsonBody } = {},
+  options: { activeTurn?: ActiveTurnOption; runtimeOptions?: JsonBody } = {},
 ): Promise<void> {
-  const activeTurnId = options.activeTurn ? "turn-active-runtime-e2e" : "";
+  const isActiveTurn = (): boolean =>
+    typeof options.activeTurn === "function"
+      ? options.activeTurn()
+      : Boolean(options.activeTurn);
+  const activeTurnId = (): string =>
+    isActiveTurn() ? "turn-active-runtime-e2e" : "";
 
   await page.route("**/api/domain/threads**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
+    const currentActiveTurnId = activeTurnId();
     await fulfillJson(route, {
       data: {
         projects: [
@@ -45,7 +52,7 @@ async function installComposerRuntimeMocks(
                 projectId: projectRoot,
                 path: projectRoot,
                 updatedAtIso: "2026-05-29T00:00:00.000Z",
-                inProgress: Boolean(activeTurnId),
+                inProgress: Boolean(currentActiveTurnId),
                 pinned: false,
                 owner: null,
               },
@@ -57,6 +64,7 @@ async function installComposerRuntimeMocks(
   });
 
   await page.route("**/api/domain/thread-detail**", async (route) => {
+    const currentActiveTurnId = activeTurnId();
     await fulfillJson(route, {
       data: {
         thread: {
@@ -65,12 +73,12 @@ async function installComposerRuntimeMocks(
           projectId: projectRoot,
           path: projectRoot,
           updatedAtIso: "2026-05-29T00:00:00.000Z",
-          inProgress: Boolean(activeTurnId),
+          inProgress: Boolean(currentActiveTurnId),
           pinned: false,
           owner: null,
         },
-        turns: activeTurnId
-          ? [{ id: activeTurnId, status: "active", items: [] }]
+        turns: currentActiveTurnId
+          ? [{ id: currentActiveTurnId, status: "active", items: [] }]
           : [],
       },
       source: "e2e-mock",
@@ -380,6 +388,63 @@ test.describe("composer runtime options", () => {
     ).toHaveCount(0);
   });
 
+  test("keeps focus in the composer after pasting an image", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "粘贴上传后的焦点回归只需要在桌面项目验证一次",
+    );
+
+    await installComposerRuntimeMocks(page, () => undefined);
+    await page.route("**/api/attachments?**", async (route) => {
+      await fulfillJson(route, {
+        data: {
+          id: "attachment-pasted-image",
+          filename: "pasted-image.png",
+          mimeType: "image/png",
+          size: 21,
+          path: "C:\\workspace\\codex_web\\data\\attachments\\pasted-image.png",
+          sha256:
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          createdAtIso: "2026-05-29T00:00:00.000Z",
+          threadId,
+          turnId: null,
+          officialReferenceId: null,
+        },
+      });
+    });
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    const composerInput = page.getByLabel("输入消息");
+    await expect(composerInput).toBeVisible();
+    await composerInput.focus();
+    await page.evaluate(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="输入消息"]',
+      );
+      if (!textarea) throw new Error("Composer textarea not found");
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(
+        new File([new Uint8Array([137, 80, 78, 71])], "pasted-image.png", {
+          type: "image/png",
+        }),
+      );
+      textarea.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer,
+        }),
+      );
+    });
+
+    await expect(
+      page.getByRole("img", { name: "pasted-image.png" }),
+    ).toBeVisible();
+    await expect(composerInput).toBeFocused();
+  });
+
   test("keeps image thumbnails above file cards and text input", async ({
     page,
   }, testInfo) => {
@@ -540,6 +605,84 @@ test.describe("composer runtime options", () => {
       attachmentIds: ["attachment-active-e2e"],
     });
     expect(capturedTurnStart).toBeNull();
+  });
+
+  test("queues messages during an active turn and flushes after it finishes", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "排队模式的桌面队列条交互先在桌面尺寸验证",
+    );
+
+    let activeTurn = true;
+    let capturedTurnStart: JsonBody | null = null;
+    let capturedTurnSteer: JsonBody | null = null;
+    await installComposerRuntimeMocks(
+      page,
+      (body) => {
+        capturedTurnStart = body;
+      },
+      { activeTurn: () => activeTurn },
+    );
+    await page.route("**/api/domain/turn-steer", async (route) => {
+      capturedTurnSteer = route.request().postDataJSON() as JsonBody;
+      await fulfillJson(route, {
+        data: {
+          mode: "official-follower",
+          result: { ok: true },
+        },
+      });
+    });
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(page.getByLabel("输入消息")).toHaveAttribute(
+      "placeholder",
+      "引导当前回复",
+    );
+
+    await page.getByLabel("发送目标").click();
+    await expect(page.getByLabel("发送目标")).toContainText("排队");
+    await expect(page.getByLabel("输入消息")).toHaveAttribute(
+      "placeholder",
+      "排队下一条消息",
+    );
+    await page.getByLabel("输入消息").fill("先作为队列引导");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+
+    const queueStrip = page.getByLabel("排队消息");
+    await expect(queueStrip.getByText("先作为队列引导")).toBeVisible();
+    expect(capturedTurnStart).toBeNull();
+    expect(capturedTurnSteer).toBeNull();
+
+    await queueStrip.getByRole("button", { name: "引导" }).click();
+    await expect.poll(() => capturedTurnSteer).not.toBeNull();
+    expect(capturedTurnSteer).toMatchObject({
+      threadId,
+      expectedTurnId: "turn-active-runtime-e2e",
+      text: "先作为队列引导",
+    });
+    expect(capturedTurnStart).toBeNull();
+    await expect(queueStrip.getByText("先作为队列引导")).toHaveCount(0);
+
+    await page.getByLabel("输入消息").fill("这条要删除");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(queueStrip.getByText("这条要删除")).toBeVisible();
+    await queueStrip.getByRole("button", { name: "删除排队消息" }).click();
+    await expect(queueStrip.getByText("这条要删除")).toHaveCount(0);
+
+    await page.getByLabel("输入消息").fill("当前结束后再发送");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(queueStrip.getByText("当前结束后再发送")).toBeVisible();
+    activeTurn = false;
+
+    await expect.poll(() => capturedTurnStart, { timeout: 3500 }).not.toBeNull();
+    expect(capturedTurnStart).toMatchObject({
+      threadId,
+      text: "当前结束后再发送",
+      cwd: projectRoot,
+    });
+    await expect(queueStrip.getByText("当前结束后再发送")).toHaveCount(0);
   });
 
   test("opens slash commands only at an empty prompt and sends selected skills/functions", async ({

@@ -20,6 +20,8 @@ type RegisteredHandler = Parameters<
 class FakeOfficialIpc implements LocalOwnerOfficialIpc {
   readonly handlers = new Map<string, RegisteredHandler>();
   readonly ownedThreads = new Set<string>();
+  readonly localOnlyThreads = new Set<string>();
+  readonly streamStates = new Map<string, { conversationState: unknown }>();
   readonly snapshots: Array<{ threadId: string; state: unknown }> = [];
 
   registerRequestHandler(method: string, handler: RegisteredHandler): void {
@@ -30,10 +32,19 @@ class FakeOfficialIpc implements LocalOwnerOfficialIpc {
     return this.ownedThreads.has(conversationId);
   }
 
+  canBroadcastOwnedConversation(conversationId: string): boolean {
+    return !this.localOnlyThreads.has(conversationId);
+  }
+
+  getThreadStreamState(threadId: string): { conversationState: unknown } | null {
+    return this.streamStates.get(threadId) ?? null;
+  }
+
   broadcastConversationSnapshot(
     threadId: string,
     conversationState: unknown,
   ): void {
+    this.streamStates.set(threadId, { conversationState });
     this.snapshots.push({ threadId, state: conversationState });
   }
 }
@@ -44,6 +55,7 @@ class FakeAppServer implements LocalOwnerAppServer {
   >();
   calls: Array<{ method: string; params: unknown }> = [];
   threadReadResult: unknown = { thread: { id: "thread-1", title: "Thread" } };
+  threadTurnsListResult: unknown = { turns: [] };
 
   onNotification(
     listener: Parameters<LocalOwnerAppServer["onNotification"]>[0],
@@ -68,6 +80,15 @@ class FakeAppServer implements LocalOwnerAppServer {
   async threadRead(params: ThreadReadParams): Promise<unknown> {
     this.calls.push({ method: "thread/read", params });
     return this.threadReadResult;
+  }
+
+  async threadTurnsList(params: {
+    threadId: string;
+    cursor?: string | null;
+    limit?: number | null;
+  }): Promise<unknown> {
+    this.calls.push({ method: "thread/turns/list", params });
+    return this.threadTurnsListResult;
   }
 
   async threadCompactStart(params: ThreadCompactStartParams): Promise<unknown> {
@@ -454,11 +475,166 @@ describe("local owner sync coordinator", () => {
     }
   });
 
+  it("keeps side conversation metadata on later local owner snapshots", async () => {
+    vi.useFakeTimers();
+    const { officialIpc, appServer, dispose } = installFakes({
+      debounceMs: 10,
+    });
+    officialIpc.ownedThreads.add("side-thread-1");
+    officialIpc.streamStates.set("side-thread-1", {
+      conversationState: {
+        id: "side-thread-1",
+        sideConversation: true,
+        ephemeral: true,
+        parentThreadId: "parent-thread",
+        parentConversationId: "parent-thread",
+        forkedFromId: "parent-thread",
+        turns: [],
+      },
+    });
+    appServer.threadReadResult = {
+      thread: {
+        id: "side-thread-1",
+        title: "Side",
+        turns: [{ id: "turn-1", items: [] }],
+      },
+    };
+    try {
+      appServer.emit("item/agentMessage/delta", {
+        threadId: "side-thread-1",
+      });
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(officialIpc.snapshots).toEqual([
+        {
+          threadId: "side-thread-1",
+          state: {
+            id: "side-thread-1",
+            title: "Side",
+            sideConversation: true,
+            ephemeral: true,
+            parentThreadId: "parent-thread",
+            parentConversationId: "parent-thread",
+            forkedFromId: "parent-thread",
+            turns: [{ id: "turn-1", items: [] }],
+          },
+        },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("reads ephemeral side conversation turns through the turns-list API", async () => {
+    vi.useFakeTimers();
+    const { officialIpc, appServer, dispose } = installFakes({
+      debounceMs: 10,
+    });
+    officialIpc.ownedThreads.add("side-thread-1");
+    officialIpc.streamStates.set("side-thread-1", {
+      conversationState: {
+        id: "side-thread-1",
+        sideConversation: true,
+        ephemeral: true,
+        parentThreadId: "parent-thread",
+        turns: [],
+      },
+    });
+    appServer.threadRead = vi.fn(async (params: ThreadReadParams) => {
+      appServer.calls.push({ method: "thread/read", params });
+      if (params.includeTurns) {
+        throw new Error("ephemeral threads do not support includeTurns");
+      }
+      return {
+        thread: {
+          id: "side-thread-1",
+          title: "南京呢?",
+          cwd: "C:\\workspace\\codex_web",
+        },
+      };
+    });
+    appServer.threadTurnsListResult = {
+      turns: [
+        {
+          id: "turn-1",
+          status: "completed",
+          items: [{ type: "userMessage", content: [{ text: "南京呢?" }] }],
+        },
+      ],
+    };
+    try {
+      appServer.emit("turn/completed", {
+        threadId: "side-thread-1",
+      });
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(appServer.calls).toEqual([
+        {
+          method: "thread/read",
+          params: { threadId: "side-thread-1", includeTurns: true },
+        },
+        {
+          method: "thread/read",
+          params: { threadId: "side-thread-1", includeTurns: false },
+        },
+        {
+          method: "thread/turns/list",
+          params: { threadId: "side-thread-1", cursor: null, limit: null },
+        },
+      ]);
+      expect(officialIpc.snapshots).toEqual([
+        {
+          threadId: "side-thread-1",
+          state: {
+            id: "side-thread-1",
+            title: "南京呢?",
+            cwd: "C:\\workspace\\codex_web",
+            sideConversation: true,
+            ephemeral: true,
+            parentThreadId: "parent-thread",
+            parentConversationId: "parent-thread",
+            turns: [
+              {
+                id: "turn-1",
+                status: "completed",
+                items: [
+                  { type: "userMessage", content: [{ text: "南京呢?" }] },
+                ],
+              },
+            ],
+          },
+        },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
   it("does not broadcast local snapshots without confirmed Web ownership", async () => {
     vi.useFakeTimers();
     const { officialIpc, appServer, dispose } = installFakes({
       debounceMs: 10,
     });
+    try {
+      appServer.emit("item/agentMessage/delta", {
+        conversationId: "thread-1",
+      });
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(appServer.calls).toEqual([]);
+      expect(officialIpc.snapshots).toEqual([]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not broadcast snapshots for local-only Web-owned threads", async () => {
+    vi.useFakeTimers();
+    const { officialIpc, appServer, dispose } = installFakes({
+      debounceMs: 10,
+    });
+    officialIpc.ownedThreads.add("thread-1");
+    officialIpc.localOnlyThreads.add("thread-1");
     try {
       appServer.emit("item/agentMessage/delta", {
         conversationId: "thread-1",

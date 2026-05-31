@@ -171,7 +171,7 @@ test.describe("thread list pagination", () => {
     const sidebar = page.getByLabel("项目和会话");
     await expect(sidebar.getByText("First page thread")).toBeVisible();
     await expect(sidebar.getByText("Archived page one")).toBeVisible();
-    await expect(sidebar.getByText("1+ synced threads")).toBeVisible();
+    await expect(sidebar.getByText("1+ 个同步会话")).toBeVisible();
 
     await sidebar.getByRole("button", { name: "加载更多会话" }).click();
     await expect(sidebar.getByText("Second page thread")).toBeVisible();

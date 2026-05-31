@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addFavoriteProject,
   archiveThread,
+  closeSideConversation,
   compactThread,
+  createSideConversation,
   createThread,
   decideApproval,
   getAccountStatus,
@@ -154,11 +156,55 @@ type RuntimeData = {
     attachmentIds?: string[],
     options?: SendOptions,
   ) => Promise<void>;
+  queuedMessages: QueuedThreadMessage[];
+  removeQueuedMessage: (messageId: string) => void;
+  steerQueuedMessage: (messageId: string) => Promise<void>;
   sendSideConversationMessage: (
     sideConversationId: string,
     text: string,
+    attachmentIds?: string[],
+    options?: SendOptions,
+  ) => Promise<void>;
+  createSideConversationForSelectedThread: (
+    cwd?: string | null,
+  ) => Promise<ThreadDetail["sideConversations"][number] | null>;
+  closeSideConversationForSelectedThread: (
+    sideConversationId: string,
   ) => Promise<void>;
 };
+
+export type QueuedThreadMessage = {
+  id: string;
+  threadId: string;
+  text: string;
+  attachmentCount: number;
+  createdAtMs: number;
+};
+
+type QueuedThreadMessageInternal = QueuedThreadMessage & {
+  attachmentIds: string[];
+  options: SendOptions;
+};
+
+function createQueuedMessageId(): string {
+  const randomId =
+    typeof window !== "undefined" && window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `queued:${randomId}`;
+}
+
+function toQueuedMessageView(
+  message: QueuedThreadMessageInternal,
+): QueuedThreadMessage {
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    text: message.text,
+    attachmentCount: message.attachmentCount,
+    createdAtMs: message.createdAtMs,
+  };
+}
 
 export function useRuntimeData(enabled: boolean): RuntimeData {
   const [health, setHealth] = useState("checking");
@@ -188,12 +234,17 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   const [loadingMoreArchivedThreads, setLoadingMoreArchivedThreads] =
     useState(false);
   const [error, setError] = useState("");
+  const [queuedMessagesByThread, setQueuedMessagesByThread] = useState<
+    Record<string, QueuedThreadMessageInternal[]>
+  >({});
   const [realtimeEvents, setRealtimeEvents] = useState<RealtimeEvent[]>([]);
   const realtimeVersionsRef = useRef(new Map<string, number>());
   const realtimeServerInstanceRef = useRef("");
   const threadListHydratedRef = useRef(false);
   const selectedThreadIdRef = useRef(selectedThreadId);
   const threadDetailRef = useRef<ThreadDetail | null>(threadDetail);
+  const queuedMessagesRef = useRef(queuedMessagesByThread);
+  const queueFlushInFlightRef = useRef(new Set<string>());
   const detailRequestStateRef = useRef<ThreadDetailRequestState>(
     INITIAL_THREAD_DETAIL_REQUEST_STATE,
   );
@@ -205,6 +256,10 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   useEffect(() => {
     threadDetailRef.current = threadDetail;
   }, [threadDetail]);
+
+  useEffect(() => {
+    queuedMessagesRef.current = queuedMessagesByThread;
+  }, [queuedMessagesByThread]);
 
   const refreshStatus = useCallback(async () => {
     if (!enabled) return;
@@ -673,6 +728,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         await startThreadTurn({
           threadId: thread.id,
           text: text.trim(),
+          cwd,
           model: options.model ?? "gpt-5.5",
           effort: options.effort ?? "xhigh",
           attachmentIds,
@@ -1014,6 +1070,126 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     [refreshApprovals],
   );
 
+  const scheduleThreadRefresh = useCallback(
+    (threadId: string, delayMs = 600) => {
+      window.setTimeout(() => {
+        void refreshThreads().catch(() => undefined);
+        void refreshThreadDetail(threadId, { silent: true }).catch(
+          () => undefined,
+        );
+      }, delayMs);
+    },
+    [refreshThreadDetail, refreshThreads],
+  );
+
+  const removeQueuedMessage = useCallback((messageId: string) => {
+    if (!messageId) return;
+    setQueuedMessagesByThread((current) => {
+      let changed = false;
+      const next: Record<string, QueuedThreadMessageInternal[]> = {};
+      for (const [threadId, messages] of Object.entries(current)) {
+        const filtered = messages.filter((message) => message.id !== messageId);
+        if (filtered.length !== messages.length) changed = true;
+        if (filtered.length > 0) next[threadId] = filtered;
+      }
+      return changed ? next : current;
+    });
+  }, []);
+
+  const enqueueQueuedMessage = useCallback(
+    (
+      threadId: string,
+      text: string,
+      attachmentIds: string[],
+      options: SendOptions,
+    ) => {
+      const queuedMessage: QueuedThreadMessageInternal = {
+        id: createQueuedMessageId(),
+        threadId,
+        text,
+        attachmentCount: attachmentIds.length,
+        attachmentIds: [...attachmentIds],
+        createdAtMs: Date.now(),
+        options: { ...options, mode: "start" },
+      };
+      setQueuedMessagesByThread((current) => ({
+        ...current,
+        [threadId]: [...(current[threadId] ?? []), queuedMessage],
+      }));
+    },
+    [],
+  );
+
+  const startQueuedMessage = useCallback(
+    async (threadId: string, message: QueuedThreadMessageInternal) => {
+      await startThreadTurn({
+        threadId,
+        text: message.text,
+        cwd: message.options.cwd,
+        model: message.options.model ?? "gpt-5.5",
+        effort: message.options.effort ?? "xhigh",
+        attachmentIds: message.attachmentIds,
+        skills: message.options.skills,
+        collaborationMode: message.options.collaborationMode,
+        permissionMode: message.options.permissionMode,
+      });
+    },
+    [],
+  );
+
+  const steerQueuedMessage = useCallback(
+    async (messageId: string) => {
+      const threadId = selectedThreadIdRef.current;
+      if (!enabled || !threadId || !messageId) return;
+      const message = queuedMessagesRef.current[threadId]?.find(
+        (candidate) => candidate.id === messageId,
+      );
+      if (!message) return;
+      const activeTurnId = activeTurnIdFromDetail(threadDetailRef.current);
+      if (!activeTurnId) {
+        setSending(true);
+        try {
+          await startQueuedMessage(threadId, message);
+          removeQueuedMessage(messageId);
+          setError("");
+          scheduleThreadRefresh(threadId);
+        } catch (unknownError) {
+          setError(userFacingErrorMessage(unknownError, "send failed"));
+          throw unknownError;
+        } finally {
+          setSending(false);
+        }
+        return;
+      }
+      setSending(true);
+      try {
+        await steerThreadTurn({
+          threadId,
+          expectedTurnId: activeTurnId,
+          text: message.text,
+          cwd: message.options.cwd,
+          attachmentIds: message.attachmentIds,
+          skills: message.options.skills,
+          permissionMode: message.options.permissionMode,
+        });
+        removeQueuedMessage(messageId);
+        setError("");
+        scheduleThreadRefresh(threadId);
+      } catch (unknownError) {
+        setError(userFacingErrorMessage(unknownError, "steer failed"));
+        throw unknownError;
+      } finally {
+        setSending(false);
+      }
+    },
+    [
+      enabled,
+      removeQueuedMessage,
+      scheduleThreadRefresh,
+      startQueuedMessage,
+    ],
+  );
+
   const sendMessage = useCallback(
     async (
       text: string,
@@ -1023,14 +1199,26 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       if (!selectedThreadId || (!text.trim() && attachmentIds.length === 0)) {
         return;
       }
+      const trimmedText = text.trim();
+      const activeTurnId = activeTurnIdFromDetail(threadDetail);
+      if (activeTurnId && options.mode !== "steer") {
+        enqueueQueuedMessage(
+          selectedThreadId,
+          trimmedText,
+          attachmentIds,
+          options,
+        );
+        setError("");
+        scheduleThreadRefresh(selectedThreadId, 1000);
+        return;
+      }
       setSending(true);
       try {
-        const activeTurnId = activeTurnIdFromDetail(threadDetail);
         if (options.mode === "steer" && activeTurnId) {
           await steerThreadTurn({
             threadId: selectedThreadId,
             expectedTurnId: activeTurnId,
-            text: text.trim(),
+            text: trimmedText,
             cwd: options.cwd,
             attachmentIds,
             skills: options.skills,
@@ -1039,7 +1227,8 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         } else {
           await startThreadTurn({
             threadId: selectedThreadId,
-            text: text.trim(),
+            text: trimmedText,
+            cwd: options.cwd,
             model: options.model ?? "gpt-5.5",
             effort: options.effort ?? "xhigh",
             attachmentIds,
@@ -1049,12 +1238,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           });
         }
         setError("");
-        window.setTimeout(() => {
-          void refreshThreads().catch(() => undefined);
-          void refreshThreadDetail(selectedThreadId, { silent: true }).catch(
-            () => undefined,
-          );
-        }, 600);
+        scheduleThreadRefresh(selectedThreadId);
       } catch (unknownError) {
         setError(userFacingErrorMessage(unknownError, "send failed"));
         throw unknownError;
@@ -1062,19 +1246,86 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         setSending(false);
       }
     },
-    [refreshThreadDetail, refreshThreads, selectedThreadId, threadDetail],
+    [
+      enqueueQueuedMessage,
+      scheduleThreadRefresh,
+      selectedThreadId,
+      threadDetail,
+    ],
   );
 
+  useEffect(() => {
+    if (!enabled || !selectedThreadId || !threadDetail) return;
+    if (activeTurnIdFromDetail(threadDetail)) return;
+    const nextMessage = queuedMessagesByThread[selectedThreadId]?.[0];
+    if (!nextMessage) return;
+    if (queueFlushInFlightRef.current.has(selectedThreadId)) return;
+
+    let disposed = false;
+    const threadId = selectedThreadId;
+    queueFlushInFlightRef.current.add(threadId);
+    setSending(true);
+    void (async () => {
+      try {
+        await startQueuedMessage(threadId, nextMessage);
+        removeQueuedMessage(nextMessage.id);
+        setError("");
+        scheduleThreadRefresh(threadId);
+      } catch (unknownError) {
+        removeQueuedMessage(nextMessage.id);
+        if (!disposed)
+          setError(userFacingErrorMessage(unknownError, "send failed"));
+      } finally {
+        if (!disposed) setSending(false);
+        window.setTimeout(() => {
+          queueFlushInFlightRef.current.delete(threadId);
+          void refreshThreadDetail(threadId, { silent: true }).catch(
+            () => undefined,
+          );
+        }, 800);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [
+    enabled,
+    queuedMessagesByThread,
+    refreshThreadDetail,
+    removeQueuedMessage,
+    scheduleThreadRefresh,
+    selectedThreadId,
+    startQueuedMessage,
+    threadDetail,
+  ]);
+
   const sendSideConversationMessage = useCallback(
-    async (sideConversationId: string, text: string) => {
+    async (
+      sideConversationId: string,
+      text: string,
+      attachmentIds: string[] = [],
+      options: SendOptions = {},
+    ) => {
       const trimmedText = text.trim();
-      if (!enabled || !sideConversationId || !trimmedText) return;
+      if (
+        !enabled ||
+        !sideConversationId ||
+        (!trimmedText && attachmentIds.length === 0)
+      )
+        return;
       setSending(true);
       try {
         await startThreadTurn({
           threadId: sideConversationId,
           text: trimmedText,
-          attachmentIds: [],
+          cwd: options.cwd,
+          model: options.model ?? "gpt-5.5",
+          effort: options.effort ?? "xhigh",
+          attachmentIds,
+          skills: options.skills,
+          collaborationMode: options.collaborationMode,
+          permissionMode: options.permissionMode,
         });
         setError("");
         const parentThreadId = selectedThreadIdRef.current;
@@ -1095,10 +1346,6 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     [enabled, refreshThreadDetail, refreshThreads],
   );
 
-  const refreshRuntimeStatus = useCallback(async () => {
-    await Promise.all([refreshStatus(), refreshThreads(), refreshApprovals()]);
-  }, [refreshApprovals, refreshStatus, refreshThreads]);
-
   const selectedThread = useMemo(
     () =>
       threadList.threads.find((thread) => thread.id === selectedThreadId) ??
@@ -1106,6 +1353,103 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       null,
     [selectedThreadId, threadDetail?.thread, threadList.threads],
   );
+  const queuedMessages = useMemo(
+    () =>
+      selectedThreadId
+        ? (queuedMessagesByThread[selectedThreadId] ?? []).map(
+            toQueuedMessageView,
+          )
+        : [],
+    [queuedMessagesByThread, selectedThreadId],
+  );
+
+  const createSideConversationForSelectedThread = useCallback(
+    async (cwd?: string | null) => {
+      const parentThreadId = selectedThreadIdRef.current;
+      if (!enabled || !parentThreadId) return null;
+      try {
+        const sideConversation = await createSideConversation({
+          threadId: parentThreadId,
+          cwd: cwd ?? selectedThread?.path ?? selectedThread?.projectId ?? null,
+        });
+        setThreadDetail((current) =>
+          current?.thread.id === parentThreadId &&
+          !current.sideConversations.some(
+            (conversation) => conversation.id === sideConversation.id,
+          )
+            ? {
+                ...current,
+                sideConversations: [
+                  ...current.sideConversations,
+                  sideConversation,
+                ],
+              }
+            : current,
+        );
+        setError("");
+        window.setTimeout(() => {
+          void refreshThreadDetail(parentThreadId, { silent: true }).catch(
+            () => undefined,
+          );
+          void refreshThreads().catch(() => undefined);
+        }, 600);
+        return sideConversation;
+      } catch (unknownError) {
+        setError(
+          userFacingErrorMessage(
+            unknownError,
+            "create side conversation failed",
+          ),
+        );
+        throw unknownError;
+      }
+    },
+    [enabled, refreshThreadDetail, refreshThreads, selectedThread],
+  );
+
+  const closeSideConversationForSelectedThread = useCallback(
+    async (sideConversationId: string) => {
+      const parentThreadId = selectedThreadIdRef.current;
+      if (!enabled || !parentThreadId || !sideConversationId) return;
+      setThreadDetail((current) =>
+        current?.thread.id === parentThreadId
+          ? {
+              ...current,
+              sideConversations: current.sideConversations.filter(
+                (conversation) => conversation.id !== sideConversationId,
+              ),
+            }
+          : current,
+      );
+      try {
+        await closeSideConversation({
+          threadId: parentThreadId,
+          sideConversationId,
+        });
+        setError("");
+      } catch (unknownError) {
+        setError(
+          userFacingErrorMessage(
+            unknownError,
+            "close side conversation failed",
+          ),
+        );
+        throw unknownError;
+      } finally {
+        window.setTimeout(() => {
+          void refreshThreadDetail(parentThreadId, { silent: true }).catch(
+            () => undefined,
+          );
+          void refreshThreads().catch(() => undefined);
+        }, 300);
+      }
+    },
+    [enabled, refreshThreadDetail, refreshThreads],
+  );
+
+  const refreshRuntimeStatus = useCallback(async () => {
+    await Promise.all([refreshStatus(), refreshThreads(), refreshApprovals()]);
+  }, [refreshApprovals, refreshStatus, refreshThreads]);
 
   return {
     health,
@@ -1151,6 +1495,11 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     decidePendingApproval,
     sendDraftMessage,
     sendMessage,
+    queuedMessages,
+    removeQueuedMessage,
+    steerQueuedMessage,
     sendSideConversationMessage,
+    createSideConversationForSelectedThread,
+    closeSideConversationForSelectedThread,
   };
 }

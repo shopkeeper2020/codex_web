@@ -110,6 +110,7 @@ export function Header({
       : "无项目";
   const title = draftMode ? "新对话" : (selectedThread?.title ?? "codex_web");
   const hasSelectedThread = Boolean(selectedThread);
+  const localEnvironmentActionsEnabled = false;
   const runMobileAction = (action: () => void): void => {
     setMoreOpen(false);
     action();
@@ -149,23 +150,27 @@ export function Header({
               className={styles.localEnvironmentButton}
               type="button"
               aria-label={t("header.localEnvironment.open")}
-              aria-expanded={environmentOpen}
+              aria-expanded={
+                localEnvironmentActionsEnabled && environmentOpen
+              }
+              disabled={!localEnvironmentActionsEnabled}
+              title="本地环境操作暂未接入 Web"
               onClick={() => setEnvironmentOpen((open) => !open)}
             >
               <Code2 size={18} />
               <ChevronDown size={13} />
             </button>
-            {environmentOpen ? (
+            {localEnvironmentActionsEnabled && environmentOpen ? (
               <div
                 className={styles.desktopToolMenu}
                 role="menu"
                 aria-label={t("header.localEnvironment.label")}
               >
-                <button type="button" role="menuitem">
+                <button type="button" role="menuitem" disabled>
                   <Code2 size={16} />
                   <span>{t("header.localEnvironment.vscode")}</span>
                 </button>
-                <button type="button" role="menuitem">
+                <button type="button" role="menuitem" disabled>
                   <FolderOpen size={16} />
                   <span>{t("header.localEnvironment.fileExplorer")}</span>
                 </button>
@@ -173,7 +178,7 @@ export function Header({
                   <TerminalSquare size={16} />
                   <span>{t("header.localEnvironment.terminal")}</span>
                 </button>
-                <button type="button" role="menuitem">
+                <button type="button" role="menuitem" disabled>
                   <Code2 size={16} />
                   <span>{t("header.localEnvironment.wsl")}</span>
                 </button>

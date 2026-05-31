@@ -409,6 +409,34 @@ describe("official IPC helpers", () => {
     ).toBe(false);
     expect(bridge.isOwnedConversation("thread-no-client")).toBe(false);
     expect(bridge.getThreadStreamState("thread-no-client")).toBeNull();
+    expect(bridge.claimLocalOnlyConversation("thread-no-client")).toBe(false);
+  });
+
+  it("claims local-only conversations without publishing stream state", () => {
+    const bridge = new OfficialIpcBridge("");
+    (bridge as unknown as { clientId: string | null }).clientId = "web-client";
+
+    expect(bridge.claimLocalOnlyConversation("thread-local")).toBe(true);
+
+    expect(bridge.isOwnedConversation("thread-local")).toBe(true);
+    expect(bridge.canBroadcastOwnedConversation("thread-local")).toBe(false);
+    expect(bridge.getThreadStreamState("thread-local")).toBeNull();
+    expect(
+      bridge.broadcastConversationSnapshot("thread-local", { turns: [] }),
+    ).toBe(false);
+    expect(bridge.getThreadStreamState("thread-local")).toBeNull();
+    expect(bridge.getStatus()).toMatchObject({
+      ownedConversationCount: 1,
+      localOnlyOwnedConversationCount: 1,
+    });
+
+    bridge.releaseOwnedConversation("thread-local", "done");
+
+    expect(bridge.isOwnedConversation("thread-local")).toBe(false);
+    expect(bridge.getStatus()).toMatchObject({
+      ownedConversationCount: 0,
+      localOnlyOwnedConversationCount: 0,
+    });
   });
 
   it("reads active turn ids from official stream snapshots", () => {
@@ -527,6 +555,69 @@ describe("official IPC helpers", () => {
       isInProgress: true,
       activeTurnId: "turn-running",
       cacheVersion: 1,
+    });
+  });
+
+  it("accepts inactive snapshots that settle the cached active turn", () => {
+    const bridge = new OfficialIpcBridge("");
+    const testBridge = bridge as unknown as {
+      handleFrame: (frame: Record<string, unknown>) => void;
+    };
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-completed-elsewhere",
+        change: {
+          type: "snapshot",
+          conversationState: {
+            status: { type: "running" },
+            turns: [
+              {
+                id: "turn-running",
+                status: { type: "running" },
+                items: [{ type: "reasoning", text: "thinking" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "vscode-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-completed-elsewhere",
+        change: {
+          type: "snapshot",
+          conversationState: {
+            status: { type: "completed" },
+            turns: [
+              {
+                id: "turn-running",
+                status: { type: "completed" },
+                items: [{ type: "agentMessage", text: "done" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(
+      bridge.getThreadStreamState("thread-completed-elsewhere"),
+    ).toMatchObject({
+      ownerClientId: "vscode-client",
+      sourceClientId: "vscode-client",
+      isInProgress: false,
+      activeTurnId: "",
+      cacheVersion: 2,
     });
   });
 

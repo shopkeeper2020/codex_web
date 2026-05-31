@@ -78,7 +78,12 @@ export function App(): ReactElement {
     decidePendingApproval,
     sendDraftMessage,
     sendMessage,
+    queuedMessages,
+    removeQueuedMessage,
+    steerQueuedMessage,
     sendSideConversationMessage,
+    createSideConversationForSelectedThread,
+    closeSideConversationForSelectedThread,
   } = useRuntimeData(authGate.auth?.authenticated === true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -368,8 +373,12 @@ export function App(): ReactElement {
               approvals={draftThread ? [] : approvals}
               detailLoading={draftThread ? false : detailLoading}
               realtimeEvents={realtimeEvents}
+              runtimeOptions={runtimeOptions}
               error={error}
               onDecideApproval={decidePendingApproval}
+              queuedMessages={draftThread ? [] : queuedMessages}
+              onRemoveQueuedMessage={removeQueuedMessage}
+              onSteerQueuedMessage={steerQueuedMessage}
               onSetThreadGoal={setThreadGoalById}
               onClearThreadGoal={clearThreadGoalById}
               pinnedSummaryOpen={visiblePinnedSummaryOpen}
@@ -379,6 +388,16 @@ export function App(): ReactElement {
                 draftThread ? () => undefined : openRightSidebar
               }
               onSendSideChat={sendSideConversationMessage}
+              onCreateSideChat={
+                draftThread
+                  ? async () => null
+                  : createSideConversationForSelectedThread
+              }
+              onCloseSideChat={
+                draftThread
+                  ? async () => undefined
+                  : closeSideConversationForSelectedThread
+              }
               composer={
                 <Composer
                   threadId={

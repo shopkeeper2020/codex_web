@@ -25,6 +25,7 @@ class FakeOfficialIpc {
   readonly followerSteerCalls: Array<{ threadId: string; params: unknown }> =
     [];
   readonly followerCompactCalls: Array<{ threadId: string }> = [];
+  readonly localOnlyThreads = new Set<string>();
 
   constructor(private readonly options: FakeOfficialIpcOptions) {}
 
@@ -46,12 +47,27 @@ class FakeOfficialIpc {
     this.registeredRequestHandlers.push(method);
   }
 
-  isOwnedConversation(): boolean {
-    return Boolean(this.options.webOwned);
+  isOwnedConversation(threadId = "thread-a"): boolean {
+    return Boolean(this.options.webOwned || this.localOnlyThreads.has(threadId));
   }
 
   isExternallyOwnedConversation(): boolean {
     return Boolean(this.options.hasOfficialState && !this.options.webOwned);
+  }
+
+  canOwnConversations(): boolean {
+    return !this.options.errorMessage.includes("not-connected");
+  }
+
+  claimLocalOnlyConversation(threadId: string): boolean {
+    if (!this.canOwnConversations() || this.isExternallyOwnedConversation())
+      return false;
+    this.localOnlyThreads.add(threadId);
+    return true;
+  }
+
+  canBroadcastOwnedConversation(threadId: string): boolean {
+    return !this.localOnlyThreads.has(threadId);
   }
 
   getThreadStreamState(threadId: string): Record<string, unknown> | null {
@@ -72,7 +88,8 @@ class FakeOfficialIpc {
       clientId: "web-test",
       registeredRequestHandlers: this.registeredRequestHandlers,
       cachedConversationCount: this.options.hasOfficialState ? 1 : 0,
-      ownedConversationCount: this.options.webOwned ? 1 : 0,
+      ownedConversationCount:
+        (this.options.webOwned ? 1 : 0) + this.localOnlyThreads.size,
       recentFollowerRequests: [],
       recentOwnershipHandoffs: [],
       rawFrameLogging: false,
@@ -376,6 +393,10 @@ describe("turn HTTP routes", () => {
         params: expect.objectContaining({
           input: [
             expect.objectContaining({
+              type: "text",
+              text: "<image>",
+            }),
+            expect.objectContaining({
               type: "image",
               url: "data:image/png;base64,aW1hZ2UtYm9keQ==",
             }),
@@ -446,6 +467,10 @@ describe("turn HTTP routes", () => {
           expectedTurnId: "turn-active",
           input: [
             expect.objectContaining({ type: "text", text: "guide" }),
+            expect.objectContaining({
+              type: "text",
+              text: "<image>",
+            }),
             expect.objectContaining({
               type: "image",
               url: "data:image/png;base64,c3RlZXItaW1hZ2U=",
@@ -609,6 +634,29 @@ describe("turn HTTP routes", () => {
       error: expect.stringContaining("official-owner-required"),
     });
     expect(appServer.calls).toEqual([]);
+  });
+
+  it("claims idle app-server conversations locally when no official owner is cached", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "no-official-owner",
+      hasOfficialState: false,
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn-start",
+      payload: { threadId: "thread-a", text: "hello" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
+    });
+    expect(officialIpc.isOwnedConversation("thread-a")).toBe(true);
+    expect(appServer.calls.map((call) => call.method)).toEqual([
+      "thread/resume",
+      "turn/start",
+    ]);
   });
 
   it("falls back to local app-server only for Web-owned conversations", async () => {

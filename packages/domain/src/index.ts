@@ -350,7 +350,7 @@ function readThreadGoal(record: Record<string, unknown>): ThreadGoal | null {
 }
 
 function readTextContent(value: unknown): string {
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') return value.trim() === '<image>' ? '' : value
   const record = asRecord(value)
   if (record) {
     const direct =
@@ -358,19 +358,21 @@ function readTextContent(value: unknown): string {
       readString(record.content) ||
       readString(record.message) ||
       readString(record.value)
-    if (direct) return direct
+    if (direct) return direct.trim() === '<image>' ? '' : direct
     const nested = readTextContent(record.content ?? record.message ?? record.delta)
     if (nested) return nested
   }
   if (Array.isArray(value)) {
     return value
       .map((entry) => {
-        if (typeof entry === 'string') return entry
+        if (typeof entry === 'string') return entry.trim() === '<image>' ? '' : entry
         const entryRecord = asRecord(entry)
-        return readString(entryRecord?.text) ||
+        const text =
+          readString(entryRecord?.text) ||
           readString(entryRecord?.content) ||
           readString(entryRecord?.value) ||
           readTextContent(entryRecord?.content)
+        return text.trim() === '<image>' ? '' : text
       })
       .filter(Boolean)
       .join('\n')

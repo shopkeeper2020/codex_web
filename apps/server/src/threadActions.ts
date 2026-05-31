@@ -23,7 +23,10 @@ function readString(value: unknown): string {
 
 export async function startLocalTurn(appServer: LocalTurnStarter, params: TurnStartParams): Promise<unknown> {
   try {
-    await appServer.rpc('thread/resume', { threadId: params.threadId })
+    await appServer.rpc('thread/resume', {
+      threadId: params.threadId,
+      ...(params.cwd ? { cwd: params.cwd, path: null } : {}),
+    })
   } catch {
     // Older app-server versions may not require or expose resume; turn/start remains the source of truth.
   }

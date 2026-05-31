@@ -2,7 +2,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
   ArrowDown,
-  ArrowUp,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -36,7 +35,6 @@ import {
 import type {
   CSSProperties,
   FormEvent,
-  KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   ReactElement,
   ReactNode,
@@ -62,10 +60,13 @@ import {
   type ThreadDetail,
   type ThreadGoal,
   type ThreadList,
+  type RuntimeOptions,
   type WorkspaceStatus,
 } from "../../api";
 import { useI18n } from "../../i18n/useI18n";
+import type { QueuedThreadMessage } from "../hooks/useRuntimeData";
 import styles from "../App.module.css";
+import { Composer, type SendOptions } from "./Composer";
 import { ApprovalCard, MessageAuthor, renderTurnItems } from "./MessageBlocks";
 
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 120;
@@ -82,6 +83,9 @@ type RightSidebarTabInstance = {
   title: string;
   filePath?: string | null;
   sideConversationId?: string | null;
+  sideConversation?: SideConversation | null;
+  threadId?: string | null;
+  keepMissingSideConversation?: boolean;
 };
 
 type DraftThreadView = {
@@ -115,6 +119,13 @@ type ProgressItem = {
   done?: boolean;
   active?: boolean;
 };
+
+function hasVisibleSideConversationContent(
+  conversation: SideConversation,
+): boolean {
+  if (conversation.inProgress || conversation.turnCount > 0) return true;
+  return conversation.turns.some((turn) => turn.items.length > 0);
+}
 
 function hasTextSelectionInside(element: HTMLElement): boolean {
   const selection = window.getSelection();
@@ -716,11 +727,18 @@ function BottomTerminalDock({
 
 function RightSidebarLauncher({
   onCreateTab,
+  creatingType,
+  disabledTypes = [],
+  error,
 }: {
   onCreateTab: (type: RightSidebarTab) => void;
+  creatingType?: RightSidebarTab | null;
+  disabledTypes?: RightSidebarTab[];
+  error?: string;
 }): ReactElement {
   const { t } = useI18n();
   const entries: RightSidebarTab[] = ["files", "chat", "browser", "review"];
+  const disabledTypeSet = new Set(disabledTypes);
 
   return (
     <div
@@ -729,150 +747,96 @@ function RightSidebarLauncher({
     >
       {entries.map((type) => {
         const shortcut = rightSidebarTabShortcut(type);
+        const disabled = disabledTypeSet.has(type) || creatingType === type;
         return (
           <button
             className={styles.sidePanelLauncherCard}
             key={type}
             type="button"
+            disabled={disabled}
+            aria-busy={creatingType === type}
             onClick={() => onCreateTab(type)}
           >
             <span className={styles.sidePanelLauncherIcon}>
               {rightSidebarTabIcon(type, 22)}
             </span>
             <strong>{t(rightSidebarTabCopyKey(type, "label"))}</strong>
-            <span>{t(rightSidebarTabCopyKey(type, "description"))}</span>
+            <span>
+              {creatingType === type && type === "chat"
+                ? t("rightSidebar.chat.creating")
+                : t(rightSidebarTabCopyKey(type, "description"))}
+            </span>
             {shortcut ? (
               <kbd className={styles.sidePanelLauncherShortcut}>{shortcut}</kbd>
             ) : null}
           </button>
         );
       })}
+      {error ? (
+        <div className={styles.sidePanelLauncherError} role="alert">
+          {error}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function SideChatPane({
-  selectedThread,
   sideConversation,
   projectRoot,
+  runtimeOptions,
   onOpenFileReference,
   onSendSideChat,
 }: {
-  selectedThread: Thread | null;
   sideConversation: SideConversation | null;
   projectRoot: string | null;
+  runtimeOptions: RuntimeOptions | null;
   onOpenFileReference: (path: string) => void;
-  onSendSideChat: (sideConversationId: string, text: string) => Promise<void>;
+  onSendSideChat: (
+    sideConversationId: string,
+    text: string,
+    attachmentIds?: string[],
+    options?: SendOptions,
+  ) => Promise<void>;
 }): ReactElement {
   const { t } = useI18n();
-  const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState("");
   const sideConversationId = sideConversation?.id ?? "";
-  const contextCount =
-    sideConversation?.turns.reduce(
-      (count, turn) => count + turn.items.length,
-      0,
-    ) ?? 0;
-  const statusLabel = sideConversation?.inProgress
-    ? t("rightSidebar.chat.active")
-    : t("rightSidebar.chat.idle");
-  const threadTitle =
-    sideConversation?.title ??
-    selectedThread?.title ??
-    t("rightSidebar.chat.noThread");
+  const displayedTurns = sideConversation?.turns ?? [];
   const renderedRows = useMemo(
     () =>
       sideConversation
-        ? sideConversation.turns.flatMap((turn) =>
-            renderTurnItems(turn.items, turn.status, {
-              projectRoot,
-              onOpenFileReference,
-            }),
-          )
+        ? displayedTurns
+            .filter((turn) => turn.items.length > 0)
+            .flatMap((turn) =>
+              renderTurnItems(turn.items, turn.status, {
+                projectRoot,
+                onOpenFileReference,
+              }),
+            )
         : [],
-    [onOpenFileReference, projectRoot, sideConversation],
+    [displayedTurns, onOpenFileReference, projectRoot, sideConversation],
   );
-  const inputDisabled =
-    !sideConversation || sideConversation.inProgress || sending;
-  const canSend = !inputDisabled && text.trim().length > 0;
-  const placeholder = sideConversation
-    ? sideConversation.inProgress
-      ? t("rightSidebar.chat.generatingPlaceholder")
-      : t("rightSidebar.chat.placeholder")
-    : t("rightSidebar.chat.waitingPlaceholder");
 
-  useEffect(() => {
-    setText("");
-    setSendError("");
-    setSending(false);
-  }, [sideConversationId]);
-
-  const submitSideChatMessage = useCallback(async () => {
-    const trimmedText = text.trim();
-    if (!sideConversationId || !trimmedText || inputDisabled) return;
-    setSending(true);
-    setSendError("");
-    try {
-      await onSendSideChat(sideConversationId, trimmedText);
-      setText("");
-    } catch (unknownError) {
-      setSendError(
-        unknownError instanceof Error
-          ? unknownError.message
-          : t("rightSidebar.chat.sendFailed"),
-      );
-    } finally {
-      setSending(false);
-    }
-  }, [inputDisabled, onSendSideChat, sideConversationId, t, text]);
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    void submitSideChatMessage();
-  };
-
-  const handleKeyDown = (
-    event: ReactKeyboardEvent<HTMLTextAreaElement>,
-  ): void => {
-    if (
-      event.key !== "Enter" ||
-      event.shiftKey ||
-      event.nativeEvent.isComposing
-    )
-      return;
-    event.preventDefault();
-    void submitSideChatMessage();
-  };
+  const sendSideConversation = useCallback(
+    async (
+      text: string,
+      attachmentIds: string[] = [],
+      options: SendOptions = {},
+    ) => {
+      if (!sideConversationId) return;
+      await onSendSideChat(sideConversationId, text, attachmentIds, options);
+    },
+    [onSendSideChat, sideConversationId],
+  );
 
   return (
     <section
       className={styles.sideChatShell}
       aria-label={t("rightSidebar.tabs.chat.label")}
     >
-      <div className={styles.sideChatThreadBar}>
-        <span className={styles.sideChatThreadIcon}>
-          <MessageSquare size={16} />
-        </span>
-        <div className={styles.sideChatThreadCopy}>
-          <strong>{threadTitle}</strong>
-          <span>
-            {sideConversation
-              ? t("rightSidebar.chat.contextCount", { count: contextCount })
-              : selectedThread
-                ? selectedThread.title
-                : t("rightSidebar.chat.emptyContext")}
-          </span>
-        </div>
-        <span className={styles.sideChatContextPill}>{statusLabel}</span>
-      </div>
       <div className={styles.sideChatTranscript}>
         {sideConversation ? (
-          renderedRows.length > 0 ? (
-            renderedRows
-          ) : (
-            <div className={styles.sideChatEmpty}>当前侧边聊天暂无消息。</div>
-          )
+          renderedRows.length > 0 ? renderedRows : null
         ) : (
           <div className={styles.sideChatSyncNotice}>
             <strong>{t("rightSidebar.chat.desktopSyncPending")}</strong>
@@ -880,46 +844,21 @@ function SideChatPane({
           </div>
         )}
       </div>
-      <form className={styles.sideChatComposerShell} onSubmit={handleSubmit}>
-        {sendError ? (
-          <div className={styles.sideChatError} role="alert">
-            {sendError}
-          </div>
-        ) : null}
-        {sending ? (
-          <div className={styles.sideChatSendingLine}>
-            {t("rightSidebar.chat.sending")}
-          </div>
-        ) : null}
-        <textarea
-          aria-label={t("rightSidebar.chat.input")}
-          className={styles.sideChatComposerInput}
-          disabled={inputDisabled}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          rows={2}
-          value={text}
+      <div className={styles.sideChatComposerShell}>
+        <Composer
+          threadId={sideConversationId}
+          cwd={projectRoot}
+          activeTurnId=""
+          runtimeOptions={runtimeOptions}
+          disabled={!sideConversation}
+          sending={false}
+          onSend={sendSideConversation}
+          onInterrupt={() => undefined}
+          formAriaLabel="侧边聊天 Composer"
+          inputAriaLabel="侧边聊天输入"
+          sendAriaLabel="发送侧边消息"
         />
-        <div className={styles.sideChatComposerBar}>
-          <button
-            className={styles.sideChatComposerIcon}
-            type="button"
-            aria-label={t("rightSidebar.chat.add")}
-            disabled
-          >
-            <Plus size={17} />
-          </button>
-          <button
-            className={styles.sideChatSendButton}
-            type="submit"
-            aria-label={t("rightSidebar.chat.send")}
-            disabled={!canSend}
-          >
-            <ArrowUp size={16} />
-          </button>
-        </div>
-      </form>
+      </div>
     </section>
   );
 }
@@ -931,8 +870,12 @@ function DesktopRightSidebar({
   onSelectTab,
   onCloseTab,
   onCreateTab,
+  creatingTabType,
+  disabledTabTypes,
+  createTabError,
   onShowLauncher,
   projectRoot,
+  runtimeOptions,
   selectedThread,
   threadDetail,
   selectedFilePath,
@@ -948,13 +891,22 @@ function DesktopRightSidebar({
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onCreateTab: (type: RightSidebarTab) => void;
+  creatingTabType?: RightSidebarTab | null;
+  disabledTabTypes?: RightSidebarTab[];
+  createTabError?: string;
   onShowLauncher: () => void;
   projectRoot: string | null;
+  runtimeOptions: RuntimeOptions | null;
   selectedThread: Thread | null;
   threadDetail: ThreadDetail | null;
   selectedFilePath: string | null;
   onOpenFileReference: (path: string) => void;
-  onSendSideChat: (sideConversationId: string, text: string) => Promise<void>;
+  onSendSideChat: (
+    sideConversationId: string,
+    text: string,
+    attachmentIds?: string[],
+    options?: SendOptions,
+  ) => Promise<void>;
   onSelectFile: (path: string) => void;
   fileTreeWidth: number;
   onFileTreeResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -973,7 +925,10 @@ function DesktopRightSidebar({
     activeTab?.type === "chat" && activeTab.sideConversationId
       ? (threadDetail?.sideConversations.find(
           (conversation) => conversation.id === activeTab.sideConversationId,
-        ) ?? null)
+        ) ??
+        (activeTab.threadId === selectedThread?.id
+          ? (activeTab.sideConversation ?? null)
+          : null))
       : null;
 
   return (
@@ -1029,12 +984,19 @@ function DesktopRightSidebar({
           <Plus size={15} />
         </button>
       </div>
-      {showLauncher ? <RightSidebarLauncher onCreateTab={onCreateTab} /> : null}
+      {showLauncher ? (
+        <RightSidebarLauncher
+          onCreateTab={onCreateTab}
+          creatingType={creatingTabType}
+          disabledTypes={disabledTabTypes}
+          error={createTabError}
+        />
+      ) : null}
       {!showLauncher && activeTab?.type === "chat" ? (
         <SideChatPane
-          selectedThread={selectedThread}
           sideConversation={activeSideConversation}
           projectRoot={projectRoot}
+          runtimeOptions={runtimeOptions}
           onOpenFileReference={onOpenFileReference}
           onSendSideChat={onSendSideChat}
         />
@@ -1404,11 +1366,13 @@ function latestPlanProgress(threadDetail: ThreadDetail | null): ProgressItem[] {
           item.type === "plan" && item.steps.length > 0,
       ) ?? null;
   return (
-    planItem?.steps.map((step) => ({
-      label: step.text,
-      done: isDoneStatus(step.status),
-      active: isActiveStatus(step.status),
-    })) ?? []
+    planItem?.steps
+      .map((step) => ({
+        label: step.text.trim(),
+        done: isDoneStatus(step.status),
+        active: isActiveStatus(step.status),
+      }))
+      .filter((item) => item.label.length > 0) ?? []
   );
 }
 
@@ -1556,6 +1520,61 @@ function ComposerActivityStrip({
   );
 }
 
+function QueuedMessagesStrip({
+  messages,
+  canSteer,
+  onSteerMessage,
+  onRemoveMessage,
+}: {
+  messages: QueuedThreadMessage[];
+  canSteer: boolean;
+  onSteerMessage: (messageId: string) => Promise<void>;
+  onRemoveMessage: (messageId: string) => void;
+}): ReactElement | null {
+  if (messages.length === 0) return null;
+  return (
+    <div className={styles.queuedComposerStrip} aria-label="排队消息">
+      {messages.map((message) => {
+        const hasText = message.text.trim().length > 0;
+        const label = hasText
+          ? message.text
+          : `${message.attachmentCount} 个附件`;
+        return (
+          <div className={styles.queuedComposerRow} key={message.id}>
+            <span className={styles.composerActivityIcon} aria-hidden="true">
+              <Clock3 size={14} />
+            </span>
+            <span className={styles.queuedComposerText}>{label}</span>
+            {message.attachmentCount > 0 && hasText ? (
+              <span className={styles.queuedComposerMeta}>
+                {message.attachmentCount} 个附件
+              </span>
+            ) : null}
+            <button
+              className={styles.queuedComposerSteerButton}
+              type="button"
+              disabled={!canSteer}
+              title={canSteer ? "引导当前回复" : "等待当前回复结束"}
+              onClick={() => void onSteerMessage(message.id)}
+            >
+              引导
+            </button>
+            <button
+              className={styles.queuedComposerIconButton}
+              type="button"
+              aria-label="删除排队消息"
+              title="删除排队消息"
+              onClick={() => onRemoveMessage(message.id)}
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function GoalEditorDialog({
   open,
   draft,
@@ -1646,29 +1665,31 @@ function DesktopActivityPanel({
     useState<WorkspaceStatus | null>(null);
   const [workspaceStatusLoading, setWorkspaceStatusLoading] = useState(false);
   const [workspaceStatusError, setWorkspaceStatusError] = useState("");
-  const fallbackProgressItems: ProgressItem[] = [
-    {
-      label: threadListLoading
-        ? "正在同步会话列表"
-        : selectedThread?.inProgress
-          ? "正在生成回复"
-          : "当前会话已同步",
-      done: Boolean(config) && !threadListLoading,
-    },
-    {
-      label: ipc?.connected ? "Desktop 实时连接" : "等待 Desktop IPC",
-      done: ipc?.connected === true,
-    },
-    {
-      label: appServer?.initialized ? "app-server ready" : "等待 app-server",
-      done: appServer?.initialized === true,
-    },
-  ];
+  const fallbackProgressItems: ProgressItem[] =
+    threadListLoading || selectedThread?.inProgress
+      ? [
+          {
+            label: threadListLoading ? "正在同步会话列表" : "正在生成回复",
+            done: Boolean(config) && !threadListLoading,
+            active: threadListLoading || selectedThread?.inProgress,
+          },
+          {
+            label: ipc?.connected ? "Desktop 实时连接" : "等待 Desktop IPC",
+            done: ipc?.connected === true,
+          },
+          {
+            label: appServer?.initialized ? "app-server ready" : "等待 app-server",
+            done: appServer?.initialized === true,
+          },
+        ]
+      : [];
   const planProgressItems = latestPlanProgress(threadDetail);
   const progressItems =
     planProgressItems.length > 0 ? planProgressItems : fallbackProgressItems;
   const subAgents = subAgentRows(threadDetail);
-  const sideConversations = threadDetail?.sideConversations ?? [];
+  const sideConversations =
+    threadDetail?.sideConversations.filter(hasVisibleSideConversationContent) ??
+    [];
   const eventCount = realtimeEvents.length;
   const workspaceRefreshKey = useMemo(() => {
     const latestFileChange = threadDetail?.turns
@@ -1736,188 +1757,176 @@ function DesktopActivityPanel({
   return (
     <aside className={styles.activityPanel} aria-label="运行状态">
       <section className={styles.activityCard}>
-        <h2>进度</h2>
-        <ul className={styles.progressList}>
-          {progressItems.map((item) => (
-            <li
-              className={
-                item.done
-                  ? styles.progressItemDone
-                  : item.active
-                    ? styles.progressItemActive
-                    : styles.progressItem
-              }
-              key={item.label}
-            >
-              <span aria-hidden="true" />
-              <strong>{item.label}</strong>
-            </li>
-          ))}
-        </ul>
-      </section>
+        {progressItems.length > 0 ? (
+          <div className={styles.activitySection}>
+            <h2>进度</h2>
+            <ul className={styles.progressList}>
+              {progressItems.map((item) => (
+                <li
+                  className={
+                    item.done
+                      ? styles.progressItemDone
+                      : item.active
+                        ? styles.progressItemActive
+                        : styles.progressItem
+                  }
+                  key={item.label}
+                >
+                  <span aria-hidden="true" />
+                  <strong>{item.label}</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
-      <section className={styles.activityCard}>
-        <h2>环境信息</h2>
-        <div className={styles.activityMetricList}>
-          <div className={styles.activityMetricRow}>
-            <span className={styles.activityMetricIcon}>
-              <FileDiff size={15} />
-            </span>
-            <strong>变更</strong>
-            <span className={styles.activityMetricValue}>
-              {workspaceChangeLabel(
-                workspaceStatus,
-                workspaceStatusLoading,
-                workspaceStatusError,
-              )}
-            </span>
-            {showWorkspaceDelta ? (
-              <span
-                className={styles.activityMetricDelta}
-                aria-label="工作区变更统计"
-              >
-                <span className={styles.activityMetricPositive}>
-                  +{workspaceStatus.additions ?? 0}
-                </span>
-                <span className={styles.activityMetricNegative}>
-                  -{workspaceStatus.deletions ?? 0}
-                </span>
-              </span>
-            ) : null}
-          </div>
-          <div className={styles.activityMetricRow}>
-            <span className={styles.activityMetricIcon}>
-              <HardDrive size={15} />
-            </span>
-            <strong>本地</strong>
-            <span className={styles.activityMetricValue}>
-              {localPortLabel(config)}
-            </span>
-          </div>
-          <div className={styles.activityMetricRow}>
-            <span className={styles.activityMetricIcon}>
-              <Laptop size={15} />
-            </span>
-            <strong>执行端</strong>
-            <span className={styles.activityMetricValue}>
-              {ownerRuntimeDisplay(selectedThread, ipc)}
-            </span>
-          </div>
-          <div className={styles.activityMetricRow}>
-            <span className={styles.activityMetricIcon}>
-              <GitBranch size={15} />
-            </span>
-            <strong>分支</strong>
-            <span className={styles.activityMetricValue}>
-              {workspaceBranchLabel(
-                workspaceStatus,
-                workspaceStatusLoading,
-                workspaceStatusError,
-              )}
-            </span>
-          </div>
-          <div className={styles.activityMetricRow}>
-            <span className={styles.activityMetricIcon}>
-              <GitCommitHorizontal size={15} />
-            </span>
-            <strong>提交</strong>
-            <span className={styles.activityMetricValue}>
-              {workspaceCommitLabel(
-                workspaceStatus,
-                workspaceStatusLoading,
-                workspaceStatusError,
-              )}
-            </span>
-          </div>
-          <div className={styles.activityMetricRow}>
-            <span className={styles.activityMetricIcon}>
-              <Github size={15} />
-            </span>
-            <strong>GitHub</strong>
-            <span className={styles.activityMetricValue}>
-              {githubCliLabel(
-                workspaceStatus,
-                workspaceStatusLoading,
-                workspaceStatusError,
-              )}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      <section className={styles.activityCard}>
-        <h2>子智能体</h2>
-        <div className={styles.agentList}>
-          {subAgents.length ? (
-            subAgents.map((agent) => (
-              <div className={styles.agentRow} key={agent.name}>
-                <span className={styles.agentAvatar} data-tone={agent.tone}>
-                  {agent.name.slice(0, 1)}
-                </span>
-                <strong>{agent.name}</strong>
-                <span>{agent.role}</span>
-              </div>
-            ))
-          ) : (
-            <div className={styles.agentRow}>
-              <span className={styles.agentAvatar} data-tone="neutral">
-                -
-              </span>
-              <strong>官方暂未提供子智能体列表</strong>
-              <span>等待结构化数据</span>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className={styles.activityCard}>
-        <h2>侧边聊天</h2>
-        <div className={styles.activitySideChatList}>
-          {sideConversations.length > 0 ? (
-            sideConversations.map((sideConversation) => (
-              <button
-                className={styles.activitySideChatButton}
-                type="button"
-                key={sideConversation.id}
-                onClick={() => onOpenSideChat(sideConversation)}
-              >
-                <span className={styles.activityMetricIcon}>
-                  <MessageSquare size={15} />
-                </span>
-                <strong>{sideConversation.title}</strong>
-                <span className={styles.activityMetricValue}>
-                  {sideConversation.inProgress
-                    ? "正在生成"
-                    : sideConversation.turnCount > 0
-                      ? `${sideConversation.turnCount} 轮`
-                      : "空白"}
-                </span>
-                <ChevronDown size={14} />
-              </button>
-            ))
-          ) : (
-            <div className={styles.activitySideChatEmpty}>
+        <div className={styles.activitySection}>
+          <h2>环境信息</h2>
+          <div className={styles.activityMetricList}>
+            <div className={styles.activityMetricRow}>
               <span className={styles.activityMetricIcon}>
-                <MessageSquare size={15} />
+                <FileDiff size={15} />
               </span>
-              <strong>暂无侧边聊天</strong>
-              <span>等待同步</span>
+              <strong>变更</strong>
+              <span className={styles.activityMetricValue}>
+                {workspaceChangeLabel(
+                  workspaceStatus,
+                  workspaceStatusLoading,
+                  workspaceStatusError,
+                )}
+              </span>
+              {showWorkspaceDelta ? (
+                <span
+                  className={styles.activityMetricDelta}
+                  aria-label="工作区变更统计"
+                >
+                  <span className={styles.activityMetricPositive}>
+                    +{workspaceStatus.additions ?? 0}
+                  </span>
+                  <span className={styles.activityMetricNegative}>
+                    -{workspaceStatus.deletions ?? 0}
+                  </span>
+                </span>
+              ) : null}
             </div>
-          )}
+            <div className={styles.activityMetricRow}>
+              <span className={styles.activityMetricIcon}>
+                <HardDrive size={15} />
+              </span>
+              <strong>本地</strong>
+              <span className={styles.activityMetricValue}>
+                {localPortLabel(config)}
+              </span>
+            </div>
+            <div className={styles.activityMetricRow}>
+              <span className={styles.activityMetricIcon}>
+                <Laptop size={15} />
+              </span>
+              <strong>执行端</strong>
+              <span className={styles.activityMetricValue}>
+                {ownerRuntimeDisplay(selectedThread, ipc)}
+              </span>
+            </div>
+            <div className={styles.activityMetricRow}>
+              <span className={styles.activityMetricIcon}>
+                <GitBranch size={15} />
+              </span>
+              <strong>分支</strong>
+              <span className={styles.activityMetricValue}>
+                {workspaceBranchLabel(
+                  workspaceStatus,
+                  workspaceStatusLoading,
+                  workspaceStatusError,
+                )}
+              </span>
+            </div>
+            <div className={styles.activityMetricRow}>
+              <span className={styles.activityMetricIcon}>
+                <GitCommitHorizontal size={15} />
+              </span>
+              <strong>提交</strong>
+              <span className={styles.activityMetricValue}>
+                {workspaceCommitLabel(
+                  workspaceStatus,
+                  workspaceStatusLoading,
+                  workspaceStatusError,
+                )}
+              </span>
+            </div>
+            <div className={styles.activityMetricRow}>
+              <span className={styles.activityMetricIcon}>
+                <Github size={15} />
+              </span>
+              <strong>GitHub</strong>
+              <span className={styles.activityMetricValue}>
+                {githubCliLabel(
+                  workspaceStatus,
+                  workspaceStatusLoading,
+                  workspaceStatusError,
+                )}
+              </span>
+            </div>
+          </div>
         </div>
-      </section>
 
-      <section className={styles.activityCard}>
-        <h2>来源</h2>
-        <div className={styles.activityMetricList}>
-          <div className={styles.activityMetricRow}>
-            <span className={styles.activityMetricIcon}>
-              <Globe2 size={15} />
-            </span>
-            <strong>网页搜索</strong>
-            <span className={styles.activityMetricValue}>
-              {eventCount ? "可用" : "待同步"}
-            </span>
+        {subAgents.length ? (
+          <div className={styles.activitySection}>
+            <h2>子智能体</h2>
+            <div className={styles.agentList}>
+              {subAgents.map((agent) => (
+                <div className={styles.agentRow} key={agent.name}>
+                  <span className={styles.agentAvatar} data-tone={agent.tone}>
+                    {agent.name.slice(0, 1)}
+                  </span>
+                  <strong>{agent.name}</strong>
+                  <span>{agent.role}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {sideConversations.length > 0 ? (
+          <div className={styles.activitySection}>
+            <h2>侧边聊天</h2>
+            <div className={styles.activitySideChatList}>
+              {sideConversations.map((sideConversation) => (
+                <button
+                  className={styles.activitySideChatButton}
+                  type="button"
+                  key={sideConversation.id}
+                  onClick={() => onOpenSideChat(sideConversation)}
+                >
+                  <span className={styles.activityMetricIcon}>
+                    <MessageSquare size={15} />
+                  </span>
+                  <strong>{sideConversation.title}</strong>
+                  <span className={styles.activityMetricValue}>
+                    {sideConversation.inProgress
+                      ? "正在生成"
+                      : sideConversation.turnCount > 0
+                        ? `${sideConversation.turnCount} 轮`
+                        : "空白"}
+                  </span>
+                  <ChevronDown size={14} />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div className={styles.activitySection}>
+          <h2>来源</h2>
+          <div className={styles.activityMetricList}>
+            <div className={styles.activityMetricRow}>
+              <span className={styles.activityMetricIcon}>
+                <Globe2 size={15} />
+              </span>
+              <strong>网页搜索</strong>
+              <span className={styles.activityMetricValue}>
+                {eventCount ? "可用" : "待同步"}
+              </span>
+            </div>
           </div>
         </div>
       </section>
@@ -1937,13 +1946,19 @@ export function ChatMain({
   approvals,
   detailLoading,
   realtimeEvents,
+  runtimeOptions,
   error,
   onDecideApproval,
+  queuedMessages,
+  onSteerQueuedMessage,
+  onRemoveQueuedMessage,
   pinnedSummaryOpen,
   rightSidebarOpen,
   bottomTerminalOpen,
   onOpenRightSidebar,
   onSendSideChat,
+  onCreateSideChat,
+  onCloseSideChat,
   onSetThreadGoal,
   onClearThreadGoal,
   composer,
@@ -1959,13 +1974,26 @@ export function ChatMain({
   approvals: PendingApproval[];
   detailLoading: boolean;
   realtimeEvents: RealtimeEvent[];
+  runtimeOptions: RuntimeOptions | null;
   error: string;
   onDecideApproval: (id: string, decision: ApprovalDecision) => Promise<void>;
+  queuedMessages: QueuedThreadMessage[];
+  onSteerQueuedMessage: (messageId: string) => Promise<void>;
+  onRemoveQueuedMessage: (messageId: string) => void;
   pinnedSummaryOpen: boolean;
   rightSidebarOpen: boolean;
   bottomTerminalOpen: boolean;
   onOpenRightSidebar: () => void;
-  onSendSideChat: (sideConversationId: string, text: string) => Promise<void>;
+  onSendSideChat: (
+    sideConversationId: string,
+    text: string,
+    attachmentIds?: string[],
+    options?: SendOptions,
+  ) => Promise<void>;
+  onCreateSideChat: (
+    cwd?: string | null,
+  ) => Promise<SideConversation | null>;
+  onCloseSideChat: (sideConversationId: string) => Promise<void>;
   onSetThreadGoal: (
     threadId: string,
     input: { objective?: string; status?: "active" | "paused" },
@@ -1992,6 +2020,9 @@ export function ChatMain({
         (project) => project.id === selectedThread.projectId,
       ) ?? null)
     : null;
+  const canSteerQueuedMessages = turns.some((turn) =>
+    isActiveStatus(turn.status),
+  );
   const projectRoot =
     draftThread?.cwd ??
     selectedProject?.path ??
@@ -2020,6 +2051,12 @@ export function ChatMain({
   >(null);
   const [rightSidebarLauncherOpen, setRightSidebarLauncherOpen] =
     useState(false);
+  const [rightSidebarCreatePendingType, setRightSidebarCreatePendingType] =
+    useState<RightSidebarTab | null>(null);
+  const [rightSidebarCreateError, setRightSidebarCreateError] = useState("");
+  const [closedSideConversationIds, setClosedSideConversationIds] = useState(
+    () => new Set<string>(),
+  );
   const rightSidebarTabCounterRef = useRef(0);
   const [goalEditorOpen, setGoalEditorOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState("");
@@ -2040,12 +2077,19 @@ export function ChatMain({
     writeStoredWidth(FILE_TREE_WIDTH_STORAGE_KEY, fileTreeWidth);
   }, [fileTreeWidth]);
 
+  useEffect(() => {
+    setClosedSideConversationIds(new Set());
+  }, [selectedThreadId]);
+
   const createRightSidebarTab = useCallback(
     (
       type: RightSidebarTab,
       options?: {
         filePath?: string | null;
         sideConversationId?: string | null;
+        sideConversation?: SideConversation | null;
+        threadId?: string | null;
+        keepMissingSideConversation?: boolean;
         title?: string | null;
       },
     ) => {
@@ -2063,6 +2107,11 @@ export function ChatMain({
         filePath: type === "files" ? (options?.filePath ?? null) : null,
         sideConversationId:
           type === "chat" ? (options?.sideConversationId ?? null) : null,
+        sideConversation:
+          type === "chat" ? (options?.sideConversation ?? null) : null,
+        threadId: type === "chat" ? (options?.threadId ?? null) : null,
+        keepMissingSideConversation:
+          type === "chat" ? (options?.keepMissingSideConversation ?? false) : false,
       };
       setRightSidebarTabs((current) => [...current, nextTab]);
       setActiveRightSidebarTabId(id);
@@ -2071,6 +2120,41 @@ export function ChatMain({
     },
     [onOpenRightSidebar, t],
   );
+
+  useEffect(() => {
+    if (!rightSidebarOpen || rightSidebarTabs.length > 0) return;
+    if (!threadDetail || threadDetail.thread.id !== selectedThreadId) {
+      setRightSidebarLauncherOpen(true);
+      return;
+    }
+    const sideConversations = threadDetail.sideConversations.filter(
+      (conversation) =>
+        hasVisibleSideConversationContent(conversation) &&
+        !closedSideConversationIds.has(conversation.id),
+    );
+    if (sideConversations.length === 0) {
+      setRightSidebarLauncherOpen(true);
+      return;
+    }
+    const nextTabs = sideConversations.map((sideConversation) => ({
+      id: `chat-${sideConversation.id}-${rightSidebarTabCounterRef.current++}`,
+      type: "chat" as const,
+      title: sideConversation.title,
+      sideConversationId: sideConversation.id,
+      sideConversation,
+      threadId: selectedThreadId,
+      keepMissingSideConversation: false,
+    }));
+    setRightSidebarTabs(nextTabs);
+    setActiveRightSidebarTabId(nextTabs[0]?.id ?? null);
+    setRightSidebarLauncherOpen(false);
+  }, [
+    closedSideConversationIds,
+    rightSidebarOpen,
+    rightSidebarTabs.length,
+    selectedThreadId,
+    threadDetail,
+  ]);
 
   const handleOpenFileReference = useCallback(
     (path: string) => {
@@ -2094,31 +2178,90 @@ export function ChatMain({
       }
       createRightSidebarTab("chat", {
         sideConversationId: sideConversation.id,
+        sideConversation,
+        threadId: selectedThreadId,
         title: sideConversation.title,
       });
     },
-    [createRightSidebarTab, onOpenRightSidebar, rightSidebarTabs],
+    [createRightSidebarTab, onOpenRightSidebar, rightSidebarTabs, selectedThreadId],
+  );
+
+  const handleCreateRightSidebarTab = useCallback(
+    (type: RightSidebarTab) => {
+      if (type !== "chat") {
+        setRightSidebarCreateError("");
+        createRightSidebarTab(type);
+        return;
+      }
+      if (!selectedThreadId || rightSidebarCreatePendingType) return;
+      setRightSidebarCreatePendingType("chat");
+      setRightSidebarCreateError("");
+      void onCreateSideChat(projectRoot)
+        .then((sideConversation) => {
+          if (!sideConversation) return;
+          createRightSidebarTab("chat", {
+            sideConversationId: sideConversation.id,
+            sideConversation,
+            threadId: selectedThreadId,
+            keepMissingSideConversation: true,
+            title: sideConversation.title,
+          });
+        })
+        .catch((unknownError) => {
+          setRightSidebarCreateError(
+            unknownError instanceof Error
+              ? unknownError.message
+              : t("rightSidebar.chat.createFailed"),
+          );
+        })
+        .finally(() => setRightSidebarCreatePendingType(null));
+    },
+    [
+      createRightSidebarTab,
+      onCreateSideChat,
+      projectRoot,
+      rightSidebarCreatePendingType,
+      selectedThreadId,
+      t,
+    ],
   );
 
   useEffect(() => {
+    if (!threadDetail || threadDetail.thread.id !== selectedThreadId) return;
     const sideConversationById = new Map(
-      (threadDetail?.sideConversations ?? []).map((conversation) => [
+      threadDetail.sideConversations.map((conversation) => [
         conversation.id,
         conversation,
       ]),
     );
-    setRightSidebarTabs((current) =>
-      current.map((tab) => {
+    setRightSidebarTabs((current) => {
+      const next = current.flatMap((tab) => {
         if (tab.type !== "chat" || !tab.sideConversationId) return tab;
+        if (tab.threadId && tab.threadId !== selectedThreadId) return [];
         const sideConversation = sideConversationById.get(
           tab.sideConversationId,
         );
-        if (!sideConversation || sideConversation.title === tab.title)
+        if (!sideConversation) {
+          return tab.keepMissingSideConversation ? tab : [];
+        }
+        if (
+          sideConversation.title === tab.title &&
+          tab.sideConversation === sideConversation
+        )
           return tab;
-        return { ...tab, title: sideConversation.title };
-      }),
-    );
-  }, [threadDetail?.sideConversations]);
+        return {
+          ...tab,
+          title: sideConversation.title,
+          sideConversation,
+          threadId: selectedThreadId,
+        };
+      });
+      return next.length === current.length &&
+        next.every((tab, index) => tab === current[index])
+        ? current
+        : next;
+    });
+  }, [selectedThreadId, threadDetail]);
 
   const handleSelectRightSidebarTab = useCallback((id: string) => {
     setActiveRightSidebarTabId(id);
@@ -2127,6 +2270,27 @@ export function ChatMain({
 
   const handleCloseRightSidebarTab = useCallback(
     (id: string) => {
+      const closingTab = rightSidebarTabs.find((tab) => tab.id === id) ?? null;
+      if (closingTab?.type === "chat" && closingTab.sideConversationId) {
+        const sideConversationId = closingTab.sideConversationId;
+        setClosedSideConversationIds((current) => {
+          const next = new Set(current);
+          next.add(sideConversationId);
+          return next;
+        });
+        void onCloseSideChat(sideConversationId).catch((unknownError) => {
+          setClosedSideConversationIds((current) => {
+            const next = new Set(current);
+            next.delete(sideConversationId);
+            return next;
+          });
+          setRightSidebarCreateError(
+            unknownError instanceof Error
+              ? unknownError.message
+              : t("rightSidebar.chat.closeFailed"),
+          );
+        });
+      }
       setRightSidebarTabs((current) => {
         const closingIndex = current.findIndex((tab) => tab.id === id);
         const nextTabs = current.filter((tab) => tab.id !== id);
@@ -2139,7 +2303,7 @@ export function ChatMain({
         return nextTabs;
       });
     },
-    [activeRightSidebarTabId],
+    [activeRightSidebarTabId, onCloseSideChat, rightSidebarTabs, t],
   );
 
   const handleShowRightSidebarLauncher = useCallback(() => {
@@ -2163,8 +2327,22 @@ export function ChatMain({
   useEffect(() => {
     if (!rightSidebarOpen) return;
     if (rightSidebarTabs.length > 0) return;
+    const hasAutoSideConversations =
+      threadDetail?.thread.id === selectedThreadId &&
+      threadDetail.sideConversations.some(
+        (conversation) =>
+          hasVisibleSideConversationContent(conversation) &&
+          !closedSideConversationIds.has(conversation.id),
+      );
+    if (hasAutoSideConversations) return;
     setRightSidebarLauncherOpen(true);
-  }, [rightSidebarOpen, rightSidebarTabs.length]);
+  }, [
+    closedSideConversationIds,
+    rightSidebarOpen,
+    rightSidebarTabs.length,
+    selectedThreadId,
+    threadDetail,
+  ]);
 
   useEffect(() => {
     if (!activeRightSidebarTabId) return;
@@ -2227,6 +2405,14 @@ export function ChatMain({
     setGoalEditorOpen(false);
     setGoalDraft("");
     setGoalMutationPending(false);
+  }, [selectedThreadId]);
+
+  useEffect(() => {
+    setRightSidebarTabs((current) => {
+      if (!current.some((tab) => tab.type === "chat")) return current;
+      const next = current.filter((tab) => tab.type !== "chat");
+      return next;
+    });
   }, [selectedThreadId]);
 
   const handleOpenGoalEditor = useCallback(() => {
@@ -2625,6 +2811,14 @@ export function ChatMain({
                 onToggleGoalExpanded={handleToggleGoalExpanded}
               />
             )}
+            {isDraftThread ? null : (
+              <QueuedMessagesStrip
+                messages={queuedMessages}
+                canSteer={canSteerQueuedMessages}
+                onSteerMessage={onSteerQueuedMessage}
+                onRemoveMessage={onRemoveQueuedMessage}
+              />
+            )}
             {composer}
           </div>
           {pinnedSummaryOpen ? (
@@ -2656,9 +2850,13 @@ export function ChatMain({
               launcherOpen={rightSidebarLauncherOpen}
               onSelectTab={handleSelectRightSidebarTab}
               onCloseTab={handleCloseRightSidebarTab}
-              onCreateTab={createRightSidebarTab}
+              onCreateTab={handleCreateRightSidebarTab}
+              creatingTabType={rightSidebarCreatePendingType}
+              disabledTabTypes={selectedThreadId ? [] : ["chat"]}
+              createTabError={rightSidebarCreateError}
               onShowLauncher={handleShowRightSidebarLauncher}
               projectRoot={projectRoot}
+              runtimeOptions={runtimeOptions}
               selectedThread={selectedThread}
               threadDetail={threadDetail}
               selectedFilePath={fileSidebarTarget}

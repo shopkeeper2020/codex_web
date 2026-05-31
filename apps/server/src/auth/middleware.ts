@@ -133,12 +133,24 @@ function isPublicPath(url: string): boolean {
 
 function isLocalhostRequest(request: FastifyRequest): boolean {
   const ip = normalizeIp(request.ip)
-  return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost'
+  if (ip !== '127.0.0.1' && ip !== '::1' && ip !== 'localhost') return false
+  const host = normalizeHostHeader(request.headers.host)
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost'
 }
 
 function normalizeIp(ip: string): string {
   if (ip.startsWith('::ffff:')) return ip.slice('::ffff:'.length)
   return ip
+}
+
+function normalizeHostHeader(host: string | undefined): string {
+  const value = (host ?? '').trim().toLowerCase()
+  if (!value) return ''
+  if (value.startsWith('[')) {
+    const closingBracket = value.indexOf(']')
+    return closingBracket > 0 ? value.slice(1, closingBracket) : value
+  }
+  return value.split(':')[0] ?? value
 }
 
 async function sendAuthRequired(request: FastifyRequest, reply: FastifyReply): Promise<void> {

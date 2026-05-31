@@ -90,6 +90,7 @@ export function toTurnStartAttachment(attachment: Attachment): Record<string, un
 
 export type TurnStartImageInput = {
   input: Record<string, unknown>
+  placeholderInput: Record<string, unknown>
   restoreAttachment: Record<string, unknown>
 }
 
@@ -102,6 +103,11 @@ export async function toTurnStartImageInput(
   const mimeType = attachment.mimeType || 'image/png'
   const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
   return {
+    placeholderInput: {
+      type: 'text',
+      text: '<image>',
+      text_elements: [],
+    },
     input: {
       type: 'image',
       url: dataUrl,

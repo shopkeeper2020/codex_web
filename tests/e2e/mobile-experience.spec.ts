@@ -8,6 +8,7 @@ import {
 import { expectNoHorizontalOverflow } from "./helpers/layout";
 
 const projectRoot = "C:\\workspace\\codex_web";
+const flowThreadId = "thread-mobile-flow";
 const activeThreadId = "thread-mobile-active-turn";
 const activeTurnId = "turn-mobile-active";
 
@@ -37,18 +38,36 @@ async function expectWithinViewport(
 }
 
 async function switchComposerToQueuedMode(page: Page): Promise<void> {
-  const attachmentButton = page.getByRole("button", { name: "添加附件" });
-  await expect(attachmentButton).toBeVisible();
+  const inputOptionsButton = page.getByRole("button", {
+    name: "打开输入选项",
+  });
+  await expect(inputOptionsButton).toBeVisible();
   await expect(async () => {
-    const targetSelect = page.getByLabel("发送目标");
+    const targetButton = page.getByLabel("发送目标");
     if (
-      (await targetSelect.count()) > 0 &&
-      (await targetSelect.first().isVisible())
+      (await targetButton.count()) > 0 &&
+      (await targetButton.first().isVisible())
     ) {
-      await targetSelect.first().selectOption("start");
+      const currentLabel = await targetButton.first().textContent();
+      if (!currentLabel?.includes("排队")) {
+        await targetButton.first().click();
+      }
+      await expect(targetButton.first()).toContainText("排队");
     }
-    await expect(attachmentButton).toBeEnabled({ timeout: 1000 });
+    await expect(inputOptionsButton).toBeEnabled({ timeout: 1000 });
   }).toPass({ timeout: 10_000 });
+}
+
+function flowThread(): JsonBody {
+  return {
+    id: flowThreadId,
+    title: "Mobile flow thread",
+    projectId: projectRoot,
+    path: projectRoot,
+    updatedAtIso: "2026-05-29T08:00:00.000Z",
+    inProgress: false,
+    owner: null,
+  };
 }
 
 function activeThread(): JsonBody {
@@ -61,6 +80,136 @@ function activeThread(): JsonBody {
     inProgress: true,
     owner: null,
   };
+}
+
+async function installMobileFlowMocks(page: Page): Promise<void> {
+  await page.route("**/api/domain/threads**", async (route) => {
+    const url = new URL(route.request().url());
+    const archived = url.searchParams.get("archived") === "true";
+    await fulfillJson(route, {
+      data: {
+        projects: [
+          {
+            id: projectRoot,
+            name: "codex_web",
+            path: projectRoot,
+            source: "official",
+          },
+        ],
+        threads: archived ? [] : [flowThread()],
+        nextCursor: null,
+        backwardsCursor: null,
+      },
+    });
+  });
+
+  await page.route("**/api/domain/thread-detail**", async (route) => {
+    await fulfillJson(route, {
+      data: {
+        thread: flowThread(),
+        turns: [
+          {
+            id: "turn-mobile-flow",
+            status: "completed",
+            items: [
+              {
+                type: "user",
+                id: "user-mobile-flow",
+                text: "Keep the mobile shell usable.",
+              },
+              {
+                type: "assistant",
+                id: "assistant-mobile-flow",
+                text: "The mobile composer and navigation are ready.",
+              },
+            ],
+          },
+        ],
+      },
+      source: "e2e-mock",
+    });
+  });
+
+  await page.route("**/api/runtime-options", async (route) => {
+    await fulfillJson(route, {
+      data: {
+        models: [
+          {
+            id: "default",
+            model: "gpt-default",
+            displayName: "GPT Default",
+            description: "Default test model.",
+            isDefault: true,
+            defaultReasoningEffort: "medium",
+            supportedReasoningEfforts: [
+              { reasoningEffort: "medium", description: "Medium" },
+            ],
+            inputModalities: ["text", "image"],
+          },
+        ],
+        collaborationModes: [
+          {
+            name: "Default",
+            mode: "default",
+            model: null,
+            reasoningEffort: null,
+            developerInstructions: null,
+          },
+        ],
+        defaults: {
+          model: "gpt-default",
+          reasoningEffort: "medium",
+          collaborationModeName: "Default",
+        },
+        source: {
+          models: "app-server",
+          collaborationModes: "app-server",
+        },
+        warnings: [],
+      },
+    });
+  });
+
+  await page.route("**/api/skills**", async (route) => {
+    await fulfillJson(route, {
+      data: {
+        skills: [
+          {
+            id: "skill-mobile-flow",
+            name: "mobile-flow",
+            displayName: "Mobile flow skill",
+            description: "A deterministic skill fixture for mobile E2E.",
+            shortDescription: "Mobile fixture",
+            path: "C:\\workspace\\codex_web\\.codex\\skills\\mobile-flow",
+            cwd: projectRoot,
+            scope: "repo",
+            enabled: true,
+            brandColor: null,
+          },
+        ],
+        errors: [],
+        source: "app-server",
+        warnings: [],
+      },
+    });
+  });
+
+  await page.route("**/api/files/list**", async (route) => {
+    await fulfillJson(route, {
+      data: {
+        root: projectRoot,
+        path: projectRoot,
+        relativePath: "",
+        parentRelativePath: null,
+        entries: [],
+        limited: false,
+      },
+    });
+  });
+
+  await page.route("**/api/approvals", async (route) => {
+    await fulfillJson(route, { data: [] });
+  });
 }
 
 async function installActiveTurnMocks(
@@ -188,6 +337,7 @@ test.describe("codex_web mobile real task flow", () => {
     );
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await installMobileFlowMocks(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.locator("main")).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
@@ -204,7 +354,11 @@ test.describe("codex_web mobile real task flow", () => {
     await expect(page.getByRole("button", { name: "关闭导航" })).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
 
-    await page.getByRole("button", { name: "搜索" }).click();
+    await page.getByRole("button", { name: "更多操作" }).click();
+    await page
+      .getByRole("menu", { name: "会话操作" })
+      .getByRole("menuitem", { name: "搜索" })
+      .click();
     const searchDialog = page.getByRole("dialog", { name: "Search" });
     await expect(searchDialog).toBeVisible();
     await expect(page.getByLabel("全局搜索")).toBeFocused();
@@ -248,26 +402,34 @@ test.describe("codex_web mobile real task flow", () => {
   }) => {
     await switchComposerToQueuedMode(page);
 
-    const attachmentButton = page.getByRole("button", { name: "添加附件" });
-    await expectWithinViewport(page, attachmentButton);
-    await expect(attachmentButton).toBeEnabled();
+    const inputOptionsButton = page.getByRole("button", {
+      name: "打开输入选项",
+    });
+    await expectWithinViewport(page, inputOptionsButton);
+    await inputOptionsButton.click();
+    const inputMenu = page.getByRole("menu", { name: "输入选项" });
+    const attachmentItem = inputMenu.getByRole("menuitem", {
+      name: "添加照片和文件",
+    });
+    await expectWithinViewport(page, attachmentItem);
     const fileChooserPromise = page.waitForEvent("filechooser");
-    await attachmentButton.click();
+    await attachmentItem.click();
     const fileChooser = await fileChooserPromise;
     expect(fileChooser.isMultiple()).toBeTruthy();
 
-    const skillsButton = page.getByRole("button", {
-      name: "Skills",
-      exact: true,
+    await inputOptionsButton.click();
+    const pluginButton = inputMenu.getByRole("button", { name: "插件" });
+    await expectWithinViewport(page, pluginButton);
+    await pluginButton.click();
+    const skillCheckbox = inputMenu.getByRole("checkbox", {
+      name: /Mobile flow skill/,
     });
+    await expectWithinViewport(page, skillCheckbox);
+    await skillCheckbox.check();
+    const skillsButton = page.getByRole("button", { name: "打开 Skills" });
     await expectWithinViewport(page, skillsButton);
     await expect(skillsButton).toBeEnabled();
-    await skillsButton.click();
-    await expect(skillsButton).toHaveAttribute("aria-expanded", "true");
-    await expect(page.getByLabel("Skills menu")).toBeVisible();
     await expectNoHorizontalOverflow(page);
-    await page.getByRole("button", { name: "关闭 Skills" }).click();
-    await expect(skillsButton).toHaveAttribute("aria-expanded", "false");
   });
 
   test("keeps runtime and sync foldouts inside the 390px viewport", async ({
@@ -323,9 +485,9 @@ test.describe("codex_web mobile active turn controls", () => {
       waitUntil: "domcontentloaded",
     });
     await expect(page.locator("main")).toBeVisible();
-    await expect(page.getByLabel("发送目标")).toBeVisible();
-    await expect(page.getByLabel("发送目标")).toHaveValue("steer");
-    await expect(page.getByLabel("发送目标")).toContainText("当前");
+    const targetButton = page.getByLabel("发送目标");
+    await expect(targetButton).toBeVisible();
+    await expect(targetButton).toContainText("当前");
 
     await page.getByRole("button", { name: "更多操作" }).click();
     const actionMenu = page.getByRole("menu", { name: "会话操作" });

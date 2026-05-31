@@ -23,7 +23,11 @@ class FakeAppServer {
 
   dispose(): void {}
 
-  async threadStart(params: { cwd: string | null }): Promise<unknown> {
+  async threadStart(params: {
+    cwd: string | null;
+    workspaceRoots?: string[];
+    threadSource?: string;
+  }): Promise<unknown> {
     this.calls.push({ method: "thread/start", params });
     return {
       thread: {
@@ -78,7 +82,7 @@ type Harness = {
 const harnesses: Harness[] = [];
 
 async function createHarness(
-  input: { clientId?: string | null; broadcastResult?: boolean } = {},
+  input: { clientId?: string | null; claimResult?: boolean } = {},
 ): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "codex-web-thread-create-"));
   const officialIpc = new OfficialIpcBridge("");
@@ -86,15 +90,12 @@ async function createHarness(
     (officialIpc as unknown as { clientId: string }).clientId =
       input.clientId ?? "web-test";
   }
-  if (input.broadcastResult === false) {
+  if (input.claimResult === false) {
     (
       officialIpc as unknown as {
-        broadcastConversationSnapshot: (
-          threadId: string,
-          conversationState: unknown,
-        ) => boolean;
+        claimLocalOnlyConversation: (threadId: string) => boolean;
       }
-    ).broadcastConversationSnapshot = () => false;
+    ).claimLocalOnlyConversation = () => false;
   }
   const appServer = new FakeAppServer();
   const context = await createServer(root, {
@@ -138,7 +139,7 @@ describe("thread create route", () => {
     expect(officialIpc.isOwnedConversation("thread-web-created")).toBe(false);
   });
 
-  it("broadcasts a Web-owned snapshot for newly created threads", async () => {
+  it("claims a local-only Web owner for newly created threads", async () => {
     const { context, officialIpc, appServer } = await createHarness();
 
     const response = await context.app.inject({
@@ -160,27 +161,28 @@ describe("thread create route", () => {
     expect(appServer.calls).toEqual([
       {
         method: "thread/start",
-        params: { cwd: "C:\\workspace\\codex_web" },
+        params: {
+          cwd: "C:\\workspace\\codex_web",
+          workspaceRoots: ["C:\\workspace\\codex_web"],
+          threadSource: "user",
+        },
       },
     ]);
     expect(officialIpc.isOwnedConversation("thread-web-created")).toBe(true);
     expect(
       officialIpc.getThreadStreamState("thread-web-created"),
+    ).toBeNull();
+    expect(
+      officialIpc.getStatus(),
     ).toMatchObject({
-      conversationId: "thread-web-created",
-      ownerClientId: "web-test",
-      sourceClientId: "web-test",
-      changeType: "snapshot",
-      conversationState: {
-        id: "thread-web-created",
-        turns: [],
-      },
+      ownedConversationCount: 1,
+      localOnlyOwnedConversationCount: 1,
     });
   });
 
-  it("rejects thread creation if the Web-owned snapshot cannot be established", async () => {
+  it("rejects thread creation if the local Web owner cannot be established", async () => {
     const { context, officialIpc, appServer } = await createHarness({
-      broadcastResult: false,
+      claimResult: false,
     });
 
     const response = await context.app.inject({
@@ -196,7 +198,11 @@ describe("thread create route", () => {
     expect(appServer.calls).toEqual([
       {
         method: "thread/start",
-        params: { cwd: "C:\\workspace\\codex_web" },
+        params: {
+          cwd: "C:\\workspace\\codex_web",
+          workspaceRoots: ["C:\\workspace\\codex_web"],
+          threadSource: "user",
+        },
       },
     ]);
     expect(officialIpc.isOwnedConversation("thread-web-created")).toBe(false);

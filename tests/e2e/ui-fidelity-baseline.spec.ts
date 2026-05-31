@@ -57,7 +57,7 @@ async function capture(
 
 async function expectDesktopShellGeometry(page: Page): Promise<void> {
   const activityPanel = page.getByLabel("运行状态");
-  const composer = page.getByLabel("Composer");
+  const composer = page.getByRole("form", { name: "Composer" });
 
   await expect(activityPanel).toBeVisible();
   await expect(composer).toBeVisible();
@@ -182,7 +182,11 @@ test.describe("codex_web UI fidelity baseline captures", () => {
         0,
       );
 
-      await page.getByRole("button", { name: "搜索" }).click();
+      await page.getByRole("button", { name: "更多操作" }).click();
+      await page
+        .getByRole("menu", { name: "会话操作" })
+        .getByRole("menuitem", { name: "搜索" })
+        .click();
     } else {
       await page.getByRole("button", { name: "Search" }).click();
     }
@@ -213,8 +217,12 @@ test.describe("codex_web UI fidelity baseline captures", () => {
       await page.goto("/", { waitUntil: "domcontentloaded" });
       await expect(page.getByLabel("输入消息")).toBeVisible();
       await prepareStableScreenshot(page);
-      await page.getByRole("button", { name: "Skills", exact: true }).click();
-      await expect(page.getByLabel("Skills menu")).toBeVisible();
+      await page.getByRole("button", { name: "打开输入选项" }).click();
+      const inputMenu = page.getByRole("menu", { name: "输入选项" });
+      await expect(inputMenu).toBeVisible();
+      const pluginButton = inputMenu.getByRole("button", { name: "插件" });
+      await pluginButton.click();
+      await expect(pluginButton).toHaveAttribute("aria-expanded", "true");
       await capture(page, testInfo, "mobile-skills");
     }
   });
@@ -228,7 +236,7 @@ test.describe("codex_web UI fidelity baseline captures", () => {
     await expect(page.getByText("正在思考").first()).toHaveCount(0);
     await expect(page.getByText("已运行").first()).toBeVisible();
     await expect(page.getByText("2 条命令").first()).toBeVisible();
-    await expect(page.getByText("正在执行").first()).toBeVisible();
+    await expect(page.getByText("正在运行").first()).toBeVisible();
     const composer = page.getByRole("form", { name: "Composer" });
     await expect(composer.getByRole("button", { name: "停止当前回复" })).toBeVisible();
     await expectNoHorizontalOverflow(page, "ui fidelity active composer stop");
@@ -239,8 +247,10 @@ test.describe("codex_web UI fidelity baseline captures", () => {
     await capture(page, testInfo, "active-composer-stop");
 
     await composer.getByLabel("输入消息").fill("请沿当前回复继续补充");
-    await expect(composer.getByLabel("发送目标")).toHaveValue("steer");
-    await expect(composer.getByRole("button", { name: "发送" })).toBeVisible();
+    await expect(composer.getByLabel("发送目标")).toContainText("当前");
+    await expect(
+      composer.getByRole("button", { name: "发送", exact: true }),
+    ).toBeVisible();
     await expectNoHorizontalOverflow(page, "ui fidelity active composer steer");
     await prepareStableScreenshot(page);
     if (!testInfo.project.name.includes("mobile")) {
@@ -248,9 +258,11 @@ test.describe("codex_web UI fidelity baseline captures", () => {
     }
     await capture(page, testInfo, "active-composer-steer");
 
-    await composer.getByLabel("发送目标").selectOption("start");
-    await expect(composer.getByLabel("发送目标")).toHaveValue("start");
-    await expect(composer.getByRole("button", { name: "发送" })).toBeVisible();
+    await composer.getByLabel("发送目标").click();
+    await expect(composer.getByLabel("发送目标")).toContainText("排队");
+    await expect(
+      composer.getByRole("button", { name: "发送", exact: true }),
+    ).toBeVisible();
     await expectNoHorizontalOverflow(page, "ui fidelity active composer queue");
     await prepareStableScreenshot(page);
     if (!testInfo.project.name.includes("mobile")) {

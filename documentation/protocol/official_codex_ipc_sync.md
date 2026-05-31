@@ -376,7 +376,7 @@ Use these as concrete references:
 - `src/server/officialIpcBridge.ts`
   - official IPC transport, frame parser, request routing, stream cache, follower requests.
 - `src/server/codexAppServerBridge.ts`
-  - HTTP routes for status/cache/follower endpoints; merges official IPC notifications into the existing notification stream; syncs Web-owned snapshots.
+  - HTTP routes for status/cache/follower endpoints; merges official IPC notifications into the existing notification stream; syncs publishable Web-owned snapshots.
 - `src/api/codexGateway.ts`
   - frontend API gateway: official cache read, follower start/interrupt, fallback behavior.
 - `src/composables/useDesktopState.ts`
@@ -563,7 +563,7 @@ Recommended limits:
 - Persist the latest official stream state locally before serving a LAN/mobile UI. A Web server restart during an active Desktop turn may otherwise lose the only full snapshot and receive only later patches or stale `notLoaded` snapshots.
 - Do not allow a stale non-active snapshot to overwrite a known active state unless it clearly comes from the current owner completing the turn.
 - Emit lightweight browser notifications; fetch full cached state only when needed.
-- Debounce Web-owned snapshot broadcasts. This project uses a 650 ms debounce for local owner snapshots.
+- Debounce publishable Web-owned snapshot broadcasts. This project uses a 650 ms debounce for local owner snapshots, while local-only Web owners skip official stream broadcasts.
 - Keep one in-flight snapshot read per thread to avoid fanout during streaming deltas.
 - Keep bounded diagnostics such as the last 10-20 follower requests.
 
@@ -578,7 +578,7 @@ Recommended limits:
 7. Implement `thread-follower-start-turn` for official-owned threads.
 8. Add diagnostics for recent follower requests.
 9. Implement interrupt forwarding.
-10. Add Web-owned snapshot broadcasting only after official-owned following works.
+10. Add Web-owned snapshot broadcasting only after official-owned following works, and keep newly created Web-only threads local-only until their official stream shape is known safe for Desktop/VS Code.
 
 Do not start with Web-owned three-way behavior. First prove that Web can follow and send into an official-owned Desktop/VS Code thread. That path has the clearest owner semantics and was the first verified success in this project.
 

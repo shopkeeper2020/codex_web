@@ -40,6 +40,7 @@ export const turnStartRequestSchema = z
     threadId: z.string().optional(),
     conversationId: z.string().optional(),
     text: z.string(),
+    cwd: z.string().nullable().optional(),
     model: z.string().optional(),
     effort: z.string().optional(),
     attachmentIds: z.array(z.string()).optional(),
@@ -981,6 +982,74 @@ export const threadCreateResponseSchema = z.object({
   }),
 });
 
+export const sideConversationCreateRequestSchema = z
+  .object({
+    threadId: z.string().optional(),
+    conversationId: z.string().optional(),
+    cwd: z.string().nullable().optional(),
+  })
+  .strict()
+  .transform((value, context) => {
+    const threadId = (value.threadId ?? value.conversationId ?? "").trim();
+    if (!threadId) {
+      context.addIssue({
+        code: "custom",
+        path: ["threadId"],
+        message: "Missing threadId",
+      });
+    }
+    return {
+      ...value,
+      threadId,
+      conversationId: value.conversationId?.trim(),
+      cwd: value.cwd?.trim() || null,
+    };
+  });
+
+export const sideConversationCreateResponseSchema = z.object({
+  data: z.object({
+    sideConversation: threadSideConversationSchema,
+    raw: z.unknown().optional(),
+  }),
+});
+
+export const sideConversationCloseRequestSchema = z
+  .object({
+    threadId: z.string().optional(),
+    sideConversationId: z.string().optional(),
+    conversationId: z.string().optional(),
+  })
+  .strict()
+  .transform((value, context) => {
+    const sideConversationId = (
+      value.sideConversationId ??
+      value.conversationId ??
+      ""
+    ).trim();
+    if (!sideConversationId) {
+      context.addIssue({
+        code: "custom",
+        path: ["sideConversationId"],
+        message: "Missing sideConversationId",
+      });
+    }
+    return {
+      ...value,
+      threadId: value.threadId?.trim(),
+      sideConversationId,
+      conversationId: value.conversationId?.trim(),
+    };
+  });
+
+export const sideConversationCloseResponseSchema = z.object({
+  data: z.object({
+    ok: z.boolean(),
+    sideConversationId: z.string(),
+    discarded: z.boolean(),
+    interrupted: z.boolean(),
+  }),
+});
+
 export const threadRenameRequestSchema = z
   .object({
     threadId: z.string().optional(),
@@ -1446,6 +1515,18 @@ export type ApprovalDecisionResponse = z.infer<
 >;
 export type ThreadCreateRequest = z.infer<typeof threadCreateRequestSchema>;
 export type ThreadCreateResponse = z.infer<typeof threadCreateResponseSchema>;
+export type SideConversationCreateRequest = z.infer<
+  typeof sideConversationCreateRequestSchema
+>;
+export type SideConversationCreateResponse = z.infer<
+  typeof sideConversationCreateResponseSchema
+>;
+export type SideConversationCloseRequest = z.infer<
+  typeof sideConversationCloseRequestSchema
+>;
+export type SideConversationCloseResponse = z.infer<
+  typeof sideConversationCloseResponseSchema
+>;
 export type ThreadRenameRequest = z.infer<typeof threadRenameRequestSchema>;
 export type ThreadRenameResponse = z.infer<typeof threadRenameResponseSchema>;
 export type ThreadArchiveRequest = z.infer<typeof threadArchiveRequestSchema>;

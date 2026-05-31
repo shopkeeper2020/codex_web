@@ -57,6 +57,21 @@ afterEach(async () => {
 });
 
 describe("auth routes", () => {
+  it("does not treat localhost proxy requests for public hosts as local bypass", async () => {
+    const { context } = await createHarness();
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/settings/password",
+      headers: { host: "public.example.test:6001" },
+      remoteAddress: "127.0.0.1",
+      payload: { password: "correct-password" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Authentication required" });
+  });
+
   it("validates auth request and response envelopes on real routes", async () => {
     const { context } = await createHarness();
 

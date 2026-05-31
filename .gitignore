@@ -19,3 +19,4 @@ apps/server/data/
 .env
 .env.*
 !.env.example
+deploy/frpc.local.toml

@@ -22,6 +22,8 @@ async function clearMockRoutes(page: Page): Promise<void> {
   for (const pattern of [
     "**/api/domain/threads**",
     "**/api/domain/thread-detail**",
+    "**/api/domain/side-conversation-create",
+    "**/api/domain/side-conversation-close",
     "**/api/runtime-options",
     "**/api/skills**",
     "**/api/files/list**",
@@ -160,16 +162,6 @@ function activeSideConversations(): JsonBody[] {
         },
       ],
     },
-    {
-      id: "side-chat-empty-e2e",
-      title: "侧边聊天 2",
-      createdAtIso: "2026-05-31T08:21:00.000Z",
-      updatedAtIso: "2026-05-31T08:21:00.000Z",
-      inProgress: false,
-      hasUnread: false,
-      turnCount: 0,
-      turns: [],
-    },
   ];
 }
 
@@ -178,6 +170,8 @@ export async function installActiveTurnMocks(
   options: ActiveTurnMockOptions = {},
 ): Promise<void> {
   await clearMockRoutes(page);
+  let sideConversations = activeSideConversations();
+  let createdSideConversationCount = 0;
   await page.route("**/api/domain/threads**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
@@ -210,10 +204,49 @@ export async function installActiveTurnMocks(
       data: {
         thread: activeThread(options),
         turns: [activeTurn()],
-        sideConversations: activeSideConversations(),
+        sideConversations,
         ...resolveThreadDetailOverrides(options),
       },
       source: "e2e-mock",
+    });
+  });
+
+  await page.route("**/api/domain/side-conversation-create", async (route) => {
+    createdSideConversationCount += 1;
+    const sideConversation = {
+      id: `side-chat-created-e2e-${createdSideConversationCount}`,
+      title: `侧边聊天 ${sideConversations.length + 1}`,
+      createdAtIso: "2026-05-31T08:40:00.000Z",
+      updatedAtIso: "2026-05-31T08:40:00.000Z",
+      inProgress: false,
+      hasUnread: false,
+      turnCount: 0,
+      turns: [],
+    };
+    sideConversations = [...sideConversations, sideConversation];
+    await fulfillJson(route, {
+      data: {
+        sideConversation,
+        raw: { id: sideConversation.id },
+      },
+    });
+  });
+
+  await page.route("**/api/domain/side-conversation-close", async (route) => {
+    const body = route.request().postDataJSON() as {
+      sideConversationId?: string;
+    };
+    const sideConversationId = body.sideConversationId ?? "";
+    sideConversations = sideConversations.filter(
+      (conversation) => conversation.id !== sideConversationId,
+    );
+    await fulfillJson(route, {
+      data: {
+        ok: true,
+        sideConversationId,
+        discarded: true,
+        interrupted: false,
+      },
     });
   });
 

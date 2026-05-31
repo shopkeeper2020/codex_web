@@ -225,6 +225,7 @@ describe('domain normalization', () => {
                 id: 'steer-user-a',
                 input: [
                   { type: 'text', text: '这里是不是少了一部分东西？\n' },
+                  { type: 'text', text: '<image>' },
                   { type: 'image', url: 'data:image/png;base64,one' },
                 ],
                 restoreMessage: {

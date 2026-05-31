@@ -218,7 +218,7 @@ describe("thread detail route", () => {
   });
 
   it("still caches app-server detail when no official stream state exists", async () => {
-    const { context, appServer } = await createHarness();
+    const { context, officialIpc, appServer } = await createHarness();
 
     const response = await context.app.inject({
       method: "GET",
@@ -240,6 +240,10 @@ describe("thread detail route", () => {
       },
     ]);
     expect(context.database.status().threadDetailCount).toBe(1);
+    expect(officialIpc.isOwnedConversation("thread-app-server")).toBe(true);
+    expect(
+      officialIpc.canBroadcastOwnedConversation("thread-app-server"),
+    ).toBe(false);
   });
 
   it("overlays locally pinned state onto thread detail responses", async () => {
@@ -403,5 +407,87 @@ describe("thread detail route", () => {
       },
     );
     expect(context.database.status().threadDetailCount).toBe(0);
+  });
+
+  it("retires a stale external active cache when app-server has a newer completed turn", async () => {
+    const officialIpc = createBridge();
+    officialIpc.restoreThreadStreamState({
+      threadId: "thread-stale-finished",
+      conversationId: "thread-stale-finished",
+      hostId: "local",
+      ownerClientId: "desktop-client",
+      sourceClientId: "desktop-client",
+      conversationState: {
+        id: "thread-stale-finished",
+        name: "Stale active snapshot",
+        threadRuntimeStatus: { type: "active" },
+        turns: [
+          {
+            id: "turn-stale-active",
+            status: "active",
+            items: [{ type: "reasoning", text: "thinking" }],
+          },
+        ],
+      },
+      changeType: "snapshot",
+      cacheVersion: 1,
+      updatedAtIso: "2026-05-29T00:00:00.000Z",
+      isInProgress: true,
+      activeTurnId: "turn-stale-active",
+    });
+    const { context, appServer } = await createHarness(officialIpc);
+    appServer.threadReadResult = {
+      thread: {
+        id: "thread-stale-finished",
+        name: "Finished app-server thread",
+        cwd: "C:\\workspace\\codex_web",
+        updatedAt: "2026-05-31T00:00:00.000Z",
+        status: "completed",
+        threadRuntimeStatus: { type: "completed" },
+        turns: [
+          {
+            id: "turn-stale-active",
+            status: "completed",
+            items: [{ type: "agentMessage", text: "finished" }],
+          },
+        ],
+      },
+    };
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-stale-finished",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "app-server-readonly-stale-official-retired",
+      data: {
+        thread: {
+          id: "thread-stale-finished",
+          inProgress: false,
+        },
+        turns: [
+          {
+            id: "turn-stale-active",
+            status: "completed",
+            items: [{ type: "assistant", text: "finished" }],
+          },
+        ],
+      },
+    });
+    expect(
+      officialIpc.getThreadStreamState("thread-stale-finished"),
+    ).toMatchObject({
+      threadId: "thread-stale-finished",
+      ownerClientId: "desktop-client",
+      isInProgress: false,
+      activeTurnId: "",
+      conversationState: {
+        id: "thread-stale-finished",
+        status: "completed",
+        turns: [{ id: "turn-stale-active", status: "completed" }],
+      },
+    });
   });
 });

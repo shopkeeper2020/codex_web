@@ -40,13 +40,39 @@ export type ThreadReadParams = {
   includeTurns: boolean;
 };
 
+export type ThreadTurnsListParams = {
+  threadId: string;
+  cursor?: string | null;
+  limit?: number | null;
+};
+
 export type ThreadStartParams = {
   cwd: string;
+  workspaceRoots?: string[];
+  threadSource?: string;
+};
+
+export type ThreadForkParams = {
+  threadId: string;
+  path: string | null;
+  cwd?: string | null;
+  threadSource?: string;
+  config?: Record<string, unknown>;
+  developerInstructions?: string;
+  excludeTurns?: boolean;
+  ephemeral?: boolean;
+  persistExtendedHistory?: boolean;
+};
+
+export type ThreadInjectItemsParams = {
+  threadId: string;
+  items: Array<Record<string, unknown>>;
 };
 
 export type TurnStartParams = {
   threadId: string;
   input: Array<Record<string, unknown>>;
+  cwd?: string | null;
   attachments?: Array<Record<string, unknown>>;
   restoreMessage?: Record<string, unknown>;
   model?: string;
@@ -238,8 +264,24 @@ export class CodexAppServerProcess {
     return await this.rpc("thread/read", params);
   }
 
+  async threadTurnsList(params: ThreadTurnsListParams): Promise<unknown> {
+    return await this.rpc("thread/turns/list", {
+      threadId: params.threadId,
+      cursor: params.cursor ?? null,
+      limit: params.limit ?? null,
+    });
+  }
+
   async threadStart(params: ThreadStartParams): Promise<unknown> {
     return await this.rpc("thread/start", params);
+  }
+
+  async threadFork(params: ThreadForkParams): Promise<unknown> {
+    return await this.rpc("thread/fork", params);
+  }
+
+  async threadInjectItems(params: ThreadInjectItemsParams): Promise<unknown> {
+    return await this.rpc("thread/inject_items", params);
   }
 
   async turnStart(params: TurnStartParams): Promise<unknown> {

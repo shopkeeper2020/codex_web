@@ -297,6 +297,9 @@ test.describe("codex_web app shell", () => {
       const rightSidebar = page.getByRole("complementary", {
         name: "右侧栏",
       });
+      await expect(
+        rightSidebar.getByRole("button", { name: /文件 浏览项目文件/ }),
+      ).toBeVisible();
       await expect(rightTabList.getByRole("tab")).toHaveCount(0);
       await expect(
         rightSidebar.getByRole("button", { name: /文件 浏览项目文件/ }),
@@ -542,13 +545,18 @@ test.describe("codex_web app shell", () => {
     });
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: /ui和ux有什么区别/ }).click();
+    await page.getByRole("button", { name: "打开右侧栏" }).click();
 
     const sideChat = page.getByRole("region", { name: "侧边聊天" });
     await expect(sideChat).toBeVisible();
     await expect(
       page.getByRole("tab", { name: "ui和ux有什么区别？" }),
     ).toBeVisible();
+    await expect(
+      page
+        .getByRole("tablist", { name: "右侧栏标签" })
+        .getByRole("tab"),
+    ).toHaveCount(1);
     await expect(sideChat.getByText("UI 是界面，UX 是体验。")).toBeVisible();
     const firstSideInput = sideChat.getByRole("textbox", {
       name: "侧边聊天输入",
@@ -564,14 +572,14 @@ test.describe("codex_web app shell", () => {
     });
     await expect(firstSideInput).toHaveValue("");
 
-    await page.getByRole("button", { name: /折叠右侧栏/ }).click();
-    await page.getByRole("button", { name: /侧边聊天 2/ }).click();
+    await page.getByRole("button", { name: "新建侧栏标签" }).click();
+    await page.getByRole("button", { name: /侧边聊天 发起侧边对话/ }).click();
     await expect(page.getByRole("tab", { name: "侧边聊天 2" })).toBeVisible();
     await expect(
       page
         .getByRole("region", { name: "侧边聊天" })
         .getByText("当前侧边聊天暂无消息。"),
-    ).toBeVisible();
+    ).toHaveCount(0);
 
     await expect(
       page
@@ -588,7 +596,7 @@ test.describe("codex_web app shell", () => {
       .click();
     await expect.poll(() => turnStartBodies.length).toBe(2);
     expect(turnStartBodies[1]).toMatchObject({
-      threadId: "side-chat-empty-e2e",
+      threadId: "side-chat-created-e2e-1",
       text: "从空白侧聊开始",
       attachmentIds: [],
     });
@@ -927,6 +935,7 @@ test.describe("codex_web app shell", () => {
 
     let capturedCreateThread: Record<string, unknown> | null = null;
     let capturedTurnStart: Record<string, unknown> | null = null;
+    let capturedAttachmentThreadId: string | null | undefined;
     await page.route("**/api/domain/thread-create", async (route) => {
       capturedCreateThread = route.request().postDataJSON() as Record<
         string,
@@ -946,6 +955,28 @@ test.describe("codex_web app shell", () => {
         contentType: "application/json",
         body: JSON.stringify({
           data: { mode: "official-follower", result: { ok: true } },
+        }),
+      });
+    });
+    await page.route("**/api/attachments*", async (route) => {
+      const url = new URL(route.request().url());
+      capturedAttachmentThreadId = url.searchParams.get("threadId");
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            id: "draft-attachment-e2e",
+            filename: "draft-note.txt",
+            mimeType: "text/plain",
+            size: 16,
+            path: "C:\\workspace\\codex_web\\data\\attachments\\draft-note.txt",
+            sha256:
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            createdAtIso: "2026-05-31T08:00:00.000Z",
+            threadId: null,
+            turnId: null,
+            officialReferenceId: null,
+          },
         }),
       });
     });
@@ -979,6 +1010,18 @@ test.describe("codex_web app shell", () => {
     expect(capturedCreateThread).toBeNull();
     expect(capturedTurnStart).toBeNull();
 
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await page.getByLabel("打开输入选项").click();
+    await page.getByRole("menuitem", { name: "添加照片和文件" }).click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles({
+      name: "draft-note.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("draft attachment", "utf8"),
+    });
+    await expect(page.getByText("draft-note.txt")).toBeVisible();
+    expect(capturedAttachmentThreadId).toBeNull();
+
     await page.getByLabel("输入消息").fill("draft first turn");
     await page.getByRole("button", { name: "发送" }).click();
 
@@ -989,7 +1032,7 @@ test.describe("codex_web app shell", () => {
       text: "draft first turn",
       model: "gpt-default",
       effort: "medium",
-      attachmentIds: [],
+      attachmentIds: ["draft-attachment-e2e"],
       permissionMode: "full-access",
     });
     await expect(page).toHaveURL(new RegExp(`/thread/${draftThreadId}$`));
@@ -1116,7 +1159,7 @@ test.describe("codex_web app shell", () => {
     await expect(activityPanel.getByText("owner")).toHaveCount(0);
     await expect(
       activityPanel.getByText("官方暂未提供子智能体列表"),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(activityPanel.getByText("Noether")).toHaveCount(0);
 
     const composerBox = await page.locator("form").boundingBox();

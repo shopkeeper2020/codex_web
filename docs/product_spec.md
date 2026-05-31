@@ -769,7 +769,7 @@ Possible strategies:
 
 1. Router discovery: send follower request without `targetClientId` and let official IPC discover a capable client.
 2. Official thread resume path: investigate whether official Desktop/VS Code expose IPC methods that can resume a thread into an owner role.
-3. Local fallback: if no official owner can be restored, run through the Web app-server and broadcast Web-owned snapshots.
+3. Local fallback: if no official owner can be restored, run through the Web app-server; broadcast Web-owned snapshots only for threads whose official stream shape is safe to publish, and keep Web-created threads local-only by default.
 
 The first version should implement router discovery and robust fallback. Explicit owner wake/resume can be a dedicated protocol investigation if official clients do not already support it.
 

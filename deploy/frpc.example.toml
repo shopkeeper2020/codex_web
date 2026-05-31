@@ -1,0 +1,16 @@
+serverAddr = "frp.example.com"
+serverPort = 7000
+
+[auth]
+method = "token"
+token = "YOUR_FRP_TOKEN"
+
+[transport.tls]
+enable = true
+
+[[proxies]]
+name = "codex_web_http"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 18930
+customDomains = ["codex.example.com"]

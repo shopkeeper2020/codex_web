@@ -166,6 +166,7 @@ async function injectWebSocket(
   return (context.app as WebSocketInjectingApp).injectWS(
     "/api/realtime",
     {
+      headers: { host: "127.0.0.1" },
       socket: { remoteAddress: "127.0.0.1" },
     },
     { onInit },

@@ -2,35 +2,140 @@
 
 简体中文 | [English](./README.en.md)
 
-`codex_web` 是一个正在开发中的 Codex Web 客户端项目，目标是在浏览器中提供接近 Codex Desktop 的使用体验，并探索与 Codex Desktop、VS Code 扩展之间的实时同步能力。
+`codex_web` 是一个非官方的本地 Codex Web 客户端。它把 Codex Desktop 风格的会话列表、聊天区、Composer、设置/诊断和移动端访问能力放到浏览器里，并实验性接入 Codex Desktop / VS Code Codex 扩展的实时同步链路。
 
-## 当前状态
-
-项目正在准备首次公开发布。源代码尚未开放，预计于 **2026 年 5 月 31 日** 发布 **0.1.2605311** 版本。
-
-当前公开仓库仅用于提前说明项目方向、发布节奏和后续文档入口。
+项目面向本机运行和局域网访问，不是云端托管服务。后端运行在你的电脑上，负责连接官方 Codex IPC、app-server、本地 SQLite、附件存储和浏览器 Web UI。
 
 ## 项目目标
 
-- 在浏览器中复刻 Codex Desktop 的主要界面和交互体验
-- 支持桌面浏览器和移动浏览器访问
-- 支持项目列表、会话列表、流式对话和 Composer
-- 探索与官方 Codex Desktop、VS Code 扩展之间的三端同步
-- 保持清晰、可维护的前后端架构
+Codex Desktop 很适合在电脑上工作，但它不是一个天然的浏览器/LAN/手机入口。`codex_web` 的目标是在不把会话搬到云端的前提下，把本机 Codex 工作流扩展到更多屏幕和更多操作方式：
 
-## 计划中的技术栈
+- 在浏览器里提供接近 Codex Desktop 的主界面和交互密度
+- 让手机、平板或局域网内其他设备可以访问同一台电脑上的 Codex 会话
+- 与 Codex Desktop、VS Code Codex 扩展共享会话状态，并尽量保持实时同步
+- 把官方协议、Web API、前端 domain model 和 UI 渲染分层，避免前端直接依赖 raw protocol
+- 提供可脱敏导出的诊断材料，方便排查同步、IPC、app-server 和缓存问题
 
-- React
-- TypeScript
-- Vite
-- Fastify
-- SQLite / Drizzle
-- Playwright
-- pnpm workspace
+## 核心功能
 
-## 适用场景
+- **Desktop-like 会话体验**：项目列表、普通/归档会话列表、长列表虚拟滚动、会话详情、Markdown 消息、代码块、表格、文件变更和审批卡片。
+- **完整 Composer**：文本输入、Enter/Shift+Enter、模型选择、推理强度、协作模式、Skills、附件、图片预览、发送后附件关联。
+- **三端同步实验**：通过官方 IPC / app-server bridge 读取 thread list/detail，支持 follower start / steer / interrupt，并通过 WebSocket 推送实时事件。
+- **侧边聊天**：读取官方同步出的 side conversations，并支持向已有官方侧聊发送消息。
+- **移动端和 LAN 访问**：响应式布局、移动抽屉、移动 Composer、运行状态折叠面板、PWA manifest、LAN URL 展示和登录门禁。
+- **本地文件与附件**：受限文件浏览/预览、消息图片渲染、file change 预览、Web 上传附件持久化和清理。
+- **安全与诊断**：LAN 密码、HTTP-only session cookie、session 撤销、诊断包递归脱敏、同步 readiness、协议兼容性和 `sync:doctor` CLI。
+- **测试覆盖**：TypeScript typecheck、Vitest 单元测试、Playwright 桌面/移动 E2E、UI fidelity baseline 入口。
 
-`codex_web` 面向希望在浏览器、手机或局域网设备上使用本机 Codex 能力的用户。它不是云端托管服务，而是更偏向本机运行、本机资源访问和个人工作流扩展的 Web 客户端。
+## 当前状态
+
+当前仓库已经包含可运行源码，版本仍处于 `0.1.x` 实验阶段。核心路径包括：
+
+- Desktop-like Web shell、会话列表、归档列表、搜索、设置和诊断面板
+- Composer 的模型、推理强度、协作模式、Skills、附件和 active turn steer / interrupt
+- 官方 IPC / app-server bridge，用于 thread list、thread detail、follower start / steer / interrupt 和实时事件
+- 侧边聊天读取与已有官方侧聊发送
+- 本地文件预览、图片预览、附件持久化和受限文件读取
+- LAN 登录门禁、session 管理、诊断包脱敏导出
+- 桌面和移动端 Playwright 回归覆盖
+
+三端同步仍依赖官方 Codex Desktop / VS Code 扩展和官方协议形态，协议升级时可能需要跟进适配。
+
+## 快速启动
+
+前置条件：
+
+- Node.js 22+
+- pnpm 10+
+- Codex Desktop
+- 可选：VS Code Codex 扩展，用于三端同步验证
+
+安装依赖：
+
+```powershell
+pnpm install
+```
+
+开发模式：
+
+```powershell
+pnpm dev
+```
+
+默认地址：
+
+```text
+Web 开发服务器: http://127.0.0.1:18931
+后端 API:       http://127.0.0.1:18930
+```
+
+生产模式：
+
+```powershell
+pnpm build
+pnpm start
+```
+
+`pnpm start` 会启动 Fastify 后端，监听 `0.0.0.0:18930`，并提供构建后的 Web 静态页面。局域网设备访问时需要 LAN 密码；首次启动会生成本机私有配置和密码 hash。
+
+## 常用命令
+
+```powershell
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm check
+pnpm test:e2e -- --list
+pnpm sync:doctor -- --json
+```
+
+Playwright 默认访问 `http://127.0.0.1:18930/`。如果要跑前端开发服务器，可设置 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:18931`。
+
+## 仓库结构
+
+```text
+apps/
+  server/      Fastify 后端、IPC bridge、app-server bridge、WebSocket/API
+  web/         React + Vite 前端
+packages/
+  api/         前后端共享 API schema 和类型
+  config/      运行配置、路径和端口解析
+  domain/      Web domain model 和官方数据 normalizer
+  i18n/        zh-CN / en-US 语言包和翻译 key
+  protocol/    官方 IPC / app-server wire protocol
+  ui/          UI token 出口
+docs/          产品、启动、同步、排障和踩坑文档
+documentation/
+  protocol/    官方协议研究记录
+data/          本机运行数据目录，默认被 Git 忽略
+```
+
+更多细节见 [docs/repository_overview.md](./docs/repository_overview.md)。
+
+## 本机数据与安全边界
+
+`data/` 是运行时目录，默认不提交：
+
+- `data/config.local.json`：端口、主题、诊断开关、LAN 密码 hash、session secret
+- `data/auth.sessions.json`：LAN session 记录
+- `data/*.sqlite`：本地索引和投影数据
+- `data/attachments/`：Web 上传附件副本
+- `data/logs/`、`data/tmp/`：日志和临时诊断材料
+
+这些文件已在 `.gitignore` 中排除。不要用 `git add -f data/...` 把它们加入公开仓库。
+
+诊断导出通过 `/api/diagnostics/export` 生成，设计目标是只包含脱敏状态摘要，不包含会话正文、附件内容、密码、token、cookie、session secret 或原始协议帧。
+
+## 文档入口
+
+- [启动手册](./docs/startup_runbook.md)
+- [仓库结构](./docs/repository_overview.md)
+- [产品规格](./docs/product_spec.md)
+- [MVP 收口看板](./docs/mvp_gap_tracker.md)
+- [三端同步验收清单](./docs/sync_acceptance_checklist.md)
+- [同步排障指南](./docs/troubleshooting_sync.md)
+- [UI 高保真基准](./docs/ui_fidelity.md)
+- [Playwright E2E](./docs/playwright_e2e.md)
 
 ## 免责声明
 
@@ -38,4 +143,4 @@
 
 ## License
 
-许可证将在源代码公开时一并确定。
+当前尚未选择开源许可证。在许可证明确前，请不要假定本仓库授予再分发或商用权利。

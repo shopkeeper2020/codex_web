@@ -139,6 +139,23 @@ function isActiveStatus(value: unknown): boolean {
   ].includes(compactStatus(value));
 }
 
+function isTerminalStatus(value: unknown): boolean {
+  return [
+    "completed",
+    "complete",
+    "done",
+    "success",
+    "succeeded",
+    "failed",
+    "failure",
+    "error",
+    "interrupted",
+    "interrupt",
+    "canceled",
+    "cancelled",
+  ].includes(compactStatus(value));
+}
+
 function cloneJson<T>(value: T): T {
   if (typeof structuredClone === "function") return structuredClone(value);
   return JSON.parse(JSON.stringify(value)) as T;
@@ -256,21 +273,42 @@ export function readOfficialConversationId(params: unknown): string {
   );
 }
 
+function readTurnRecordId(turn: Record<string, unknown>): string {
+  return (
+    readString(turn.turnId) || readString(turn.turn_id) || readString(turn.id)
+  );
+}
+
 function readActiveTurnId(conversationState: unknown): string {
   const state = asRecord(conversationState);
   const turns = Array.isArray(state?.turns) ? state.turns : [];
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = asRecord(turns[index]);
     if (!turn) continue;
-    if (isActiveStatus(turn.status) || isActiveStatus(turn.state)) {
-      return (
-        readString(turn.turnId) ||
-        readString(turn.turn_id) ||
-        readString(turn.id)
-      );
-    }
+    if (isActiveStatus(turn.status) || isActiveStatus(turn.state))
+      return readTurnRecordId(turn);
   }
   return "";
+}
+
+function snapshotSettlesActiveTurn(
+  existing: OfficialThreadStreamState,
+  conversationState: unknown,
+): boolean {
+  const activeTurnId =
+    existing.activeTurnId || readActiveTurnId(existing.conversationState);
+  if (!activeTurnId) return false;
+  const state = asRecord(conversationState);
+  const turns = Array.isArray(state?.turns) ? state.turns : [];
+  const turn = turns
+    .map((value) => asRecord(value))
+    .find((value) => value && readTurnRecordId(value) === activeTurnId);
+  if (!turn) return false;
+  return (
+    isTerminalStatus(turn.status) ||
+    isTerminalStatus(turn.state) ||
+    isTerminalStatus(turn.threadRuntimeStatus)
+  );
 }
 
 function readIsInProgress(conversationState: unknown): boolean {
@@ -314,6 +352,7 @@ export class OfficialIpcBridge {
   private requestHandlers = new Map<string, OfficialRequestHandler>();
   private streamStates = new Map<string, OfficialThreadStreamState>();
   private ownedConversationIds = new Set<string>();
+  private localOnlyOwnedConversationIds = new Set<string>();
   private followerRequestHistory: FollowerRequestRecord[] = [];
   private ownershipHandoffHistory: OwnershipHandoffRecord[] = [];
   private rawFrameLogging = false;
@@ -386,6 +425,7 @@ export class OfficialIpcBridge {
     this.requestHandlers.clear();
     this.streamStates.clear();
     this.ownedConversationIds.clear();
+    this.localOnlyOwnedConversationIds.clear();
   }
 
   onNotification(
@@ -405,6 +445,7 @@ export class OfficialIpcBridge {
       pipePath: this.pipePath || null,
       cachedConversationCount: this.streamStates.size,
       ownedConversationCount: this.ownedConversationIds.size,
+      localOnlyOwnedConversationCount: this.localOnlyOwnedConversationIds.size,
       registeredRequestHandlers: this.getRegisteredRequestHandlers(),
       recentFollowerRequests: this.followerRequestHistory.slice(-20),
       recentOwnershipHandoffs: this.ownershipHandoffHistory.slice(-20),
@@ -477,6 +518,23 @@ export class OfficialIpcBridge {
 
   canOwnConversations(): boolean {
     return Boolean(this.clientId);
+  }
+
+  claimLocalOnlyConversation(threadId: string): boolean {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId || !this.clientId) return false;
+    if (this.isExternallyOwnedConversation(normalizedThreadId)) return false;
+    this.ownedConversationIds.add(normalizedThreadId);
+    this.localOnlyOwnedConversationIds.add(normalizedThreadId);
+    return true;
+  }
+
+  canBroadcastOwnedConversation(threadId: string): boolean {
+    const normalizedThreadId = threadId.trim();
+    return (
+      this.isOwnedConversation(normalizedThreadId) &&
+      !this.localOnlyOwnedConversationIds.has(normalizedThreadId)
+    );
   }
 
   registerRequestHandler(
@@ -622,6 +680,8 @@ export class OfficialIpcBridge {
   ): boolean {
     const normalizedThreadId = threadId.trim();
     if (!normalizedThreadId || !this.clientId) return false;
+    if (this.localOnlyOwnedConversationIds.has(normalizedThreadId))
+      return false;
     this.ownedConversationIds.add(normalizedThreadId);
     this.storeThreadStreamState({
       threadId: normalizedThreadId,
@@ -680,9 +740,11 @@ export class OfficialIpcBridge {
 
   releaseOwnedConversation(threadId: string, reason?: string): void {
     const normalizedThreadId = threadId.trim();
-    if (!this.ownedConversationIds.has(normalizedThreadId)) return;
+    const wasOwned = this.ownedConversationIds.delete(normalizedThreadId);
+    const wasLocalOnly =
+      this.localOnlyOwnedConversationIds.delete(normalizedThreadId);
+    if (!wasOwned && !wasLocalOnly) return;
     const existing = this.streamStates.get(normalizedThreadId);
-    this.ownedConversationIds.delete(normalizedThreadId);
     this.streamStates.delete(normalizedThreadId);
     this.recordOwnershipHandoff({
       conversationId: normalizedThreadId,
@@ -691,6 +753,25 @@ export class OfficialIpcBridge {
       sourceClientId: this.clientId,
       reason,
     });
+  }
+
+  discardConversationFromCache(threadId: string, reason?: string): boolean {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) return false;
+    const existing = this.streamStates.get(normalizedThreadId);
+    const wasOwned = this.ownedConversationIds.delete(normalizedThreadId);
+    const wasLocalOnly =
+      this.localOnlyOwnedConversationIds.delete(normalizedThreadId);
+    const deleted = this.streamStates.delete(normalizedThreadId);
+    if (!existing && !wasOwned && !wasLocalOnly && !deleted) return false;
+    this.recordOwnershipHandoff({
+      conversationId: normalizedThreadId,
+      previousOwnerClientId: existing?.ownerClientId ?? this.clientId,
+      nextOwnerClientId: null,
+      sourceClientId: this.clientId,
+      reason,
+    });
+    return true;
   }
 
   private getRegisteredRequestHandlers(): RegisteredRequestHandlerRecord[] {
@@ -998,11 +1079,17 @@ export class OfficialIpcBridge {
     const conversation = asRecord(input.conversationState);
     const status = compactStatus(conversation?.status ?? conversation?.state);
     if (status === "notloaded") return true;
-    return Boolean(
+    if (
       input.sourceClientId &&
       input.existing.ownerClientId &&
-      input.sourceClientId !== input.existing.ownerClientId,
-    );
+      input.sourceClientId !== input.existing.ownerClientId
+    ) {
+      return !snapshotSettlesActiveTurn(
+        input.existing,
+        input.conversationState,
+      );
+    }
+    return false;
   }
 
   private storeThreadStreamState(input: {
@@ -1055,6 +1142,7 @@ export class OfficialIpcBridge {
     );
     if (!externalSource && !externalOwner) return;
     this.ownedConversationIds.delete(input.conversationId);
+    this.localOnlyOwnedConversationIds.delete(input.conversationId);
     this.recordOwnershipHandoff(input);
   }
 

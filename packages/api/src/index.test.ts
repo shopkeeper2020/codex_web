@@ -36,6 +36,10 @@ import {
   runtimeOptionsResponseSchema,
   settingsResponseSchema,
   settingsUpdateRequestSchema,
+  sideConversationCloseRequestSchema,
+  sideConversationCloseResponseSchema,
+  sideConversationCreateRequestSchema,
+  sideConversationCreateResponseSchema,
   skillsResponseSchema,
   threadArchiveRequestSchema,
   threadArchiveResponseSchema,
@@ -180,6 +184,7 @@ describe("API contract schemas", () => {
       turnStartRequestSchema.parse({
         conversationId: " thread-a ",
         text: "hello",
+        cwd: "C:\\workspace\\codex_web",
         skills: [{ name: "skill", path: "C:\\skill" }],
         permissionMode: "full-access",
       }),
@@ -187,6 +192,7 @@ describe("API contract schemas", () => {
       threadId: "thread-a",
       conversationId: "thread-a",
       text: "hello",
+      cwd: "C:\\workspace\\codex_web",
       skills: [{ name: "skill", path: "C:\\skill" }],
       permissionMode: "full-access",
     });
@@ -926,6 +932,55 @@ describe("API contract schemas", () => {
         data: { thread, raw: { id: "thread-a" } },
       }).data.thread.id,
     ).toBe("thread-a");
+
+    expect(
+      sideConversationCreateRequestSchema.parse({
+        threadId: " thread-a ",
+        cwd: " C:\\workspace\\project-a ",
+      }),
+    ).toMatchObject({
+      threadId: "thread-a",
+      cwd: "C:\\workspace\\project-a",
+    });
+
+    expect(
+      sideConversationCreateResponseSchema.parse({
+        data: {
+          sideConversation: {
+            id: "side-a",
+            title: "侧边聊天",
+            createdAtIso: null,
+            updatedAtIso: null,
+            inProgress: false,
+            hasUnread: false,
+            turnCount: 0,
+            turns: [],
+          },
+          raw: { id: "side-a" },
+        },
+      }).data.sideConversation.id,
+    ).toBe("side-a");
+
+    expect(
+      sideConversationCloseRequestSchema.parse({
+        threadId: " thread-a ",
+        sideConversationId: " side-a ",
+      }),
+    ).toMatchObject({
+      threadId: "thread-a",
+      sideConversationId: "side-a",
+    });
+
+    expect(
+      sideConversationCloseResponseSchema.parse({
+        data: {
+          ok: true,
+          sideConversationId: "side-a",
+          discarded: true,
+          interrupted: false,
+        },
+      }).data.discarded,
+    ).toBe(true);
 
     expect(
       threadRenameRequestSchema.parse({

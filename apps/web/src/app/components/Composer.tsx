@@ -241,6 +241,9 @@ export function Composer({
   onSend,
   onInterrupt,
   onCompactThread,
+  formAriaLabel = "Composer",
+  inputAriaLabel = "输入消息",
+  sendAriaLabel = "发送",
 }: {
   threadId: string;
   cwd: string | null;
@@ -255,6 +258,9 @@ export function Composer({
   ) => Promise<void>;
   onInterrupt: () => Promise<void> | void;
   onCompactThread?: () => Promise<void> | void;
+  formAriaLabel?: string;
+  inputAriaLabel?: string;
+  sendAriaLabel?: string;
 }): ReactElement {
   const effectiveRuntimeOptions = runtimeOptions ?? FALLBACK_RUNTIME_OPTIONS;
   const modelOptions = effectiveRuntimeOptions.models.length
@@ -311,6 +317,8 @@ export function Composer({
   const audioContextRef = useRef<AudioContext | null>(null);
   const waveformFrameRef = useRef<number | null>(null);
   const previousRuntimeDefaultsRef = useRef(effectiveRuntimeOptions.defaults);
+  const uploadFocusRequestedRef = useRef(false);
+  const focusRetryTimerRef = useRef<number | null>(null);
   const activeSteerMode = Boolean(activeTurnId) && sendMode === "steer";
   const selectedModel =
     modelOptions.find((option) => option.model === model) ??
@@ -657,8 +665,23 @@ export function Composer({
   useEffect(() => {
     return () => {
       stopDictationStream();
+      if (focusRetryTimerRef.current !== null) {
+        window.clearTimeout(focusRetryTimerRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!uploadFocusRequestedRef.current || controlsDisabled) return;
+    scheduleFocusTextareaEnd();
+  }, [attachments.length, controlsDisabled]);
+
+  useEffect(() => {
+    if (!uploadFocusRequestedRef.current || uploading || controlsDisabled) {
+      return;
+    }
+    scheduleFocusTextareaEnd();
+  }, [controlsDisabled, uploading]);
 
   useEffect(() => {
     if (dictationState !== "recording") return undefined;
@@ -702,13 +725,16 @@ export function Composer({
   async function uploadFiles(files: FileList | File[]): Promise<void> {
     const selectedFiles = Array.from(files);
     if (selectedFiles.length === 0 || disabled) return;
+    const attachmentThreadId = threadId.startsWith("draft:")
+      ? null
+      : threadId || null;
     setUploading(true);
     setUploadError("");
     try {
       const uploaded: Attachment[] = [];
       for (const file of selectedFiles) {
         uploaded.push(
-          await uploadAttachment({ file, threadId: threadId || null }),
+          await uploadAttachment({ file, threadId: attachmentThreadId }),
         );
       }
       setAttachments((current) => [...current, ...uploaded]);
@@ -717,22 +743,50 @@ export function Composer({
         unknownError instanceof Error ? unknownError.message : "upload failed",
       );
     } finally {
+      uploadFocusRequestedRef.current = true;
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
+      scheduleFocusTextareaEnd();
     }
   }
 
-  function focusTextareaEnd(): void {
+  function focusTextareaEnd(): boolean {
     const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.focus();
+    if (!textarea || textarea.disabled) return false;
+    textarea.focus({ preventScroll: true });
     const end = textarea.value.length;
     textarea.setSelectionRange(end, end);
+    return document.activeElement === textarea;
+  }
+
+  function scheduleFocusTextareaEnd(): void {
+    if (focusRetryTimerRef.current !== null) {
+      window.clearTimeout(focusRetryTimerRef.current);
+      focusRetryTimerRef.current = null;
+    }
+    let attempts = 0;
+    const attemptFocus = (): void => {
+      attempts += 1;
+      if (focusTextareaEnd()) {
+        uploadFocusRequestedRef.current = false;
+        focusRetryTimerRef.current = null;
+        return;
+      }
+      if (attempts >= 10) {
+        focusRetryTimerRef.current = null;
+        return;
+      }
+      focusRetryTimerRef.current = window.setTimeout(
+        attemptFocus,
+        attempts < 3 ? 16 : 50,
+      );
+    };
+    focusRetryTimerRef.current = window.setTimeout(attemptFocus, 0);
   }
 
   function clearSlashTriggerText(): void {
     setText((current) => (current.startsWith("/") ? "" : current));
-    window.setTimeout(focusTextareaEnd, 0);
+    scheduleFocusTextareaEnd();
   }
 
   function applySlashMenuItem(item: SlashMenuItem | null): void {
@@ -952,6 +1006,7 @@ export function Composer({
           .filter((file): file is File => Boolean(file));
     if (files.length === 0) return;
     event.preventDefault();
+    uploadFocusRequestedRef.current = true;
     void uploadFiles(files);
   }
 
@@ -1054,7 +1109,7 @@ export function Composer({
     <div className={styles.composerDock}>
       <form
         className={composerClassName}
-        aria-label="Composer"
+        aria-label={formAriaLabel}
         onSubmit={(event) => void handleSubmit(event)}
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleDrop}
@@ -1234,7 +1289,7 @@ export function Composer({
             ref={textareaRef}
             placeholder={composerPlaceholder}
             rows={2}
-            aria-label="输入消息"
+            aria-label={inputAriaLabel}
             disabled={controlsDisabled}
             value={text}
             onChange={(event) => handleComposerTextChange(event.target.value)}
@@ -1285,7 +1340,7 @@ export function Composer({
               <button
                 className={styles.sendButton}
                 type="submit"
-                aria-label="发送"
+                aria-label={sendAriaLabel}
                 disabled={disabled || sending || uploading || !hasSubmitContent}
               >
                 <SendHorizontal size={18} />
@@ -1657,7 +1712,9 @@ export function Composer({
               <button
                 className={styles.sendButton}
                 type={stopActiveTurnMode ? "button" : "submit"}
-                aria-label={stopActiveTurnMode ? "停止当前回复" : "发送"}
+                aria-label={
+                  stopActiveTurnMode ? "停止当前回复" : sendAriaLabel
+                }
                 disabled={
                   disabled ||
                   sending ||

@@ -32,6 +32,10 @@ import {
   runtimeOptionsResponseSchema,
   settingsResponseSchema,
   settingsUpdateRequestSchema,
+  sideConversationCloseRequestSchema,
+  sideConversationCloseResponseSchema,
+  sideConversationCreateRequestSchema,
+  sideConversationCreateResponseSchema,
   skillsResponseSchema,
   syncReadinessResponseSchema,
   threadArchiveRequestSchema,
@@ -86,6 +90,7 @@ import {
   type ThreadList,
   type ThreadDetail,
   type ThreadGoal,
+  type ThreadSideConversation,
   type Attachment,
 } from "@codex-web/domain";
 import {
@@ -128,7 +133,11 @@ import {
 import { normalizeRuntimeOptions } from "./runtimeOptions.js";
 import { normalizeSkillsListResponse } from "./skills.js";
 import { attachOfficialSideConversations } from "./sideConversations.js";
-import { installLocalOwnerSnapshotSync } from "./syncCoordinator.js";
+import {
+  installLocalOwnerSnapshotSync,
+  preserveSideConversationMetadata,
+  readAppServerThreadSnapshot,
+} from "./syncCoordinator.js";
 import { decideLocalTurnFallback } from "./turnFallback.js";
 import { buildProtocolCompatibility } from "./protocolCompatibility.js";
 import { buildSyncReadiness } from "./syncReadiness.js";
@@ -145,6 +154,17 @@ import {
 } from "./nativeTranscription.js";
 
 const THREAD_GOAL_READ_TIMEOUT_MS = 1200;
+const SIDE_CONVERSATION_BOUNDARY_TEXT = `Side conversation boundary.
+
+Everything before this boundary is inherited history from the parent thread. It is reference context only. It is not your current task.
+
+Do not continue, execute, or complete any instructions, plans, tool calls, approvals, edits, or requests from before this boundary. Only messages submitted after this boundary are active user instructions for this side conversation.
+
+You are a side-conversation assistant, separate from the main thread. Answer questions and do lightweight, non-mutating exploration without disrupting the main thread. If there is no user question after this boundary yet, wait for one.
+
+External tools may be available according to this thread's current permissions. Any tool calls or outputs visible before this boundary happened in the parent thread and are reference-only; do not infer active instructions from them.
+
+Do not modify files, source, git state, permissions, configuration, or workspace state unless the user explicitly asks for that mutation after this boundary. Do not request escalated permissions or broader sandbox access unless the user explicitly requests a mutation that requires it. If the user explicitly requests a mutation, keep it minimal, local to the request, and avoid disrupting the main thread.`;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -183,6 +203,83 @@ function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map((entry) => readString(entry)).filter(Boolean)
     : [];
+}
+
+function readNumberTimestampIso(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value > 10_000_000_000 ? value : value * 1000).toISOString();
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+  }
+  return null;
+}
+
+function sideConversationTitle(index = 0): string {
+  return index === 0 ? "侧边聊天" : `侧边聊天 ${index + 1}`;
+}
+
+function sideConversationFromFork(input: {
+  threadId: string;
+  forkThread: Record<string, unknown>;
+  title?: string;
+}): ThreadSideConversation {
+  return {
+    id: input.threadId,
+    title: input.title ?? sideConversationTitle(),
+    createdAtIso: readNumberTimestampIso(input.forkThread.createdAt),
+    updatedAtIso:
+      readNumberTimestampIso(input.forkThread.updatedAt) ??
+      readNumberTimestampIso(input.forkThread.createdAt),
+    inProgress: false,
+    hasUnread: false,
+    turnCount: 0,
+    turns: [],
+  };
+}
+
+function buildSideConversationSnapshot(input: {
+  sideThreadId: string;
+  parentThreadId: string;
+  cwd: string | null;
+  forkThread: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    ...input.forkThread,
+    id: input.sideThreadId,
+    cwd: input.cwd ?? (readString(input.forkThread.cwd) || null),
+    source: readString(input.forkThread.source) || "user",
+    sideConversation: true,
+    ephemeral: true,
+    parentThreadId: input.parentThreadId,
+    parentConversationId: input.parentThreadId,
+    sourceThreadId: input.parentThreadId,
+    sourceConversationId: input.parentThreadId,
+    forkedFromId:
+      readString(input.forkThread.forkedFromId) || input.parentThreadId,
+    turns: [],
+  };
+}
+
+function readActiveTurnIdFromStreamState(
+  state: OfficialThreadStreamState | null,
+): string {
+  if (readString(state?.activeTurnId)) return readString(state?.activeTurnId);
+  const record = asRecord(state?.conversationState);
+  const turns = Array.isArray(record?.turns) ? record.turns : [];
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = asRecord(turns[index]);
+    if (
+      turn &&
+      (isActiveStatus(turn.status) ||
+        isActiveStatus(turn.state) ||
+        isActiveStatus(turn.threadRuntimeStatus))
+    ) {
+      return readTurnRecordId(turn);
+    }
+  }
+  return "";
 }
 
 function readSkillInputs(value: unknown): Array<Record<string, unknown>> {
@@ -482,9 +579,69 @@ function isActiveStatus(value: unknown): boolean {
   ].includes(compactStatus(value));
 }
 
+function isTerminalStatus(value: unknown): boolean {
+  return [
+    "completed",
+    "complete",
+    "done",
+    "success",
+    "succeeded",
+    "failed",
+    "failure",
+    "error",
+    "interrupted",
+    "interrupt",
+    "canceled",
+    "cancelled",
+  ].includes(compactStatus(value));
+}
+
 function readTurnRecordId(turn: Record<string, unknown>): string {
   return (
     readString(turn.turnId) || readString(turn.turn_id) || readString(turn.id)
+  );
+}
+
+function readTimestampMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function readConversationUpdatedAtMs(conversationState: unknown): number | null {
+  const record = asRecord(conversationState);
+  if (!record) return null;
+  return (
+    readTimestampMs(record.updatedAtIso) ??
+    readTimestampMs(record.updatedAt) ??
+    readTimestampMs(record.updated_at)
+  );
+}
+
+function streamStateUpdatedAtMs(state: OfficialThreadStreamState): number | null {
+  return readTimestampMs(state.updatedAtIso);
+}
+
+function stateContainsSettledActiveTurn(
+  conversationState: unknown,
+  activeTurnId: string,
+): boolean {
+  if (!activeTurnId) return true;
+  const record = asRecord(conversationState);
+  const turns = Array.isArray(record?.turns) ? record.turns : [];
+  const turn = turns
+    .map((value) => asRecord(value))
+    .find((value) => value && readTurnRecordId(value) === activeTurnId);
+  if (!turn) return false;
+  return (
+    isTerminalStatus(turn.status) ||
+    isTerminalStatus(turn.state) ||
+    isTerminalStatus(turn.threadRuntimeStatus)
   );
 }
 
@@ -598,11 +755,47 @@ function conversationStateAlreadyActive(conversationState: unknown): boolean {
   });
 }
 
+const STALE_OFFICIAL_ACTIVE_GRACE_MS = 30_000;
+const STALE_OFFICIAL_ACTIVE_TIMESTAMP_TOLERANCE_MS = 1_000;
+
+function shouldRetireStaleOfficialActiveState(
+  conversationState: unknown,
+  streamState: OfficialThreadStreamState,
+): boolean {
+  if (!streamState.isInProgress) return false;
+  if (conversationStateAlreadyActive(conversationState)) return false;
+
+  const activeTurnId = readActiveTurnIdFromStreamState(streamState);
+  if (!stateContainsSettledActiveTurn(conversationState, activeTurnId)) {
+    return false;
+  }
+
+  const conversationUpdatedAtMs =
+    readConversationUpdatedAtMs(conversationState);
+  const stateUpdatedAtMs = streamStateUpdatedAtMs(streamState);
+  if (
+    conversationUpdatedAtMs !== null &&
+    stateUpdatedAtMs !== null &&
+    conversationUpdatedAtMs +
+      STALE_OFFICIAL_ACTIVE_TIMESTAMP_TOLERANCE_MS >=
+      stateUpdatedAtMs
+  ) {
+    return true;
+  }
+
+  return Boolean(
+    stateUpdatedAtMs !== null &&
+      Date.now() - stateUpdatedAtMs > STALE_OFFICIAL_ACTIVE_GRACE_MS,
+  );
+}
+
 function preserveOfficialLiveState(
   conversationState: unknown,
   streamState: OfficialThreadStreamState,
 ): unknown {
   if (!streamState.isInProgress) return conversationState;
+  if (shouldRetireStaleOfficialActiveState(conversationState, streamState))
+    return conversationState;
   if (conversationStateAlreadyActive(conversationState))
     return conversationState;
 
@@ -695,6 +888,7 @@ function hydratePinnedDetail(
 async function buildTurnStartParams(input: {
   threadId: string;
   text: string;
+  cwd?: unknown;
   model?: unknown;
   effort?: unknown;
   attachments?: Attachment[];
@@ -716,12 +910,17 @@ async function buildTurnStartParams(input: {
     threadId: input.threadId,
     input: [
       ...textInputs,
-      ...imageInputs.map((entry) => entry.input),
+      ...imageInputs.flatMap((entry) => [
+        entry.placeholderInput,
+        entry.input,
+      ]),
       ...readSkillInputs(input.skills),
     ],
   };
   const model = readString(input.model);
   const effort = readString(input.effort);
+  const cwd = readString(input.cwd);
+  if (cwd) params.cwd = cwd;
   if (model) params.model = model;
   if (effort) params.effort = effort;
   if (attachments.length > 0)
@@ -761,7 +960,10 @@ async function buildTurnSteerParams(input: {
     expectedTurnId: input.expectedTurnId,
     input: [
       ...textInputs,
-      ...imageInputs.map((entry) => entry.input),
+      ...imageInputs.flatMap((entry) => [
+        entry.placeholderInput,
+        entry.input,
+      ]),
       ...readSkillInputs(input.skills),
     ],
     restoreMessage: buildSteerRestoreMessage({
@@ -951,6 +1153,108 @@ export async function createServer(
       return detail ? { ...detail, goal: goalOverride } : null;
     }
     return await hydrateThreadGoal(threadId, detail);
+  };
+
+  const broadcastOwnedAppServerSnapshot = async (
+    threadId: string,
+    reason: string,
+  ): Promise<boolean> => {
+    if (
+      !officialIpc.isOwnedConversation(threadId) ||
+      !officialIpc.canBroadcastOwnedConversation(threadId)
+    ) {
+      return false;
+    }
+    try {
+      const threadSnapshot = await readAppServerThreadSnapshot(
+        appServer,
+        threadId,
+      );
+      if (!threadSnapshot) return false;
+      const broadcasted = officialIpc.broadcastConversationSnapshot(
+        threadId,
+        preserveSideConversationMetadata({
+          threadId,
+          conversationState: threadSnapshot,
+          existingState: officialIpc.getThreadStreamState(threadId),
+        }),
+      );
+      if (broadcasted) {
+        persistOfficialStreamState(threadId);
+      }
+      return broadcasted;
+    } catch (error) {
+      diagnostics.record("warn", "official-ipc", "post-turn-snapshot-failed", {
+        threadId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  };
+
+  const schedulePostTurnSnapshot = (threadId: string): void => {
+    for (const delayMs of [750, 2500, 8000]) {
+      const timer = setTimeout(() => {
+        void broadcastOwnedAppServerSnapshot(
+          threadId,
+          `post-local-turn-${delayMs}`,
+        );
+      }, delayMs);
+      timer.unref?.();
+    }
+  };
+
+  const claimIdleAppServerConversation = (
+    threadId: string,
+    detail: ThreadDetail | null,
+    reason: string,
+  ): boolean => {
+    if (!detail || detail.thread.inProgress) return false;
+    if (!officialIpc.canOwnConversations()) return false;
+    if (officialIpc.isExternallyOwnedConversation(threadId)) return false;
+    const state = officialIpc.getThreadStreamState(threadId);
+    if (
+      state?.isInProgress ||
+      conversationStateAlreadyActive(state?.conversationState)
+    ) {
+      return false;
+    }
+    const claimed = officialIpc.claimLocalOnlyConversation(threadId);
+    diagnostics.record(
+      claimed ? "info" : "warn",
+      "official-ipc",
+      claimed
+        ? "idle-app-server-thread-claimed"
+        : "idle-app-server-thread-claim-skipped",
+      { threadId, reason },
+    );
+    return claimed;
+  };
+
+  const claimIdleAppServerConversationByRead = async (
+    threadId: string,
+    reason: string,
+  ): Promise<boolean> => {
+    try {
+      const result = await appServer.threadRead({
+        threadId,
+        includeTurns: false,
+      });
+      const detail = normalizeOfficialThreadDetail({
+        thread: asRecord(result)?.thread ?? result,
+        owner: null,
+        fallbackThreadId: threadId,
+      });
+      return claimIdleAppServerConversation(threadId, detail, reason);
+    } catch (error) {
+      diagnostics.record("warn", "official-ipc", "idle-thread-claim-failed", {
+        threadId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
   };
 
   await app.register(fastifyCookie, { secret: auth.service.cookieSecret });
@@ -2335,24 +2639,24 @@ export async function createServer(
       const detail = await hydrateThreadGoal(
         threadId,
         hydratePinnedDetail(
-        hydrateSideConversations(
-          threadId,
-          normalizeOfficialConversationState({
+          hydrateSideConversations(
             threadId,
-            ownerClientId: state.ownerClientId,
-            cacheVersion: state.cacheVersion,
-            updatedAtIso: state.updatedAtIso,
-            isInProgress: state.isInProgress,
-            activeTurnId: state.activeTurnId,
-            conversationState: state.conversationState,
-          }),
-        ),
-        pinnedThreadIds,
+            normalizeOfficialConversationState({
+              threadId,
+              ownerClientId: state.ownerClientId,
+              cacheVersion: state.cacheVersion,
+              updatedAtIso: state.updatedAtIso,
+              isInProgress: state.isInProgress,
+              activeTurnId: state.activeTurnId,
+              conversationState: state.conversationState,
+            }),
+          ),
+          pinnedThreadIds,
         ),
       );
       const hasUsableOfficialDetail =
         detail && detail.turns.length > 0 && !detailHasEmptyActiveTurn(detail);
-      if (hasUsableOfficialDetail) {
+      if (hasUsableOfficialDetail && !state.isInProgress) {
         database.upsertThreadDetail(threadId, detail, "official-ipc");
         const response = threadDetailResponseSchema.safeParse({
           data: detail,
@@ -2375,20 +2679,18 @@ export async function createServer(
         return;
       }
       officialFallbackDetail = detail;
-      diagnostics.record(
-        "warn",
-        "domain",
-        detailHasEmptyActiveTurn(detail)
-          ? "official-thread-detail-empty-active-fallback"
-          : "official-thread-detail-empty-fallback",
-        {
-          threadId,
-          cacheVersion: state.cacheVersion,
-          hasDetail: Boolean(detail),
-          isInProgress: state.isInProgress,
-          activeTurnId: state.activeTurnId,
-        },
-      );
+      diagnostics.record("warn", "domain", "official-thread-detail-fallback", {
+        threadId,
+        cacheVersion: state.cacheVersion,
+        hasDetail: Boolean(detail),
+        isInProgress: state.isInProgress,
+        activeTurnId: state.activeTurnId,
+        reason: state.isInProgress
+          ? "verify-active-state"
+          : detailHasEmptyActiveTurn(detail)
+            ? "empty-active-turn"
+            : "empty-detail",
+      });
     }
 
     try {
@@ -2397,8 +2699,12 @@ export async function createServer(
         includeTurns: true,
       });
       const rawThread = asRecord(result)?.thread ?? result;
+      const retiredStaleOfficialActive =
+        hasExternalOfficialState &&
+        state !== null &&
+        shouldRetireStaleOfficialActiveState(rawThread, state);
       const threadSnapshot =
-        hasExternalOfficialState && state
+        hasExternalOfficialState && state && !retiredStaleOfficialActive
           ? preserveOfficialLiveState(rawThread, state)
           : rawThread;
       const detail = await hydrateThreadGoal(
@@ -2416,7 +2722,9 @@ export async function createServer(
         ),
       );
       const responseSource = hasExternalOfficialState
-        ? "app-server-readonly"
+        ? retiredStaleOfficialActive
+          ? "app-server-readonly-stale-official-retired"
+          : "app-server-readonly"
         : "app-server";
       if (detail && hasExternalOfficialState && state) {
         const hydrated = officialIpc.hydrateThreadStreamState({
@@ -2429,9 +2737,13 @@ export async function createServer(
         diagnostics.record(
           hydrated ? "info" : "warn",
           "domain",
-          hydrated
-            ? "official-thread-detail-readonly-hydrated"
-            : "official-thread-detail-readonly-hydrate-skipped",
+          retiredStaleOfficialActive && hydrated
+            ? "official-thread-detail-stale-active-retired"
+            : retiredStaleOfficialActive
+              ? "official-thread-detail-stale-active-retire-skipped"
+              : hydrated
+                ? "official-thread-detail-readonly-hydrated"
+                : "official-thread-detail-readonly-hydrate-skipped",
           {
             threadId,
             cacheVersion: state.cacheVersion,
@@ -2439,6 +2751,11 @@ export async function createServer(
         );
       }
       if (detail && !hasExternalOfficialState) {
+        claimIdleAppServerConversation(
+          threadId,
+          detail as ThreadDetail,
+          "thread-detail-app-server",
+        );
         database.upsertThreadDetail(
           threadId,
           detail as ThreadDetail,
@@ -2563,9 +2880,17 @@ export async function createServer(
       }
     };
 
+    const streamStateRecord = asRecord(
+      officialIpc.getThreadStreamState(threadId)?.conversationState,
+    );
     const params = await buildTurnStartParams({
       threadId,
       text,
+      cwd:
+        body?.cwd ??
+        (readString(streamStateRecord?.cwd) ||
+          readString(streamStateRecord?.projectId) ||
+          undefined),
       model: body?.model,
       effort: body?.effort,
       attachments: storedAttachments,
@@ -2596,12 +2921,22 @@ export async function createServer(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "official follower failed";
-      const fallback = decideLocalTurnFallback({
+      let fallback = decideLocalTurnFallback({
         action: "start",
         threadId,
         errorMessage: message,
         officialIpc,
       });
+      if (
+        !fallback.allow &&
+        fallback.reason === "official-owner-required" &&
+        (await claimIdleAppServerConversationByRead(
+          threadId,
+          "turn-start-fallback",
+        ))
+      ) {
+        fallback = { allow: true, reason: "web-owned" };
+      }
       if (!fallback.allow) {
         diagnostics.record(
           "warn",
@@ -2626,6 +2961,7 @@ export async function createServer(
     try {
       const result = await startLocalTurn(appServer, params);
       associateSentAttachments();
+      schedulePostTurnSnapshot(threadId);
       await reply.send({ data: { mode: "app-server", result } });
     } catch (error) {
       await reply.code(502).send({
@@ -2791,7 +3127,11 @@ export async function createServer(
         await reply.code(503).send({ error: "official-ipc-owner-not-ready" });
         return;
       }
-      const result = await appServer.threadStart({ cwd });
+      const result = await appServer.threadStart({
+        cwd,
+        workspaceRoots: [cwd],
+        threadSource: "user",
+      });
       const threadRecord =
         asRecord(asRecord(result)?.thread) ?? asRecord(result);
       const threadId =
@@ -2804,16 +3144,8 @@ export async function createServer(
           })
         : null;
       if (!detail) throw new Error("Failed to normalize created thread");
-      const snapshot = {
-        ...threadRecord,
-        id: detail.thread.id,
-        turns: [],
-      };
-      const broadcasted = officialIpc.broadcastConversationSnapshot(
-        detail.thread.id,
-        snapshot,
-      );
-      if (!broadcasted || !officialIpc.isOwnedConversation(detail.thread.id)) {
+      const claimed = officialIpc.claimLocalOnlyConversation(detail.thread.id);
+      if (!claimed || !officialIpc.isOwnedConversation(detail.thread.id)) {
         diagnostics.record(
           "warn",
           "thread-create",
@@ -2848,6 +3180,196 @@ export async function createServer(
           error instanceof Error ? error.message : "Failed to create thread",
       });
     }
+  });
+
+  app.post("/api/domain/side-conversation-create", async (request, reply) => {
+    const parsed = sideConversationCreateRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: formatZodError(parsed.error) });
+      return;
+    }
+    const parentThreadId = parsed.data.threadId;
+    const parentState = officialIpc.getThreadStreamState(parentThreadId);
+    const parentRecord = asRecord(parentState?.conversationState);
+    if (parentRecord?.sideConversation === true) {
+      await reply
+        .code(400)
+        .send({ error: "side-conversation-parent-required" });
+      return;
+    }
+    const cwd =
+      readString(parsed.data.cwd) ||
+      readString(parentRecord?.cwd) ||
+      config.projectRoot;
+
+    try {
+      if (!officialIpc.canOwnConversations()) {
+        diagnostics.record(
+          "warn",
+          "side-conversation-create",
+          "official-ipc-owner-not-ready",
+          { parentThreadId },
+        );
+        await reply.code(503).send({ error: "official-ipc-owner-not-ready" });
+        return;
+      }
+
+      const forkResult = await appServer.threadFork({
+        threadId: parentThreadId,
+        path: null,
+        cwd,
+        threadSource: "user",
+        developerInstructions: SIDE_CONVERSATION_BOUNDARY_TEXT,
+        excludeTurns: true,
+        ephemeral: true,
+        persistExtendedHistory: false,
+      });
+      const forkThread =
+        asRecord(asRecord(forkResult)?.thread) ?? asRecord(forkResult);
+      const sideThreadId =
+        readString(forkThread?.id) ||
+        readString(forkThread?.threadId) ||
+        readString(forkThread?.conversationId);
+      if (!forkThread || !sideThreadId) {
+        throw new Error("Failed to normalize side conversation fork");
+      }
+
+      await appServer.threadInjectItems({
+        threadId: sideThreadId,
+        items: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: SIDE_CONVERSATION_BOUNDARY_TEXT,
+              },
+            ],
+          },
+        ],
+      });
+
+      const snapshot = buildSideConversationSnapshot({
+        sideThreadId,
+        parentThreadId,
+        cwd,
+        forkThread,
+      });
+      const broadcasted = officialIpc.broadcastConversationSnapshot(
+        sideThreadId,
+        snapshot,
+      );
+      if (!broadcasted || !officialIpc.isOwnedConversation(sideThreadId)) {
+        diagnostics.record(
+          "warn",
+          "side-conversation-create",
+          "official-ipc-owner-not-established",
+          { parentThreadId, sideThreadId },
+        );
+        await reply
+          .code(503)
+          .send({ error: "official-ipc-owner-not-established" });
+        return;
+      }
+
+      const response = sideConversationCreateResponseSchema.safeParse({
+        data: {
+          sideConversation: sideConversationFromFork({
+            threadId: sideThreadId,
+            forkThread,
+            title: sideConversationTitle(),
+          }),
+          raw: forkResult,
+        },
+      });
+      if (!response.success) {
+        const error = formatZodError(response.error);
+        diagnostics.record(
+          "error",
+          "api",
+          "side-conversation-create-response-validation-failed",
+          { parentThreadId, sideThreadId, error },
+        );
+        await reply.code(500).send({ error });
+        return;
+      }
+      await reply.send(response.data);
+    } catch (error) {
+      await reply.code(502).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to create side conversation",
+      });
+    }
+  });
+
+  app.post("/api/domain/side-conversation-close", async (request, reply) => {
+    const parsed = sideConversationCloseRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: formatZodError(parsed.error) });
+      return;
+    }
+    const sideConversationId = parsed.data.sideConversationId;
+    const state = officialIpc.getThreadStreamState(sideConversationId);
+    const record = asRecord(state?.conversationState);
+    if (record && record.sideConversation !== true) {
+      await reply
+        .code(400)
+        .send({ error: "side-conversation-required" });
+      return;
+    }
+
+    let interrupted = false;
+    const activeTurnId = readActiveTurnIdFromStreamState(state);
+    if (state?.isInProgress && activeTurnId) {
+      try {
+        if (officialIpc.isOwnedConversation(sideConversationId)) {
+          await appServer.turnInterrupt({
+            threadId: sideConversationId,
+            turnId: activeTurnId,
+          });
+        } else {
+          await officialIpc.sendThreadFollowerInterruptTurn(
+            sideConversationId,
+            activeTurnId,
+          );
+        }
+        interrupted = true;
+      } catch (error) {
+        diagnostics.record("warn", "side-conversation-close", "interrupt-failed", {
+          sideConversationId,
+          activeTurnId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const discarded = officialIpc.discardConversationFromCache(
+      sideConversationId,
+      "side-conversation-closed",
+    );
+    const response = sideConversationCloseResponseSchema.safeParse({
+      data: {
+        ok: true,
+        sideConversationId,
+        discarded,
+        interrupted,
+      },
+    });
+    if (!response.success) {
+      const error = formatZodError(response.error);
+      diagnostics.record(
+        "error",
+        "api",
+        "side-conversation-close-response-validation-failed",
+        { sideConversationId, error },
+      );
+      await reply.code(500).send({ error });
+      return;
+    }
+    await reply.send(response.data);
   });
 
   app.post("/api/domain/thread-rename", async (request, reply) => {

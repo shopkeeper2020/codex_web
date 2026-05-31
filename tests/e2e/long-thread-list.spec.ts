@@ -147,13 +147,17 @@ test.describe("long thread list", () => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
     const sidebar = page.getByLabel("项目和会话");
-    await expect(sidebar.getByText("1000 synced threads")).toBeVisible();
+    await expect(
+      sidebar.getByRole("button", { name: /全部会话 1000 个同步会话/ }),
+    ).toBeVisible();
     await expect(sidebar.getByText("Long list thread 001")).toBeVisible();
     await expect(sidebar.getByText("Long list thread 1000")).toHaveCount(0);
 
     const renderedRows = sidebar
       .getByRole("button")
       .filter({ hasText: "Long list thread" });
+    await expect(renderedRows).toHaveCount(5);
+    await sidebar.getByRole("button", { name: "展开显示 +995" }).click();
     await expect(renderedRows).toHaveCount(22);
 
     const window = page.getByTestId("thread-list-window");

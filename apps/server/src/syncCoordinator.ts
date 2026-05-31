@@ -2,6 +2,7 @@ import { readOfficialConversationId } from "@codex-web/protocol";
 import type {
   ThreadCompactStartParams,
   ThreadReadParams,
+  ThreadTurnsListParams,
   TurnInterruptParams,
   TurnStartParams,
   TurnSteerParams,
@@ -16,6 +17,8 @@ type RequestHandler = {
 export type LocalOwnerOfficialIpc = {
   registerRequestHandler(method: string, handler: RequestHandler): void;
   isOwnedConversation(conversationId: string): boolean;
+  getThreadStreamState?(threadId: string): { conversationState: unknown } | null;
+  canBroadcastOwnedConversation?(conversationId: string): boolean;
   broadcastConversationSnapshot(
     threadId: string,
     conversationState: unknown,
@@ -32,6 +35,7 @@ export type LocalOwnerAppServer = {
   ): () => void;
   rpc(method: string, params?: unknown): Promise<unknown>;
   threadRead(params: ThreadReadParams): Promise<unknown>;
+  threadTurnsList?: (params: ThreadTurnsListParams) => Promise<unknown>;
   threadCompactStart(params: ThreadCompactStartParams): Promise<unknown>;
   turnStart(params: TurnStartParams): Promise<unknown>;
   turnSteer(params: TurnSteerParams): Promise<unknown>;
@@ -85,6 +89,66 @@ function readString(value: unknown): string {
     : "";
 }
 
+function errorMessage(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
+}
+
+function isEphemeralIncludeTurnsError(error: unknown): boolean {
+  return errorMessage(error).includes(
+    "ephemeral threads do not support includeTurns",
+  );
+}
+
+function readTurnsFromListResult(value: unknown): unknown[] {
+  const record = asRecord(value);
+  const data = asRecord(record?.data);
+  const thread = asRecord(record?.thread);
+  if (Array.isArray(record?.turns)) return record.turns;
+  if (Array.isArray(data?.turns)) return data.turns;
+  if (Array.isArray(thread?.turns)) return thread.turns;
+  if (Array.isArray(value)) return value;
+  return [];
+}
+
+async function listThreadTurns(
+  appServer: Pick<LocalOwnerAppServer, "rpc" | "threadTurnsList">,
+  threadId: string,
+): Promise<unknown[]> {
+  const result = appServer.threadTurnsList
+    ? await appServer.threadTurnsList({ threadId, cursor: null, limit: null })
+    : await appServer.rpc("thread/turns/list", {
+        threadId,
+        cursor: null,
+        limit: null,
+      });
+  return readTurnsFromListResult(result);
+}
+
+export async function readAppServerThreadSnapshot(
+  appServer: Pick<LocalOwnerAppServer, "rpc" | "threadRead" | "threadTurnsList">,
+  threadId: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const result = await appServer.threadRead({
+      threadId,
+      includeTurns: true,
+    });
+    return asRecord(asRecord(result)?.thread) ?? asRecord(result);
+  } catch (error) {
+    if (!isEphemeralIncludeTurnsError(error)) throw error;
+  }
+
+  const metadataResult = await appServer.threadRead({
+    threadId,
+    includeTurns: false,
+  });
+  const metadataThread =
+    asRecord(asRecord(metadataResult)?.thread) ?? asRecord(metadataResult);
+  if (!metadataThread) return null;
+  const turns = await listThreadTurns(appServer, threadId);
+  return { ...metadataThread, turns };
+}
+
 function readThreadIdFromParams(value: unknown): string {
   const record = asRecord(value);
   if (!record) return "";
@@ -93,6 +157,57 @@ function readThreadIdFromParams(value: unknown): string {
     readString(record.thread_id) ||
     readString(record.conversationId)
   );
+}
+
+const SIDE_CONVERSATION_PRESERVED_FIELDS = [
+  "sideConversation",
+  "ephemeral",
+  "parentConversationId",
+  "parentThreadId",
+  "sourceConversationId",
+  "sourceThreadId",
+  "mainConversationId",
+  "mainThreadId",
+  "rootConversationId",
+  "rootThreadId",
+  "originConversationId",
+  "originThreadId",
+  "forkedFromId",
+  "forkedFromConversationId",
+  "forkedFromThreadId",
+];
+
+export function preserveSideConversationMetadata(input: {
+  threadId: string;
+  conversationState: unknown;
+  existingState: { conversationState: unknown } | null;
+}): unknown {
+  const record = asRecord(input.conversationState);
+  const previous = asRecord(input.existingState?.conversationState);
+  if (!record || previous?.sideConversation !== true) {
+    return input.conversationState;
+  }
+
+  const next: Record<string, unknown> = {
+    ...record,
+    sideConversation: true,
+  };
+  for (const field of SIDE_CONVERSATION_PRESERVED_FIELDS) {
+    if (next[field] !== undefined && next[field] !== null) continue;
+    if (previous[field] !== undefined && previous[field] !== null) {
+      next[field] = previous[field];
+    }
+  }
+  if (!readString(next.parentThreadId)) {
+    next.parentThreadId =
+      readString(previous.parentThreadId) ||
+      readString(previous.forkedFromId) ||
+      null;
+  }
+  if (!readString(next.parentConversationId)) {
+    next.parentConversationId = next.parentThreadId ?? null;
+  }
+  return next;
 }
 
 function readReasoningEffort(record: Record<string, unknown> | null): string {
@@ -253,23 +368,34 @@ export function installLocalOwnerSnapshotSync(input: {
     return owned;
   }
 
+  function canBroadcastLocalOwner(threadId: string): boolean {
+    if (!isLocalOwner(threadId)) return false;
+    return input.officialIpc.canBroadcastOwnedConversation?.(threadId) ?? true;
+  }
+
   async function broadcastSnapshot(threadId: string): Promise<void> {
-    if (!isLocalOwner(threadId)) return;
+    if (!canBroadcastLocalOwner(threadId)) return;
     if (inFlight.has(threadId)) {
       schedule(threadId);
       return;
     }
     inFlight.add(threadId);
     try {
-      const result = await input.appServer.threadRead({
+      const thread = await readAppServerThreadSnapshot(
+        input.appServer,
         threadId,
-        includeTurns: true,
-      });
-      const record = asRecord(result);
-      const thread = asRecord(record?.thread);
+      );
       if (!thread) return;
-      if (!isLocalOwner(threadId)) return;
-      input.officialIpc.broadcastConversationSnapshot(threadId, thread);
+      if (!canBroadcastLocalOwner(threadId)) return;
+      input.officialIpc.broadcastConversationSnapshot(
+        threadId,
+        preserveSideConversationMetadata({
+          threadId,
+          conversationState: thread,
+          existingState:
+            input.officialIpc.getThreadStreamState?.(threadId) ?? null,
+        }),
+      );
     } catch (error) {
       input.diagnostics.record(
         "warn",
@@ -277,7 +403,7 @@ export function installLocalOwnerSnapshotSync(input: {
         "local-owner-snapshot-failed",
         {
           threadId,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
         },
       );
     } finally {
@@ -286,7 +412,7 @@ export function installLocalOwnerSnapshotSync(input: {
   }
 
   function schedule(threadId: string): void {
-    if (!isLocalOwner(threadId)) return;
+    if (!canBroadcastLocalOwner(threadId)) return;
     if (timers.has(threadId)) return;
     const timer = setTimeout(() => {
       timers.delete(threadId);
@@ -300,7 +426,7 @@ export function installLocalOwnerSnapshotSync(input: {
     if (!LOCAL_OWNER_SNAPSHOT_METHODS.has(notification.method)) return;
     const threadId = readThreadIdFromParams(notification.params);
     if (!threadId) return;
-    if (!input.officialIpc.isOwnedConversation(threadId)) return;
+    if (!canBroadcastLocalOwner(threadId)) return;
     schedule(threadId);
   });
   const unsubscribeEvents = input.events?.subscribe((event) => {
@@ -311,7 +437,7 @@ export function installLocalOwnerSnapshotSync(input: {
       return;
     const threadId = readString(event.approval?.threadId);
     if (!threadId) return;
-    if (!input.officialIpc.isOwnedConversation(threadId)) return;
+    if (!canBroadcastLocalOwner(threadId)) return;
     schedule(threadId);
   });
 

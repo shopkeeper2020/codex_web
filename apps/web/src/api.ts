@@ -26,6 +26,8 @@ import {
   protocolCompatibilityResponseSchema,
   runtimeOptionsResponseSchema,
   settingsResponseSchema,
+  sideConversationCloseResponseSchema,
+  sideConversationCreateResponseSchema,
   skillsResponseSchema,
   syncReadinessResponseSchema,
   threadArchiveResponseSchema,
@@ -541,6 +543,7 @@ export async function startThreadTurn(
     TurnStartRequest,
     | "threadId"
     | "text"
+    | "cwd"
     | "model"
     | "effort"
     | "attachmentIds"
@@ -591,8 +594,12 @@ export async function uploadAttachment(input: {
 }): Promise<Attachment> {
   const form = new FormData();
   form.append("file", input.file);
-  const query = input.threadId
-    ? `?threadId=${encodeURIComponent(input.threadId)}`
+  const threadId =
+    input.threadId && !input.threadId.startsWith("draft:")
+      ? input.threadId
+      : null;
+  const query = threadId
+    ? `?threadId=${encodeURIComponent(threadId)}`
     : "";
   const response = await fetch(`/api/attachments${query}`, {
     method: "POST",
@@ -618,6 +625,25 @@ export async function createThread(
     await writeJson<unknown>("/api/domain/thread-create", input),
   );
   return payload.data.thread;
+}
+
+export async function createSideConversation(input: {
+  threadId: string;
+  cwd?: string | null;
+}): Promise<ThreadDetail["sideConversations"][number]> {
+  const payload = sideConversationCreateResponseSchema.parse(
+    await writeJson<unknown>("/api/domain/side-conversation-create", input),
+  );
+  return payload.data.sideConversation;
+}
+
+export async function closeSideConversation(input: {
+  threadId?: string | null;
+  sideConversationId: string;
+}): Promise<void> {
+  sideConversationCloseResponseSchema.parse(
+    await writeJson<unknown>("/api/domain/side-conversation-close", input),
+  );
 }
 
 export async function renameThread(input: {
