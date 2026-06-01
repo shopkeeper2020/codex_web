@@ -8,6 +8,7 @@ import {
   Menu,
   MoreHorizontal,
   PanelBottom,
+  PanelLeft,
   PanelRight,
   Pin,
   Settings,
@@ -68,6 +69,8 @@ export function Header({
   appServer,
   selectedThread,
   draftProjectName,
+  sidebarCollapsed,
+  onToggleSidebar,
   onOpenDrawer,
   onOpenSearch,
   onOpenSettings,
@@ -86,6 +89,8 @@ export function Header({
   appServer: AppServerStatus | null;
   selectedThread: Thread | null;
   draftProjectName?: string | null;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
   onOpenDrawer: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
@@ -117,7 +122,26 @@ export function Header({
   };
 
   return (
-    <header className={styles.header}>
+    <header
+      className={[
+        styles.header,
+        sidebarCollapsed ? styles.headerSidebarCollapsed : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <div className={styles.headerSidebarSlot}>
+        <button
+          className={styles.iconButton}
+          type="button"
+          aria-label={sidebarCollapsed ? "展开左侧栏" : "折叠左侧栏"}
+          aria-pressed={sidebarCollapsed}
+          title={sidebarCollapsed ? "展开左侧栏" : "折叠左侧栏"}
+          onClick={onToggleSidebar}
+        >
+          <PanelLeft size={18} />
+        </button>
+      </div>
       <div className={styles.mobileHeaderActions}>
         <button
           className={styles.iconButton}

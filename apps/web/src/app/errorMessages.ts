@@ -39,6 +39,13 @@ export function userFacingErrorMessage(
     return "还没有确认这个会话应由哪个官方客户端执行。Web 已拒绝本地执行，避免三端状态分叉；请打开 Desktop/VS Code 中的同一会话后重试。";
   }
 
+  if (
+    message.startsWith("official-owner-unavailable:") &&
+    message.includes("thread-follower-steer-turn")
+  ) {
+    return "当前回复的官方执行端暂时不可用，Web 不能改由本地引导当前回复，避免三端状态分叉；请确认 Desktop 或 VS Code 仍在运行并已打开该会话，或点输入框底部“当前”切到“排队”。";
+  }
+
   if (message.startsWith("official-owner-unavailable:")) {
     return "当前会话的官方执行端暂时不可用。Web 已拒绝本地执行，避免三端状态分叉；请确认 Desktop 或 VS Code 仍在运行并已打开该会话。";
   }

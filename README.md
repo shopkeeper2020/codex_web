@@ -18,12 +18,12 @@ Codex Desktop 很适合在电脑上工作，但它不是一个天然的浏览器
 
 ## 核心功能
 
-- **Desktop-like 会话体验**：项目列表、普通/归档会话列表、长列表虚拟滚动、会话详情、Markdown 消息、代码块、表格、文件变更和审批卡片。
-- **完整 Composer**：文本输入、Enter/Shift+Enter、模型选择、推理强度、协作模式、Skills、附件、图片预览、发送后附件关联。
-- **三端同步实验**：通过官方 IPC / app-server bridge 读取 thread list/detail，支持 follower start / steer / interrupt，并通过 WebSocket 推送实时事件。
+- **Desktop-like 会话体验**：项目列表、普通/归档会话列表、长列表虚拟滚动、会话详情、Markdown 消息、代码块、表格、文件变更、审批卡片，以及接近 Desktop 的左栏/顶部栏/右侧栏布局密度。
+- **完整 Composer**：文本输入、Enter/Shift+Enter、模型选择、推理强度、协作模式、Skills、附件、图片预览、发送后附件关联，并按会话保留未发送文本和附件草稿。
+- **三端同步实验**：通过官方 IPC / app-server bridge 读取 thread list/detail，支持 follower start / steer / interrupt、stale owner 本地接管兜底，并通过 WebSocket 推送实时事件。
 - **侧边聊天**：读取官方同步出的 side conversations，并支持向已有官方侧聊发送消息。
 - **移动端和 LAN 访问**：响应式布局、移动抽屉、移动 Composer、运行状态折叠面板、PWA manifest、LAN URL 展示和登录门禁。
-- **本地文件与附件**：受限文件浏览/预览、消息图片渲染、file change 预览、Web 上传附件持久化和清理。
+- **本地文件与附件**：受限文件浏览/预览、右侧文件标签页、消息图片渲染、file change 预览、Web 上传附件持久化和清理。
 - **安全与诊断**：LAN 密码、HTTP-only session cookie、session 撤销、诊断包递归脱敏、同步 readiness、协议兼容性和 `sync:doctor` CLI。
 - **测试覆盖**：TypeScript typecheck、Vitest 单元测试、Playwright 桌面/移动 E2E、UI fidelity baseline 入口。
 
@@ -31,11 +31,11 @@ Codex Desktop 很适合在电脑上工作，但它不是一个天然的浏览器
 
 当前仓库已经包含可运行源码，版本仍处于 `0.1.x` 实验阶段。核心路径包括：
 
-- Desktop-like Web shell、会话列表、归档列表、搜索、设置和诊断面板
-- Composer 的模型、推理强度、协作模式、Skills、附件和 active turn steer / interrupt
-- 官方 IPC / app-server bridge，用于 thread list、thread detail、follower start / steer / interrupt 和实时事件
+- Desktop-like Web shell、会话列表、默认折叠的归档列表、搜索、设置和诊断面板
+- Composer 的模型、推理强度、协作模式、Skills、附件、按会话草稿和 active turn steer / interrupt
+- 官方 IPC / app-server bridge，用于 thread list、thread detail、follower start / steer / interrupt、stale active fallback 和实时事件
 - 侧边聊天读取与已有官方侧聊发送
-- 本地文件预览、图片预览、附件持久化和受限文件读取
+- 本地文件预览、右侧文件树/标签页、图片预览、附件持久化和受限文件读取
 - LAN 登录门禁、session 管理、诊断包脱敏导出
 - 桌面和移动端 Playwright 回归覆盖
 

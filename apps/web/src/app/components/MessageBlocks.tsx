@@ -19,7 +19,7 @@ import {
 import type { ComponentPropsWithoutRef, ReactElement, ReactNode } from 'react'
 import { isValidElement, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   fileContentUrl,
@@ -99,6 +99,11 @@ function MarkdownPre({ children }: ComponentPropsWithoutRef<'pre'>): ReactElemen
 
 function isExternalLink(href?: string | null): boolean {
   return /^(https?:|mailto:|tel:|#|data:|blob:)/i.test(href ?? '')
+}
+
+function markdownUrlTransform(url: string, key: string): string {
+  if (key === 'href' && isLocalFileReference(url)) return url
+  return defaultUrlTransform(url)
 }
 
 function isAbsoluteWindowsPath(value: string): boolean {
@@ -363,6 +368,7 @@ function MarkdownText({
           pre: MarkdownPre,
         }}
         remarkPlugins={[remarkGfm]}
+        urlTransform={markdownUrlTransform}
       >
         {text}
       </ReactMarkdown>

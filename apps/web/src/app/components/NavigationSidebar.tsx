@@ -1,5 +1,7 @@
 import {
   Archive,
+  ChevronDown,
+  ChevronRight,
   CircleUser,
   ExternalLink,
   Folder,
@@ -567,6 +569,7 @@ function SidebarContent({
   const [projectsExpanded, setProjectsExpanded] = useState(false);
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
   const [threadsExpanded, setThreadsExpanded] = useState(false);
+  const [archivedSectionOpen, setArchivedSectionOpen] = useState(false);
   const [archivedExpanded, setArchivedExpanded] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -638,8 +641,9 @@ function SidebarContent({
         ),
       )
     : projectFilteredArchivedThreads;
+  const showArchivedContents = archivedSectionOpen || Boolean(normalizedQuery);
   const renderedArchivedThreads = limitedRows(
-    visibleArchivedThreads,
+    showArchivedContents ? visibleArchivedThreads : [],
     archivedExpanded,
     Boolean(normalizedQuery),
   );
@@ -840,39 +844,58 @@ function SidebarContent({
         </section>
 
         <section className={styles.navSection}>
-          <div className={styles.sectionHeader}>
-            <span>归档</span>
+          <button
+            className={styles.collapsibleSectionHeader}
+            type="button"
+            aria-expanded={showArchivedContents}
+            onClick={() => {
+              setArchivedSectionOpen((value) => !value);
+              setArchivedExpanded(false);
+            }}
+          >
+            <span className={styles.collapsibleSectionTitle}>
+              {showArchivedContents ? (
+                <ChevronDown size={14} />
+              ) : (
+                <ChevronRight size={14} />
+              )}
+              <span>归档</span>
+            </span>
             <span>
               {archivedThreads.length}
               {hasMoreArchivedThreads ? "+" : ""}
             </span>
-          </div>
-          <ThreadRows
-            threads={renderedArchivedThreads}
-            projects={threadList.projects}
-            selectedThreadId={selectedThreadId}
-            archived
-            onSelectThread={onSelectThread}
-            onRestoreThread={onRestoreThread}
-            onTogglePinThread={onTogglePinThread}
-            onArchiveThread={onArchiveThread}
-            onStopThreadBackground={onStopThreadBackground}
-          />
-          <ExpandRowsButton
-            expanded={archivedExpanded}
-            hiddenCount={
-              normalizedQuery
-                ? 0
-                : visibleArchivedThreads.length - COLLAPSED_SECTION_LIMIT
-            }
-            onToggle={() => setArchivedExpanded((value) => !value)}
-          />
-          {visibleArchivedThreads.length === 0 ? (
+          </button>
+          {showArchivedContents ? (
+            <ThreadRows
+              threads={renderedArchivedThreads}
+              projects={threadList.projects}
+              selectedThreadId={selectedThreadId}
+              archived
+              onSelectThread={onSelectThread}
+              onRestoreThread={onRestoreThread}
+              onTogglePinThread={onTogglePinThread}
+              onArchiveThread={onArchiveThread}
+              onStopThreadBackground={onStopThreadBackground}
+            />
+          ) : null}
+          {showArchivedContents ? (
+            <ExpandRowsButton
+              expanded={archivedExpanded}
+              hiddenCount={
+                normalizedQuery
+                  ? 0
+                  : visibleArchivedThreads.length - COLLAPSED_SECTION_LIMIT
+              }
+              onToggle={() => setArchivedExpanded((value) => !value)}
+            />
+          ) : null}
+          {showArchivedContents && visibleArchivedThreads.length === 0 ? (
             <div className={styles.emptySidebar}>
               {threadListLoading ? "正在同步归档..." : "没有归档会话"}
             </div>
           ) : null}
-          {hasMoreArchivedThreads ? (
+          {showArchivedContents && hasMoreArchivedThreads ? (
             <button
               className={styles.loadMoreRow}
               type="button"

@@ -805,6 +805,59 @@ describe("turn HTTP routes", () => {
     ]);
   });
 
+  it("converts stale active steer into a new local turn after app-server confirms idle", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "official-ipc-request-failed:thread-follower-steer-turn",
+      hasOfficialState: true,
+      officialState: "stale-active",
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn-steer",
+      payload: {
+        threadId: "thread-a",
+        expectedTurnId: "turn-stale",
+        text: "continue as a new turn",
+        permissionMode: "full-access",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
+    });
+    expect(officialIpc.discardedThreads.has("thread-a")).toBe(true);
+    expect(officialIpc.isOwnedConversation("thread-a")).toBe(true);
+    expect(appServer.calls.map((call) => call.method)).toEqual([
+      "thread/resume",
+      "turn/start",
+    ]);
+    expect(appServer.calls[1]?.params).toMatchObject({
+      threadId: "thread-a",
+      input: [
+        expect.objectContaining({
+          type: "text",
+          text: "continue as a new turn",
+        }),
+      ],
+      sandboxPolicy: { type: "dangerFullAccess" },
+    });
+    expect(context.diagnostics.list()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "turn-steer",
+          message: "stale-active-start-fallback",
+          data: expect.objectContaining({
+            threadId: "thread-a",
+            expectedTurnId: "turn-stale",
+            reason: "official-owner-unavailable",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("claims idle app-server conversations locally when no official owner is cached", async () => {
     const { context, officialIpc, appServer } = await createHarness({
       errorMessage: "no-official-owner",

@@ -29,6 +29,15 @@ type DraftThread = {
   key: number;
 };
 
+const DESKTOP_LEFT_SIDEBAR_WIDTH = 288;
+const MOBILE_LAYOUT_WIDTH = 980;
+const RIGHT_RAIL_MIN_MAIN_WIDTH = 920;
+
+function readLayoutViewportWidth(): number {
+  if (typeof window === "undefined") return Number.POSITIVE_INFINITY;
+  return window.visualViewport?.width ?? window.innerWidth;
+}
+
 function projectDisplayName(path: string): string {
   return path.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? path;
 }
@@ -86,6 +95,7 @@ export function App(): ReactElement {
     closeSideConversationForSelectedThread,
   } = useRuntimeData(authGate.auth?.authenticated === true);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [appRoute, setAppRoute] = useState<AppRoute>(() =>
     readAppRouteFromLocation(),
@@ -100,8 +110,39 @@ export function App(): ReactElement {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [bottomTerminalOpen] = useState(false);
   const [draftThread, setDraftThread] = useState<DraftThread | null>(null);
+  const [layoutViewportWidth, setLayoutViewportWidth] = useState(
+    readLayoutViewportWidth,
+  );
+  const [manualRightRailOpen, setManualRightRailOpen] = useState<
+    "summary" | "sidebar" | null
+  >(null);
   const pinnedSummaryBeforeRightSidebarRef = useRef<boolean | null>(null);
   const draftThreadCounterRef = useRef(1);
+  const leftSidebarWidth =
+    layoutViewportWidth > MOBILE_LAYOUT_WIDTH && !desktopSidebarCollapsed
+      ? DESKTOP_LEFT_SIDEBAR_WIDTH
+      : 0;
+  const mainPaneWidth = Math.max(0, layoutViewportWidth - leftSidebarWidth);
+  const rightRailAutoCollapsed =
+    mainPaneWidth < RIGHT_RAIL_MIN_MAIN_WIDTH;
+  const pinnedSummaryVisible =
+    pinnedSummaryOpen &&
+    (!rightRailAutoCollapsed || manualRightRailOpen === "summary");
+  const rightSidebarVisible =
+    rightSidebarOpen &&
+    (!rightRailAutoCollapsed || manualRightRailOpen === "sidebar");
+
+  useEffect(() => {
+    const syncViewportWidth = () =>
+      setLayoutViewportWidth(readLayoutViewportWidth());
+    syncViewportWidth();
+    window.addEventListener("resize", syncViewportWidth);
+    window.visualViewport?.addEventListener("resize", syncViewportWidth);
+    return () => {
+      window.removeEventListener("resize", syncViewportWidth);
+      window.visualViewport?.removeEventListener("resize", syncViewportWidth);
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedProjectId || selectedProjectId === NO_PROJECT_FILTER_ID)
@@ -160,8 +201,12 @@ export function App(): ReactElement {
   const leaveDebug = useCallback(() => {
     replaceRoute(draftThread ? "" : selectedThreadId);
   }, [draftThread, selectedThreadId]);
+  const toggleDesktopSidebar = useCallback(() => {
+    setDesktopSidebarCollapsed((collapsed) => !collapsed);
+  }, []);
 
   const openRightSidebar = useCallback(() => {
+    setManualRightRailOpen("sidebar");
     setPinnedSummaryOpen((open) => {
       if (
         !rightSidebarOpen &&
@@ -175,6 +220,7 @@ export function App(): ReactElement {
   }, [rightSidebarOpen]);
 
   const closeRightSidebar = useCallback(() => {
+    setManualRightRailOpen(null);
     setRightSidebarOpen(false);
     const restorePinnedSummary = pinnedSummaryBeforeRightSidebarRef.current;
     pinnedSummaryBeforeRightSidebarRef.current = null;
@@ -186,23 +232,29 @@ export function App(): ReactElement {
   const togglePinnedSummary = useCallback(() => {
     if (rightSidebarOpen) {
       pinnedSummaryBeforeRightSidebarRef.current = null;
+      setManualRightRailOpen(rightRailAutoCollapsed ? "summary" : null);
       setRightSidebarOpen(false);
       setPinnedSummaryOpen(true);
       return;
     }
 
-    setPinnedSummaryOpen((open) => {
-      return !open;
-    });
-  }, [rightSidebarOpen]);
+    if (pinnedSummaryVisible) {
+      setManualRightRailOpen(null);
+      setPinnedSummaryOpen(false);
+      return;
+    }
+
+    setManualRightRailOpen(rightRailAutoCollapsed ? "summary" : null);
+    setPinnedSummaryOpen(true);
+  }, [pinnedSummaryVisible, rightRailAutoCollapsed, rightSidebarOpen]);
 
   const toggleRightSidebar = useCallback(() => {
-    if (rightSidebarOpen) {
+    if (rightSidebarVisible) {
       closeRightSidebar();
       return;
     }
     openRightSidebar();
-  }, [closeRightSidebar, openRightSidebar, rightSidebarOpen]);
+  }, [closeRightSidebar, openRightSidebar, rightSidebarVisible]);
 
   const selectedProject =
     selectedProjectId && selectedProjectId !== NO_PROJECT_FILTER_ID
@@ -226,6 +278,7 @@ export function App(): ReactElement {
         key: draftThreadCounterRef.current++,
       });
       pinnedSummaryBeforeRightSidebarRef.current = null;
+      setManualRightRailOpen(null);
       setPinnedSummaryOpen(false);
       setRightSidebarOpen(false);
       replaceRoute("");
@@ -274,9 +327,20 @@ export function App(): ReactElement {
   const visibleSelectedThreadProjectId = visibleSelectedThread
     ? (visibleSelectedThread.projectId ?? NO_PROJECT_FILTER_ID)
     : null;
-  const visiblePinnedSummaryOpen = draftThread ? false : pinnedSummaryOpen;
-  const visibleRightSidebarOpen = draftThread ? false : rightSidebarOpen;
+  const visiblePinnedSummaryOpen = draftThread
+    ? false
+    : pinnedSummaryVisible;
+  const visibleRightSidebarOpen = draftThread
+    ? false
+    : rightSidebarVisible;
   const visibleBottomTerminalOpen = draftThread ? false : bottomTerminalOpen;
+  const appClassName = [
+    styles.app,
+    desktopSidebarCollapsed ? styles.appSidebarCollapsed : "",
+    appRoute === "debug" ? styles.appDebug : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   if (authGate.checking && !authGate.auth) {
     return <LoginGate checking error="" onLogin={authGate.loginWithPassword} />;
@@ -293,70 +357,75 @@ export function App(): ReactElement {
   }
 
   return (
-    <div className={styles.app}>
-      <DesktopSidebar
-        threadList={threadList}
-        archivedThreads={archivedThreads}
-        threadListLoading={threadListLoading}
-        hasMoreThreads={hasMoreThreads}
-        hasMoreArchivedThreads={hasMoreArchivedThreads}
-        loadingMoreThreads={loadingMoreThreads}
-        loadingMoreArchivedThreads={loadingMoreArchivedThreads}
-        selectedThreadId={visibleSelectedThreadId}
-        selectedProjectId={selectedProjectId}
-        selectedThreadProjectId={visibleSelectedThreadProjectId}
-        onSelectThread={selectSyncedThread}
-        onSelectProject={setSelectedProjectId}
-        onOpenDrawer={() => setDrawerOpen(true)}
-        onOpenSearch={() => setSearchOpen(true)}
-        onOpenSettings={openSettings}
-        auth={authGate.auth}
-        accountStatus={accountStatus}
-        onCreateThread={openThreadDraft}
-        onAddFavoriteProject={() => void addFavoriteProjectFromPrompt()}
-        onLoadMoreThreads={() => void loadMoreThreads()}
-        onLoadMoreArchivedThreads={() => void loadMoreArchivedThreads()}
-        onRestoreThread={(threadId) => void restoreSyncedThread(threadId)}
-        onTogglePinThread={(threadId, pinned) =>
-          void setThreadPinned(threadId, pinned)
-        }
-        onArchiveThread={(threadId) => void archiveThreadById(threadId)}
-        onStopThreadBackground={(threadId) =>
-          void stopThreadBackgroundById(threadId)
-        }
-        onSignOut={signOut}
-      />
+    <div className={appClassName}>
+      {appRoute === "debug" ? null : (
+        <Header
+          health={health}
+          ipc={ipc}
+          appServer={appServer}
+          selectedThread={visibleSelectedThread}
+          draftProjectName={draftThread ? draftProjectName : undefined}
+          sidebarCollapsed={desktopSidebarCollapsed}
+          onToggleSidebar={toggleDesktopSidebar}
+          onOpenDrawer={() => setDrawerOpen(true)}
+          onOpenSearch={() => setSearchOpen(true)}
+          onOpenSettings={openSettings}
+          onRenameThread={() => void renameSelectedThread()}
+          onArchiveThread={() => void archiveSelectedThread()}
+          onInterruptTurn={() => void interruptSelectedTurn()}
+          pinnedSummaryOpen={visiblePinnedSummaryOpen}
+          rightSidebarOpen={visibleRightSidebarOpen}
+          bottomTerminalOpen={visibleBottomTerminalOpen}
+          onTogglePinnedSummary={
+            draftThread ? () => undefined : togglePinnedSummary
+          }
+          onToggleRightSidebar={
+            draftThread ? () => undefined : toggleRightSidebar
+          }
+          onToggleBottomTerminal={() => undefined}
+        />
+      )}
+      {desktopSidebarCollapsed ? null : (
+        <DesktopSidebar
+          threadList={threadList}
+          archivedThreads={archivedThreads}
+          threadListLoading={threadListLoading}
+          hasMoreThreads={hasMoreThreads}
+          hasMoreArchivedThreads={hasMoreArchivedThreads}
+          loadingMoreThreads={loadingMoreThreads}
+          loadingMoreArchivedThreads={loadingMoreArchivedThreads}
+          selectedThreadId={visibleSelectedThreadId}
+          selectedProjectId={selectedProjectId}
+          selectedThreadProjectId={visibleSelectedThreadProjectId}
+          onSelectThread={selectSyncedThread}
+          onSelectProject={setSelectedProjectId}
+          onOpenDrawer={() => setDrawerOpen(true)}
+          onOpenSearch={() => setSearchOpen(true)}
+          onOpenSettings={openSettings}
+          auth={authGate.auth}
+          accountStatus={accountStatus}
+          onCreateThread={openThreadDraft}
+          onAddFavoriteProject={() => void addFavoriteProjectFromPrompt()}
+          onLoadMoreThreads={() => void loadMoreThreads()}
+          onLoadMoreArchivedThreads={() => void loadMoreArchivedThreads()}
+          onRestoreThread={(threadId) => void restoreSyncedThread(threadId)}
+          onTogglePinThread={(threadId, pinned) =>
+            void setThreadPinned(threadId, pinned)
+          }
+          onArchiveThread={(threadId) => void archiveThreadById(threadId)}
+          onStopThreadBackground={(threadId) =>
+            void stopThreadBackgroundById(threadId)
+          }
+          onSignOut={signOut}
+        />
+      )}
       <main
         className={`${styles.main} ${appRoute === "debug" ? styles.mainDebug : ""}`}
       >
         {appRoute === "debug" ? (
           <DebugPage onBack={leaveDebug} />
         ) : (
-          <>
-            <Header
-              health={health}
-              ipc={ipc}
-              appServer={appServer}
-              selectedThread={visibleSelectedThread}
-              draftProjectName={draftThread ? draftProjectName : undefined}
-              onOpenDrawer={() => setDrawerOpen(true)}
-              onOpenSearch={() => setSearchOpen(true)}
-              onOpenSettings={openSettings}
-              onRenameThread={() => void renameSelectedThread()}
-              onArchiveThread={() => void archiveSelectedThread()}
-              onInterruptTurn={() => void interruptSelectedTurn()}
-              pinnedSummaryOpen={visiblePinnedSummaryOpen}
-              rightSidebarOpen={visibleRightSidebarOpen}
-              bottomTerminalOpen={visibleBottomTerminalOpen}
-              onTogglePinnedSummary={
-                draftThread ? () => undefined : togglePinnedSummary
-              }
-              onToggleRightSidebar={
-                draftThread ? () => undefined : toggleRightSidebar
-              }
-              onToggleBottomTerminal={() => undefined}
-            />
-            <ChatMain
+          <ChatMain
               config={config}
               ipc={ipc}
               appServer={appServer}
@@ -428,8 +497,7 @@ export function App(): ReactElement {
                   }
                 />
               }
-            />
-          </>
+          />
         )}
       </main>
       <MobileDrawer

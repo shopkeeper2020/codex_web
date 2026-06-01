@@ -29,6 +29,17 @@ describe("userFacingErrorMessage", () => {
     ).toContain("还没有确认这个会话");
   });
 
+  it("explains unavailable owner while steering the active reply", () => {
+    expect(
+      userFacingErrorMessage(
+        new Error(
+          "official-owner-unavailable:official-ipc-request-failed:thread-follower-steer-turn",
+        ),
+        "send failed",
+      ),
+    ).toContain("切到“排队”");
+  });
+
   it("keeps unexpected backend messages visible", () => {
     expect(
       userFacingErrorMessage(new Error("custom failure"), "fallback"),

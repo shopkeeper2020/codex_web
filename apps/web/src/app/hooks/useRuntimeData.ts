@@ -84,6 +84,7 @@ const WEBSOCKET_ERROR_REALTIME_EVENT: RealtimeEvent = {
 };
 const ACTIVE_THREAD_POLL_INTERVAL_MS = 5_000;
 const REALTIME_REFRESH_DEBOUNCE_MS = 2_000;
+const ERROR_AUTO_DISMISS_MS = 7_000;
 
 function hasSendContent(
   text: string,
@@ -274,6 +275,12 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   useEffect(() => {
     threadDetailRef.current = threadDetail;
   }, [threadDetail]);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(""), ERROR_AUTO_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   useEffect(() => {
     queuedMessagesRef.current = queuedMessagesByThread;
@@ -952,6 +959,13 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   const restoreArchivedThread = useCallback(
     async (threadId: string) => {
       if (!enabled || !threadId) return;
+      const current = archivedThreadList.threads.find(
+        (thread) => thread.id === threadId,
+      );
+      const confirmed = window.confirm(
+        `恢复归档会话“${current?.title ?? "当前会话"}”？`,
+      );
+      if (!confirmed) return;
       try {
         const restored = await unarchiveThread(threadId);
         await refreshThreads();
@@ -966,7 +980,13 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         );
       }
     },
-    [enabled, refreshThreadDetail, refreshThreads, selectThread],
+    [
+      archivedThreadList.threads,
+      enabled,
+      refreshThreadDetail,
+      refreshThreads,
+      selectThread,
+    ],
   );
 
   const addFavoriteProjectFromPrompt = useCallback(async () => {

@@ -18,12 +18,12 @@ Codex Desktop is good for working on one computer, but it is not a browser, LAN,
 
 ## Core Features
 
-- **Desktop-like thread experience**: projects, regular/archive thread lists, virtualized long lists, thread detail, Markdown messages, code blocks, tables, file changes, and approval cards.
-- **Full composer**: text input, Enter/Shift+Enter behavior, model selection, reasoning effort, collaboration mode, Skills, attachments, image previews, and attachment association after sending.
-- **Three-way sync experiment**: official IPC / app-server bridge for thread list/detail, follower start / steer / interrupt, and realtime WebSocket events.
+- **Desktop-like thread experience**: projects, regular/archive thread lists, virtualized long lists, thread detail, Markdown messages, code blocks, tables, file changes, approval cards, and layout density close to Codex Desktop across the left rail, header, and right sidebar.
+- **Full composer**: text input, Enter/Shift+Enter behavior, model selection, reasoning effort, collaboration mode, Skills, attachments, image previews, attachment association after sending, and per-thread unsent text/attachment drafts.
+- **Three-way sync experiment**: official IPC / app-server bridge for thread list/detail, follower start / steer / interrupt, stale-owner local fallback, and realtime WebSocket events.
 - **Side conversations**: reads official side conversations and can send to already-synced official side conversations.
 - **Mobile and LAN access**: responsive layout, mobile drawer, mobile composer, collapsible running-status panel, PWA manifest, LAN URL display, and login gate.
-- **Local files and attachments**: constrained file browsing/preview, message image rendering, file change previews, persisted web uploads, and cleanup.
+- **Local files and attachments**: constrained file browsing/preview, right-side file tabs, message image rendering, file change previews, persisted web uploads, and cleanup.
 - **Security and diagnostics**: LAN password, HTTP-only session cookie, session revocation, recursive diagnostics redaction, sync readiness, protocol compatibility, and `sync:doctor` CLI.
 - **Test coverage**: TypeScript typecheck, Vitest unit tests, Playwright desktop/mobile E2E, and UI fidelity baseline entry points.
 
@@ -31,11 +31,11 @@ Codex Desktop is good for working on one computer, but it is not a browser, LAN,
 
 The repository now contains runnable source code and is still in the experimental `0.1.x` stage. Current coverage includes:
 
-- Desktop-like web shell, thread list, archive list, search, settings, and diagnostics
-- Composer support for model, reasoning effort, collaboration mode, Skills, attachments, and active turn steer / interrupt
-- Official IPC / app-server bridge for thread list, thread detail, follower start / steer / interrupt, and realtime events
+- Desktop-like web shell, thread list, collapsed-by-default archive list, search, settings, and diagnostics
+- Composer support for model, reasoning effort, collaboration mode, Skills, attachments, per-thread drafts, and active turn steer / interrupt
+- Official IPC / app-server bridge for thread list, thread detail, follower start / steer / interrupt, stale active fallback, and realtime events
 - Side conversation reading and sending to already-synced official side conversations
-- Local file previews, image previews, attachment persistence, and constrained file reads
+- Local file previews, right-side file tree/tabs, image previews, attachment persistence, and constrained file reads
 - LAN login gate, session management, and redacted diagnostics export
 - Desktop and mobile Playwright regression tests
 

@@ -1,4 +1,4 @@
-export const THREAD_ROW_HEIGHT_PX = 42;
+export const THREAD_ROW_HEIGHT_PX = 38;
 export const THREAD_ROW_VIRTUALIZE_THRESHOLD = 80;
 export const THREAD_ROW_OVERSCAN = 6;
 export const THREAD_ROW_MAX_VIEWPORT_PX = 420;

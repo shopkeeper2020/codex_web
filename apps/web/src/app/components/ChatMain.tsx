@@ -25,6 +25,7 @@ import {
   PlayCircle,
   Plus,
   RefreshCw,
+  Search,
   Sparkles,
   Target,
   TerminalSquare,
@@ -88,6 +89,8 @@ type RightSidebarTabInstance = {
   keepMissingSideConversation?: boolean;
 };
 
+type FileBrowserEntry = FileBrowserListing["entries"][number];
+
 type DraftThreadView = {
   cwd: string | null;
   projectName: string | null;
@@ -119,6 +122,37 @@ type ProgressItem = {
   done?: boolean;
   active?: boolean;
 };
+type ActivitySourceSummary =
+  | { type: "webSearch"; availability: "used" | "available" }
+  | { type: "none" };
+
+function sourceKeyLooksLikeWebSearch(value: string): boolean {
+  const normalized = value.toLowerCase();
+  const compact = normalized.replace(/[-_\s]/g, "");
+  return compact.includes("websearch") || normalized.includes("网页搜索");
+}
+
+function turnItemUsesWebSearch(item: TurnItem): boolean {
+  const rawType = "rawType" in item ? item.rawType : "";
+  const title = "title" in item ? item.title : "";
+  return (
+    sourceKeyLooksLikeWebSearch(rawType) ||
+    sourceKeyLooksLikeWebSearch(title)
+  );
+}
+
+function activitySourceSummary(
+  threadDetail: ThreadDetail | null,
+  selectedThread: Thread | null,
+): ActivitySourceSummary {
+  const usedWebSearch =
+    threadDetail?.turns.some((turn) =>
+      turn.items.some((item) => turnItemUsesWebSearch(item)),
+    ) ?? false;
+  if (usedWebSearch) return { type: "webSearch", availability: "used" };
+  if (!selectedThread) return { type: "webSearch", availability: "available" };
+  return { type: "none" };
+}
 
 function hasVisibleSideConversationContent(
   conversation: SideConversation,
@@ -316,14 +350,97 @@ function filePreviewRequestForPath(
   return isAbsoluteFsPath(decodedPath) ? { path: decodedPath } : { path: decodedPath, root };
 }
 
+function fileEntryExtension(entry: FileBrowserEntry): string {
+  return (entry.extension ?? entry.name.split(".").at(-1) ?? "")
+    .replace(/^\./, "")
+    .toLowerCase();
+}
+
+function fileEntryIconTone(entry: FileBrowserEntry): string {
+  if (entry.kind === "directory") return "directory";
+  const extension = fileEntryExtension(entry);
+  if (["ts", "tsx"].includes(extension)) return "typescript";
+  if (["js", "jsx", "mjs", "cjs"].includes(extension)) return "javascript";
+  if (["css", "scss", "sass", "less"].includes(extension)) return "style";
+  if (["json", "jsonc", "yaml", "yml", "toml"].includes(extension))
+    return "config";
+  if (["md", "mdx"].includes(extension)) return "markdown";
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(extension))
+    return "image";
+  if (["lock"].includes(extension) || entry.name.endsWith("-lock.yaml"))
+    return "lock";
+  return "file";
+}
+
+function fileEntryIconLabel(entry: FileBrowserEntry): string | null {
+  if (entry.kind === "directory") return null;
+  const tone = fileEntryIconTone(entry);
+  const extension = fileEntryExtension(entry);
+  if (tone === "typescript") return "TS";
+  if (tone === "javascript") return "JS";
+  if (tone === "style") return "#";
+  if (tone === "config") return "{}";
+  if (tone === "markdown") return "M";
+  if (tone === "image") return "IMG";
+  return extension ? extension.slice(0, 3).toUpperCase() : null;
+}
+
+function FileEntryIcon({ entry }: { entry: FileBrowserEntry }): ReactElement {
+  const tone = fileEntryIconTone(entry);
+  const label = fileEntryIconLabel(entry);
+  return (
+    <span className={styles.fileEntryIcon} data-file-tone={tone}>
+      {entry.kind === "directory" ? (
+        <Folder size={16} />
+      ) : label ? (
+        label
+      ) : (
+        <FileText size={15} />
+      )}
+    </span>
+  );
+}
+
+function filePreviewBreadcrumbParts(
+  root: string | null,
+  path: string,
+): string[] {
+  const location = previewPathLocation(path);
+  const relativePath = relativePathFromTarget(root, path);
+  const bodyPath = relativePath ?? location.path;
+  const parts = bodyPath.replaceAll("\\", "/").split("/").filter(Boolean);
+  if (relativePath !== null && root) return [projectDisplayName(root), ...parts];
+  return parts.length ? parts : [bodyPath];
+}
+
+function FilePreviewText({ content }: { content: string }): ReactElement {
+  const lines = content.split(/\r?\n/);
+  return (
+    <div className={styles.filePreviewCode} role="table" aria-label="文件内容">
+      {lines.map((line, index) => (
+        <div
+          className={styles.filePreviewCodeLine}
+          key={`${index}-${line.slice(0, 24)}`}
+          role="row"
+        >
+          <span className={styles.filePreviewLineNumber} role="rowheader">
+            {index + 1}
+          </span>
+          <code role="cell">{line || " "}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-const RIGHT_SIDEBAR_WIDTH_STORAGE_KEY = "codex_web.rightSidebarWidth";
+const RIGHT_SIDEBAR_WIDTH_STORAGE_KEY = "codex_web.rightSidebarWidth.v2";
 const FILE_TREE_WIDTH_STORAGE_KEY = "codex_web.fileTreeWidth";
-const RIGHT_SIDEBAR_MIN_WIDTH = 380;
-const RIGHT_SIDEBAR_DEFAULT_WIDTH = 560;
+const RIGHT_SIDEBAR_MIN_WIDTH = 300;
+const RIGHT_SIDEBAR_DEFAULT_WIDTH = 420;
 const RIGHT_SIDEBAR_MAX_WIDTH = 1320;
 const RIGHT_SIDEBAR_MIN_CHAT_WIDTH = 320;
 const DESKTOP_RIGHT_RAIL_WIDTH = 260;
@@ -483,15 +600,24 @@ function ProjectFilesBrowser({
   const [listing, setListing] = useState<FileBrowserListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [filterText, setFilterText] = useState("");
   const requestIdRef = useRef(0);
   const targetRelativePath = relativePathFromTarget(root, targetPath);
   const browserTestId = compact ? "right-file-browser" : "file-browser";
   const fileListTestId = compact ? "right-file-list" : "file-list";
+  const normalizedFilter = filterText.trim().toLowerCase();
+  const visibleEntries = listing?.entries.filter((entry) => {
+    if (!normalizedFilter) return true;
+    return [entry.name, entry.relativePath, entry.extension ?? ""].some((value) =>
+      value.toLowerCase().includes(normalizedFilter),
+    );
+  }) ?? [];
 
   useEffect(() => {
     setRelativePath("");
     setListing(null);
     setError("");
+    setFilterText("");
   }, [root]);
 
   useEffect(() => {
@@ -577,6 +703,17 @@ function ProjectFilesBrowser({
           <RefreshCw size={14} />
         </button>
       </div>
+      {compact ? (
+        <label className={styles.fileFilterBox}>
+          <Search size={14} />
+          <input
+            type="search"
+            placeholder="筛选文件..."
+            value={filterText}
+            onChange={(event) => setFilterText(event.target.value)}
+          />
+        </label>
+      ) : null}
       {error ? <div className={styles.fileNotice}>{error}</div> : null}
       {loading && !listing ? (
         <div className={styles.fileNotice}>正在读取文件...</div>
@@ -588,7 +725,7 @@ function ProjectFilesBrowser({
           role="list"
           aria-label="项目文件"
         >
-          {listing.entries.map((entry) => {
+          {visibleEntries.map((entry) => {
             const isDirectory = entry.kind === "directory";
             const selected =
               !isDirectory &&
@@ -603,7 +740,7 @@ function ProjectFilesBrowser({
               .join(" ");
             const rowContent = (
               <>
-                {isDirectory ? <Folder size={15} /> : <FileText size={15} />}
+                <FileEntryIcon entry={entry} />
                 <span className={styles.fileName}>
                   <strong>{entry.name}</strong>
                   <small>{entry.relativePath || entry.name}</small>
@@ -624,6 +761,7 @@ function ProjectFilesBrowser({
                   className={rowClassName}
                   key={entry.relativePath || entry.name}
                   type="button"
+                  title={entry.relativePath || entry.name}
                   onClick={() => setRelativePath(entry.relativePath)}
                 >
                   {rowContent}
@@ -635,6 +773,8 @@ function ProjectFilesBrowser({
                 className={rowClassName}
                 key={entry.relativePath || entry.name}
                 type="button"
+                title={entry.relativePath || entry.name}
+                aria-current={selected ? "true" : undefined}
                 onClick={() => onSelectFile?.(entry.path || entry.relativePath)}
               >
                 {rowContent}
@@ -643,6 +783,9 @@ function ProjectFilesBrowser({
           })}
           {listing.entries.length === 0 ? (
             <div className={styles.fileNotice}>当前目录为空</div>
+          ) : null}
+          {listing.entries.length > 0 && visibleEntries.length === 0 ? (
+            <div className={styles.fileNotice}>没有匹配文件</div>
           ) : null}
           {listing.limited ? (
             <div className={styles.fileNotice}>仅显示前 160 项</div>
@@ -731,10 +874,24 @@ function FilePreviewPane({
   const previewRequest = filePreviewRequestForPath(path, root);
   const location = previewPathLocation(path);
   const displayPath = `${relativePathFromTarget(root, path) ?? location.path}${location.line ? `:${location.line}` : ""}`;
+  const breadcrumbParts = filePreviewBreadcrumbParts(root, path);
   return (
     <div className={styles.filePreviewPane}>
       <div className={styles.filePreviewHeader}>
-        <span title={displayPath}>{displayPath}</span>
+        <span className={styles.filePreviewBreadcrumb} title={displayPath}>
+          {breadcrumbParts.map((part, index) => (
+            <span
+              className={
+                index === breadcrumbParts.length - 1
+                  ? styles.filePreviewBreadcrumbLeaf
+                  : styles.filePreviewBreadcrumbPart
+              }
+              key={`${part}-${index}`}
+            >
+              {part}
+            </span>
+          ))}
+        </span>
       </div>
       {loading ? (
         <div className={styles.filePreviewNotice}>正在读取文件...</div>
@@ -759,7 +916,7 @@ function FilePreviewPane({
             </ReactMarkdown>
           </div>
         ) : (
-          <pre className={styles.filePreviewPre}>{preview.content ?? ""}</pre>
+          <FilePreviewText content={preview.content ?? ""} />
         )
       ) : null}
       {!loading && !error && preview?.kind === "binary" && preview.mimeType === "application/pdf" ? (
@@ -1845,7 +2002,6 @@ function DesktopActivityPanel({
   threadDetail,
   projectRoot,
   threadListLoading,
-  realtimeEvents,
   onOpenSideChat,
 }: {
   config: AppConfig | null;
@@ -1855,7 +2011,6 @@ function DesktopActivityPanel({
   threadDetail: ThreadDetail | null;
   projectRoot: string | null;
   threadListLoading: boolean;
-  realtimeEvents: RealtimeEvent[];
   onOpenSideChat: (sideConversation: SideConversation) => void;
 }): ReactElement {
   const [workspaceStatus, setWorkspaceStatus] =
@@ -1887,7 +2042,7 @@ function DesktopActivityPanel({
   const sideConversations =
     threadDetail?.sideConversations.filter(hasVisibleSideConversationContent) ??
     [];
-  const eventCount = realtimeEvents.length;
+  const sourceSummary = activitySourceSummary(threadDetail, selectedThread);
   const workspaceRefreshKey = useMemo(() => {
     const latestFileChange = threadDetail?.turns
       .flatMap((turn) => turn.items)
@@ -2114,17 +2269,21 @@ function DesktopActivityPanel({
 
         <div className={styles.activitySection}>
           <h2>来源</h2>
-          <div className={styles.activityMetricList}>
-            <div className={styles.activityMetricRow}>
-              <span className={styles.activityMetricIcon}>
-                <Globe2 size={15} />
-              </span>
-              <strong>网页搜索</strong>
-              <span className={styles.activityMetricValue}>
-                {eventCount ? "可用" : "待同步"}
-              </span>
+          {sourceSummary.type === "webSearch" ? (
+            <div className={styles.activityMetricList}>
+              <div className={styles.activityMetricRow}>
+                <span className={styles.activityMetricIcon}>
+                  <Globe2 size={15} />
+                </span>
+                <strong>网页搜索</strong>
+                {sourceSummary.availability === "available" ? (
+                  <span className={styles.activityMetricValue}>可用</span>
+                ) : null}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className={styles.activitySourceEmpty}>暂无来源</div>
+          )}
         </div>
       </section>
     </aside>
@@ -3059,7 +3218,6 @@ export function ChatMain({
               threadDetail={threadDetail}
               projectRoot={projectRoot}
               threadListLoading={threadListLoading}
-              realtimeEvents={realtimeEvents}
               onOpenSideChat={handleOpenSideChatFromSummary}
             />
           ) : null}

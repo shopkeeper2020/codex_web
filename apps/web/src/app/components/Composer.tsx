@@ -25,8 +25,9 @@ import type {
   FormEvent,
   KeyboardEvent,
   ReactElement,
+  SetStateAction,
 } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   attachmentContentUrl,
@@ -63,6 +64,46 @@ type SlashMenuItem = {
   closeOnApply?: boolean;
   apply: () => void;
 };
+
+type ComposerDraft = {
+  text: string;
+  attachments: Attachment[];
+};
+
+function emptyComposerDraft(): ComposerDraft {
+  return { text: "", attachments: [] };
+}
+
+function readComposerDraft(
+  drafts: Map<string, ComposerDraft>,
+  threadId: string,
+): ComposerDraft {
+  const draft = drafts.get(threadId);
+  return draft
+    ? { text: draft.text, attachments: draft.attachments }
+    : emptyComposerDraft();
+}
+
+function writeComposerDraft(
+  drafts: Map<string, ComposerDraft>,
+  threadId: string,
+  draft: ComposerDraft,
+): void {
+  if (draft.text.length === 0 && draft.attachments.length === 0) {
+    drafts.delete(threadId);
+    return;
+  }
+  drafts.set(threadId, {
+    text: draft.text,
+    attachments: draft.attachments,
+  });
+}
+
+function resolveStateAction<T>(action: SetStateAction<T>, current: T): T {
+  return typeof action === "function"
+    ? (action as (currentValue: T) => T)(current)
+    : action;
+}
 
 const FALLBACK_RUNTIME_OPTIONS: RuntimeOptions = {
   models: [
@@ -126,6 +167,7 @@ const FALLBACK_RUNTIME_OPTIONS: RuntimeOptions = {
 const FALLBACK_MODEL_OPTION = FALLBACK_RUNTIME_OPTIONS
   .models[0] as RuntimeOptions["models"][number];
 const DICTATION_WAVEFORM_BARS = 42;
+const COMPOSER_ERROR_AUTO_DISMISS_MS = 6_000;
 const PERMISSION_STORAGE_KEY = "codex_web.permissionMode";
 const PERMISSION_OPTIONS: Array<{
   mode: PermissionMode;
@@ -309,6 +351,10 @@ export function Composer({
   );
   const [sendMode, setSendMode] = useState<"steer" | "start">("start");
   const [sendModeTouched, setSendModeTouched] = useState(false);
+  const draftByThreadRef = useRef<Map<string, ComposerDraft>>(new Map());
+  const currentThreadIdRef = useRef(threadId);
+  const textRef = useRef("");
+  const attachmentsRef = useRef<Attachment[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const actionControlRef = useRef<HTMLDivElement>(null);
@@ -539,9 +585,59 @@ export function Composer({
       Math.min(slashActiveIndex, Math.max(0, filteredSlashMenuItems.length - 1))
     ] ?? null;
 
+  function setDraftText(
+    action: SetStateAction<string>,
+    targetThreadId = currentThreadIdRef.current,
+  ): void {
+    if (targetThreadId !== currentThreadIdRef.current) {
+      const draft = readComposerDraft(draftByThreadRef.current, targetThreadId);
+      const nextText = resolveStateAction(action, draft.text);
+      writeComposerDraft(draftByThreadRef.current, targetThreadId, {
+        text: nextText,
+        attachments: draft.attachments,
+      });
+      return;
+    }
+
+    setText((current) => {
+      const nextText = resolveStateAction(action, current);
+      textRef.current = nextText;
+      writeComposerDraft(draftByThreadRef.current, currentThreadIdRef.current, {
+        text: nextText,
+        attachments: attachmentsRef.current,
+      });
+      return nextText;
+    });
+  }
+
+  function setDraftAttachments(
+    action: SetStateAction<Attachment[]>,
+    targetThreadId = currentThreadIdRef.current,
+  ): void {
+    if (targetThreadId !== currentThreadIdRef.current) {
+      const draft = readComposerDraft(draftByThreadRef.current, targetThreadId);
+      const nextAttachments = resolveStateAction(action, draft.attachments);
+      writeComposerDraft(draftByThreadRef.current, targetThreadId, {
+        text: draft.text,
+        attachments: nextAttachments,
+      });
+      return;
+    }
+
+    setAttachments((current) => {
+      const nextAttachments = resolveStateAction(action, current);
+      attachmentsRef.current = nextAttachments;
+      writeComposerDraft(draftByThreadRef.current, currentThreadIdRef.current, {
+        text: textRef.current,
+        attachments: nextAttachments,
+      });
+      return nextAttachments;
+    });
+  }
+
   function removeAttachment(id: string) {
     setPreviewAttachment((current) => (current?.id === id ? null : current));
-    setAttachments((current) => current.filter((item) => item.id !== id));
+    setDraftAttachments((current) => current.filter((item) => item.id !== id));
   }
 
   function closeAttachmentPreview(): void {
@@ -569,6 +665,15 @@ export function Composer({
   useEffect(() => {
     if (controlsDisabled || dictationState !== "idle") setSlashMenuOpen(false);
   }, [controlsDisabled, dictationState]);
+
+  useEffect(() => {
+    if (!uploadError) return;
+    const timer = window.setTimeout(
+      () => setUploadError(""),
+      COMPOSER_ERROR_AUTO_DISMISS_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [uploadError]);
 
   useEffect(() => {
     let disposed = false;
@@ -602,8 +707,21 @@ export function Composer({
     };
   }, [cwd]);
 
-  useEffect(() => {
-    setAttachments([]);
+  useLayoutEffect(() => {
+    const previousThreadId = currentThreadIdRef.current;
+    if (previousThreadId !== threadId) {
+      writeComposerDraft(draftByThreadRef.current, previousThreadId, {
+        text: textRef.current,
+        attachments: attachmentsRef.current,
+      });
+    }
+
+    const draft = readComposerDraft(draftByThreadRef.current, threadId);
+    currentThreadIdRef.current = threadId;
+    textRef.current = draft.text;
+    attachmentsRef.current = draft.attachments;
+    setText(draft.text);
+    setAttachments(draft.attachments);
     setSelectedSkillIds([]);
     setSkillsOpen(false);
     setActionMenuOpen(false);
@@ -753,9 +871,10 @@ export function Composer({
   async function uploadFiles(files: FileList | File[]): Promise<void> {
     const selectedFiles = Array.from(files);
     if (selectedFiles.length === 0 || disabled) return;
-    const attachmentThreadId = threadId.startsWith("draft:")
+    const draftTargetThreadId = currentThreadIdRef.current;
+    const attachmentThreadId = draftTargetThreadId.startsWith("draft:")
       ? null
-      : threadId || null;
+      : draftTargetThreadId || null;
     setUploading(true);
     setUploadError("");
     try {
@@ -765,16 +884,23 @@ export function Composer({
           await uploadAttachment({ file, threadId: attachmentThreadId }),
         );
       }
-      setAttachments((current) => [...current, ...uploaded]);
-    } catch (unknownError) {
-      setUploadError(
-        unknownError instanceof Error ? unknownError.message : "upload failed",
+      setDraftAttachments(
+        (current) => [...current, ...uploaded],
+        draftTargetThreadId,
       );
+    } catch (unknownError) {
+      const message =
+        unknownError instanceof Error ? unknownError.message : "upload failed";
+      if (draftTargetThreadId === currentThreadIdRef.current) {
+        setUploadError(message);
+      }
     } finally {
-      uploadFocusRequestedRef.current = true;
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
-      scheduleFocusTextareaEnd();
+      if (draftTargetThreadId === currentThreadIdRef.current) {
+        uploadFocusRequestedRef.current = true;
+        scheduleFocusTextareaEnd();
+      }
     }
   }
 
@@ -813,7 +939,7 @@ export function Composer({
   }
 
   function clearSlashTriggerText(): void {
-    setText((current) => (current.startsWith("/") ? "" : current));
+    setDraftText((current) => (current.startsWith("/") ? "" : current));
     scheduleFocusTextareaEnd();
   }
 
@@ -829,7 +955,7 @@ export function Composer({
   }
 
   function handleComposerTextChange(nextText: string): void {
-    setText(nextText);
+    setDraftText(nextText);
     const canOpenSlashMenu =
       nextText.startsWith("/") &&
       !nextText.includes("\n") &&
@@ -852,7 +978,7 @@ export function Composer({
     const textarea = textareaRef.current;
     const selectionStart = textarea?.selectionStart ?? text.length;
     const selectionEnd = textarea?.selectionEnd ?? selectionStart;
-    setText((current) => {
+    setDraftText((current) => {
       const start = Math.min(selectionStart, current.length);
       const end = Math.min(selectionEnd, current.length);
       const prefix = current.slice(0, start);
@@ -1103,6 +1229,7 @@ export function Composer({
       name: skill.name,
       path: skill.path,
     }));
+    const submitThreadId = currentThreadIdRef.current;
     await onSend(
       trimmed,
       attachments.map((attachment) => attachment.id),
@@ -1116,10 +1243,12 @@ export function Composer({
         permissionMode,
       },
     );
-    setText("");
-    setSelectedSkillIds([]);
-    setAttachments([]);
-    setPreviewAttachment(null);
+    setDraftText("", submitThreadId);
+    setDraftAttachments([], submitThreadId);
+    if (submitThreadId === currentThreadIdRef.current) {
+      setSelectedSkillIds([]);
+      setPreviewAttachment(null);
+    }
   }
 
   async function handleSubmit(

@@ -3339,6 +3339,45 @@ export async function createServer(
         errorMessage: message,
         officialIpc,
       });
+      if (
+        !fallback.allow &&
+        (fallback.reason === "official-owner-required" ||
+          fallback.reason === "official-owner-unavailable") &&
+        (await claimIdleAppServerConversationByRead(
+          threadId,
+          "turn-steer-stale-active-fallback",
+        ))
+      ) {
+        diagnostics.record("warn", "turn-steer", "stale-active-start-fallback", {
+          threadId,
+          expectedTurnId,
+          error: message,
+          reason: fallback.reason,
+        });
+        try {
+          const startParams = await buildTurnStartParams({
+            threadId,
+            text,
+            cwd: body?.cwd,
+            attachments: storedAttachments,
+            skills: body?.skills,
+            permissionMode: body?.permissionMode,
+          });
+          const result = await startLocalTurn(appServer, startParams);
+          associateSentAttachments();
+          schedulePostTurnSnapshot(threadId);
+          await reply.send({ data: { mode: "app-server", result } });
+          return;
+        } catch (startError) {
+          await reply.code(502).send({
+            error:
+              startError instanceof Error
+                ? startError.message
+                : "Failed to start turn",
+          });
+          return;
+        }
+      }
       if (!fallback.allow) {
         diagnostics.record(
           "warn",

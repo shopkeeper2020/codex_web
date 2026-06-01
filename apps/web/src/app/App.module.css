@@ -1,6 +1,9 @@
 .app {
   display: grid;
-  grid-template-columns: var(--size-sidebar-default) minmax(0, 1fr);
+  --sidebar-width-current: var(--size-sidebar-default);
+  --header-sidebar-slot-width: var(--sidebar-width-current);
+  grid-template-rows: var(--size-header-height) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width-current) minmax(0, 1fr);
   width: 100%;
   max-width: 100vw;
   height: 100dvh;
@@ -10,11 +13,27 @@
   color: var(--color-text-primary);
 }
 
+.appSidebarCollapsed {
+  --sidebar-width-current: 0px;
+  --header-sidebar-slot-width: 46px;
+}
+
+.appDebug {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.appDebug .desktopSidebar,
+.appDebug .main {
+  grid-row: 1;
+}
+
 .desktopSidebar {
+  grid-row: 2;
+  grid-column: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  height: 100dvh;
-  min-height: 100dvh;
+  height: 100%;
+  min-height: 0;
   border-right: 1px solid var(--color-border-subtle);
   background: var(--color-bg-sidebar);
 }
@@ -87,31 +106,99 @@
 
 .sidebarScrollArea {
   min-height: 0;
-  padding: 14px 10px 12px;
+  padding: 10px 8px 10px;
   overflow: hidden auto;
   overscroll-behavior: contain;
+}
+
+.sidebarScrollArea,
+.chatColumn,
+.virtualThreadList {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(161 161 170 / 32%) transparent;
+}
+
+.sidebarScrollArea:hover,
+.sidebarScrollArea:focus-within,
+.chatColumn:hover,
+.chatColumn:focus-within,
+.virtualThreadList:hover,
+.virtualThreadList:focus-within {
+  scrollbar-color: rgb(82 82 91 / 72%) transparent;
+}
+
+.sidebarScrollArea::-webkit-scrollbar,
+.chatColumn::-webkit-scrollbar,
+.virtualThreadList::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.sidebarScrollArea::-webkit-scrollbar-track,
+.chatColumn::-webkit-scrollbar-track,
+.virtualThreadList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebarScrollArea::-webkit-scrollbar-thumb,
+.chatColumn::-webkit-scrollbar-thumb,
+.virtualThreadList::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-color: rgb(113 113 122 / 26%);
+  background-clip: content-box;
+}
+
+.sidebarScrollArea:hover::-webkit-scrollbar-thumb,
+.sidebarScrollArea:focus-within::-webkit-scrollbar-thumb,
+.chatColumn:hover::-webkit-scrollbar-thumb,
+.chatColumn:focus-within::-webkit-scrollbar-thumb,
+.virtualThreadList:hover::-webkit-scrollbar-thumb,
+.virtualThreadList:focus-within::-webkit-scrollbar-thumb {
+  background-color: rgb(82 82 91 / 72%);
+}
+
+.sidebarScrollArea::-webkit-scrollbar-thumb:active,
+.chatColumn::-webkit-scrollbar-thumb:active,
+.virtualThreadList::-webkit-scrollbar-thumb:active {
+  background-color: rgb(63 63 70 / 88%);
+}
+
+.sidebarScrollArea::-webkit-scrollbar-button,
+.chatColumn::-webkit-scrollbar-button,
+.virtualThreadList::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.sidebarScrollArea::-webkit-scrollbar-corner,
+.chatColumn::-webkit-scrollbar-corner,
+.virtualThreadList::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .sidebarQuickNav {
   display: grid;
   gap: 2px;
-  margin-bottom: 18px;
+  margin-bottom: 10px;
 }
 
 .sidebarNavRow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   width: 100%;
-  min-height: 36px;
+  min-height: 32px;
   border: 0;
   border-radius: var(--radius-row);
-  padding: 0 10px;
+  padding: 0 8px;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   text-align: left;
 }
 
@@ -131,8 +218,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  min-height: 48px;
-  padding: 8px 10px 10px;
+  min-height: 44px;
+  padding: 7px 8px 8px;
   border-top: 1px solid var(--color-border-subtle);
   background: var(--color-bg-sidebar);
 }
@@ -299,9 +386,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
-  margin: 12px 0 18px;
-  padding: 0 10px;
+  height: 32px;
+  margin: 8px 0 12px;
+  padding: 0 9px;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-row);
   background: var(--color-bg-elevated);
@@ -324,15 +411,50 @@
 }
 
 .navSection {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .sectionHeader {
-  height: 28px;
-  padding: 0 8px;
+  height: 24px;
+  padding: 0 7px;
   color: var(--color-text-muted);
   font-size: 12px;
   font-weight: 600;
+}
+
+.collapsibleSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-row);
+  padding: 0 7px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.collapsibleSectionHeader:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+
+.collapsibleSectionTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.collapsibleSectionTitle svg {
+  flex: 0 0 auto;
 }
 
 .tinyTextButton {
@@ -367,8 +489,8 @@
 .threadRowActive {
   grid-template-columns: 20px minmax(0, 1fr) auto;
   gap: 8px;
-  min-height: 42px;
-  padding: 6px 8px;
+  min-height: 38px;
+  padding: 4px 7px;
 }
 
 .threadRow:hover,
@@ -391,7 +513,7 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 42px;
+  min-height: 38px;
   overflow: hidden;
   border-radius: var(--radius-row);
   color: var(--color-text-secondary);
@@ -399,14 +521,14 @@
 
 .projectRowMain {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 12px;
-  gap: 8px;
+  grid-template-columns: 26px minmax(0, 1fr) 10px;
+  gap: 7px;
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 42px;
+  min-height: 38px;
   border: 0;
-  padding: 0 8px;
+  padding: 0 7px;
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -483,7 +605,7 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 42px;
+  min-height: 38px;
   overflow: hidden;
   border-radius: var(--radius-row);
   color: var(--color-text-secondary);
@@ -491,14 +613,14 @@
 
 .threadRowMain {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 76px;
-  gap: 8px;
+  grid-template-columns: 18px minmax(0, 1fr) 64px;
+  gap: 7px;
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 42px;
+  min-height: 38px;
   border: 0;
-  padding: 6px 8px;
+  padding: 4px 7px;
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -560,8 +682,8 @@
 .projectIcon {
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border-radius: 7px;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-subtle);
@@ -619,8 +741,8 @@
 .virtualThreadList .threadRowActive,
 .virtualThreadList .threadRowShell,
 .virtualThreadList .threadRowShellActive {
-  height: 42px;
-  min-height: 42px;
+  height: 38px;
+  min-height: 38px;
 }
 
 .emptySidebar {
@@ -647,31 +769,51 @@
 }
 
 .main {
+  grid-row: 2;
+  grid-column: 2;
   display: grid;
-  grid-template-rows: var(--size-header-height) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   max-width: 100vw;
   min-width: 0;
-  height: 100dvh;
-  min-height: 100dvh;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
+  border-top: 1px solid var(--color-border-subtle);
   background: var(--color-bg-main);
 }
 
 .mainDebug {
+  grid-row: 1;
   grid-template-rows: minmax(0, 1fr);
 }
 
 .header {
+  grid-row: 1;
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns:
+    var(--header-sidebar-slot-width)
+    minmax(0, 1fr)
+    auto;
   align-items: center;
-  gap: 10px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: rgb(255 255 255 / 96%);
-  backdrop-filter: blur(10px);
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px 0 0;
+  background: var(--color-bg-sidebar);
   z-index: var(--z-header);
+}
+
+.headerSidebarSlot {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding-left: 10px;
+}
+
+.headerSidebarCollapsed .headerSidebarSlot {
+  padding-left: 8px;
 }
 
 .mobileHeaderActions {
@@ -919,7 +1061,7 @@
     minmax(280px, var(--desktop-right-rail-width));
   gap: var(--desktop-chat-gap);
   align-items: stretch;
-  justify-content: end;
+  justify-content: center;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -944,7 +1086,7 @@
     minmax(0, 1fr)
     minmax(260px, var(--desktop-right-rail-width))
     8px
-    minmax(380px, var(--right-sidebar-width, 560px));
+    minmax(300px, var(--right-sidebar-width, 420px));
   gap: 0;
   width: 100%;
   margin: 0;
@@ -954,7 +1096,7 @@
   grid-template-columns:
     minmax(0, 1fr)
     8px
-    minmax(380px, var(--right-sidebar-width, 560px));
+    minmax(300px, var(--right-sidebar-width, 420px));
 }
 
 .desktopPaneResizer {
@@ -3071,6 +3213,13 @@
   white-space: nowrap;
 }
 
+.activitySourceEmpty {
+  min-height: 28px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 28px;
+}
+
 .activityMetricDelta {
   display: inline-flex;
   align-items: center;
@@ -3151,9 +3300,37 @@
   grid-template-columns: 28px minmax(0, 1fr) 28px;
   gap: 8px;
   align-items: center;
-  min-height: 40px;
-  padding: 6px 8px;
+  min-height: 38px;
+  padding: 5px 8px;
   background: var(--color-bg-elevated);
+}
+
+.fileFilterBox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  margin: 8px 10px 6px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+  padding: 0 9px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+}
+
+.fileFilterBox input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.fileFilterBox input::placeholder {
+  color: var(--color-text-muted);
 }
 
 .rotateLeft {
@@ -3173,11 +3350,50 @@
 .fileList {
   display: grid;
   align-content: start;
-  gap: 1px;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
+  scrollbar-color: rgb(161 161 170 / 32%) transparent;
+  scrollbar-width: thin;
+}
+
+.fileList:hover,
+.fileList:focus-within {
+  scrollbar-color: rgb(82 82 91 / 72%) transparent;
+}
+
+.fileList::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.fileList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.fileList::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-color: rgb(113 113 122 / 26%);
+  background-clip: content-box;
+}
+
+.fileList:hover::-webkit-scrollbar-thumb,
+.fileList:focus-within::-webkit-scrollbar-thumb {
+  background-color: rgb(82 82 91 / 72%);
+}
+
+.fileList::-webkit-scrollbar-thumb:active {
+  background-color: rgb(63 63 70 / 88%);
+}
+
+.fileList::-webkit-scrollbar-button,
+.fileList::-webkit-scrollbar-corner {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .fileRow {
@@ -3190,9 +3406,10 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 38px;
+  min-height: 36px;
   border: 0;
-  padding: 7px 10px;
+  border-radius: 7px;
+  padding: 6px 10px;
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
   font: inherit;
@@ -3207,6 +3424,54 @@ button.fileRow {
 button.fileRow:hover {
   background: var(--color-bg-hover);
   color: var(--color-text-primary);
+}
+
+.fileEntryIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--color-text-muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.fileEntryIcon[data-file-tone="directory"] {
+  color: #64748b;
+}
+
+.fileEntryIcon[data-file-tone="typescript"] {
+  color: #2563eb;
+}
+
+.fileEntryIcon[data-file-tone="javascript"] {
+  color: #ca8a04;
+}
+
+.fileEntryIcon[data-file-tone="style"] {
+  color: #7c3aed;
+  font-size: 14px;
+}
+
+.fileEntryIcon[data-file-tone="config"] {
+  color: #d97706;
+  font-size: 9px;
+}
+
+.fileEntryIcon[data-file-tone="markdown"] {
+  color: #16a34a;
+}
+
+.fileEntryIcon[data-file-tone="image"] {
+  color: #0891b2;
+  font-size: 7px;
+}
+
+.fileEntryIcon[data-file-tone="lock"] {
+  color: #ef4444;
+  font-size: 7px;
 }
 
 .fileName {
@@ -3251,12 +3516,12 @@ button.fileRowActive:hover {
 
 .rightSidePanel {
   display: grid;
-  grid-template-rows: 49px minmax(0, 1fr);
+  grid-template-rows: 40px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-left: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-main);
+  background: var(--color-bg-sidebar);
 }
 
 .sidePanelTabBar {
@@ -3264,11 +3529,12 @@ button.fileRowActive:hover {
   align-items: center;
   gap: 4px;
   min-width: 0;
-  min-height: 49px;
+  min-height: 40px;
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 1px solid var(--color-border-subtle);
-  padding: 6px 10px;
+  padding: 5px 8px 4px;
+  background: var(--color-bg-sidebar);
   scrollbar-width: none;
 }
 
@@ -3279,18 +3545,18 @@ button.fileRowActive:hover {
 .sidePanelTabItem,
 .sidePanelTabItemActive {
   display: inline-flex;
-  flex: 0 1 210px;
+  flex: 0 1 168px;
   min-width: 0;
-  max-width: 230px;
+  max-width: 190px;
   align-items: center;
   border: 1px solid transparent;
-  border-radius: 11px;
+  border-radius: 8px;
   background: transparent;
 }
 
 .sidePanelTabItemActive {
-  border-color: var(--color-border-subtle);
-  background: var(--color-bg-hover);
+  border-color: transparent;
+  background: var(--color-bg-selected);
 }
 
 .sidePanelTabItem:hover {
@@ -3301,19 +3567,19 @@ button.fileRowActive:hover {
 .sidePanelTabActive {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   flex: 1 1 auto;
-  height: 34px;
+  height: 28px;
   min-width: 0;
   overflow: hidden;
   border: 0;
-  border-radius: 11px 0 0 11px;
-  padding: 0 4px 0 10px;
+  border-radius: 8px 0 0 8px;
+  padding: 0 3px 0 8px;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   text-align: left;
   white-space: nowrap;
 }
@@ -3338,14 +3604,27 @@ button.fileRowActive:hover {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 25px;
-  height: 25px;
-  margin-right: 4px;
+  width: 22px;
+  height: 22px;
+  margin-right: 2px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.sidePanelTabItem:hover .sidePanelTabClose,
+.sidePanelTabItemActive .sidePanelTabClose,
+.sidePanelTabClose:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .sidePanelTabClose:hover {
@@ -3357,10 +3636,10 @@ button.fileRowActive:hover {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -3696,37 +3975,37 @@ button.fileRowActive:hover {
 
 .fileSideLayout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(
-      220px,
-      var(--file-tree-width, 270px)
+  grid-template-columns: minmax(0, 1fr) 6px minmax(
+      200px,
+      var(--file-tree-width, 260px)
     );
   align-items: stretch;
   height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: var(--color-bg-main);
 }
 
 .fileTreeResizer {
   position: relative;
-  width: 8px;
-  min-width: 8px;
+  width: 6px;
+  min-width: 6px;
   min-height: 0;
+  background: var(--color-bg-sidebar);
   cursor: col-resize;
   user-select: none;
 }
 
 .fileTreeResizer::before {
   position: absolute;
-  inset: 0 3px;
+  inset: 0 2px;
   content: "";
-  background: var(--color-border-subtle);
-  opacity: 0.72;
+  background: transparent;
 }
 
 .fileTreeResizer:hover::before {
   background: var(--color-border-strong);
-  opacity: 1;
 }
 
 .filePreviewPane {
@@ -3735,6 +4014,46 @@ button.fileRowActive:hover {
   overflow: auto;
   background: var(--color-bg-main);
   scrollbar-gutter: stable;
+  scrollbar-color: rgb(161 161 170 / 32%) transparent;
+  scrollbar-width: thin;
+}
+
+.filePreviewPane:hover,
+.filePreviewPane:focus-within {
+  scrollbar-color: rgb(82 82 91 / 72%) transparent;
+}
+
+.filePreviewPane::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.filePreviewPane::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.filePreviewPane::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-color: rgb(113 113 122 / 26%);
+  background-clip: content-box;
+}
+
+.filePreviewPane:hover::-webkit-scrollbar-thumb,
+.filePreviewPane:focus-within::-webkit-scrollbar-thumb {
+  background-color: rgb(82 82 91 / 72%);
+}
+
+.filePreviewPane::-webkit-scrollbar-thumb:active {
+  background-color: rgb(63 63 70 / 88%);
+}
+
+.filePreviewPane::-webkit-scrollbar-button,
+.filePreviewPane::-webkit-scrollbar-corner {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .filePreviewHeader {
@@ -3743,20 +4062,45 @@ button.fileRowActive:hover {
   z-index: 1;
   display: flex;
   align-items: center;
-  min-height: 42px;
+  min-height: 34px;
   border-bottom: 1px solid var(--color-border-subtle);
-  padding: 0 14px;
+  padding: 0 12px;
   background: var(--color-bg-main);
   color: var(--color-text-secondary);
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
-.filePreviewHeader span {
+.filePreviewBreadcrumb {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.filePreviewBreadcrumbPart,
+.filePreviewBreadcrumbLeaf {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.filePreviewBreadcrumbPart {
+  flex: 0 10000 auto;
+  color: var(--color-text-secondary);
+}
+
+.filePreviewBreadcrumbPart::after {
+  margin: 0 5px;
+  color: var(--color-text-muted);
+  content: "/";
+}
+
+.filePreviewBreadcrumbLeaf {
+  flex: 0 1 auto;
+  color: var(--color-text-primary);
+  font-weight: 650;
 }
 
 .filePreviewEmptyState {
@@ -3777,7 +4121,7 @@ button.fileRowActive:hover {
 }
 
 .filePreviewNotice {
-  padding: 12px 14px;
+  padding: 9px 12px;
   color: var(--color-text-muted);
   font-size: 12px;
   line-height: 1.5;
@@ -3856,6 +4200,44 @@ button.fileRowActive:hover {
   white-space: pre;
 }
 
+.filePreviewCode {
+  min-height: 100%;
+  overflow: auto;
+  padding: 8px 0 40px;
+  background: var(--color-bg-main);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.48;
+}
+
+.filePreviewCodeLine {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-height: 18px;
+}
+
+.filePreviewCodeLine:hover {
+  background: var(--color-bg-hover);
+}
+
+.filePreviewLineNumber {
+  padding: 0 9px 0 6px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.filePreviewCodeLine code {
+  min-width: 0;
+  overflow: visible;
+  padding: 0 14px 0 10px;
+  background: transparent;
+  font: inherit;
+  white-space: pre;
+}
+
 .fileBrowserCompact {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -3870,12 +4252,30 @@ button.fileRowActive:hover {
   border: 0;
   border-left: 1px solid var(--color-border-subtle);
   border-radius: 0;
-  background: var(--color-bg-main);
+  background: var(--color-bg-sidebar);
 }
 
 .fileBrowserCompact .fileToolbar {
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-main);
+  grid-template-columns: 24px minmax(0, 1fr) 24px;
+  gap: 6px;
+  min-height: 34px;
+  border-bottom: 0;
+  padding: 4px 8px;
+  background: var(--color-bg-sidebar);
+}
+
+.fileBrowserCompact .fileFilterBox {
+  gap: 5px;
+  min-height: 28px;
+  margin: 3px 8px 6px;
+  border-color: var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 0 8px;
+  background: var(--color-bg-elevated);
+}
+
+.fileBrowserCompact .fileFilterBox input {
+  font-size: 12px;
 }
 
 .fileBrowserCompact .fileList {
@@ -3883,22 +4283,65 @@ button.fileRowActive:hover {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: 3px 6px 8px;
+  background: var(--color-bg-sidebar);
   scrollbar-gutter: stable;
 }
 
 .fileBrowserCompact .fileRow {
-  grid-template-columns: 22px minmax(0, 1fr);
-  min-height: 34px;
-  padding: 6px 10px;
-  background: var(--color-bg-main);
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 6px;
+  min-height: 28px;
+  border-radius: 7px;
+  padding: 3px 6px;
+  background: transparent;
+  font-size: 12px;
 }
 
-.fileBrowserCompact .fileRow > span:not(.fileName) {
+.fileBrowserCompact button.fileRow:hover {
+  background: var(--color-bg-hover);
+}
+
+.fileBrowserCompact .fileRowActive,
+.fileBrowserCompact button.fileRowActive:hover {
+  background: var(--color-bg-selected);
+  color: var(--color-text-primary);
+}
+
+.fileBrowserCompact .filePathLabel {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+}
+
+.fileBrowserCompact .blockActionButton {
+  width: 24px;
+  height: 24px;
+}
+
+.fileBrowserCompact .fileEntryIcon {
+  width: 18px;
+  height: 18px;
+  font-size: 7px;
+}
+
+.fileBrowserCompact .fileRow > span:not(.fileName):not(.fileEntryIcon) {
   display: none;
 }
 
 .fileBrowserCompact .fileName small {
   display: none;
+}
+
+.fileBrowserCompact .fileName strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fileBrowserCompact .fileNotice {
+  min-height: 28px;
+  padding: 7px 8px;
+  background: transparent;
+  font-size: 11.5px;
 }
 
 .bottomTerminalDock {
@@ -6097,7 +6540,15 @@ button.fileRowActive:hover {
     grid-template-columns: 1fr;
   }
 
+  .main {
+    grid-column: 1;
+  }
+
   .desktopSidebar {
+    display: none;
+  }
+
+  .headerSidebarSlot {
     display: none;
   }
 
@@ -6210,8 +6661,12 @@ button.fileRowActive:hover {
 }
 
 @media (max-width: 680px) {
-  .main {
+  .app {
     grid-template-rows: 52px minmax(0, 1fr);
+  }
+
+  .main {
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .mainDebug {
@@ -6352,19 +6807,19 @@ button.fileRowActive:hover {
   }
 
   .composer textarea {
-    min-height: 58px;
-    padding: 13px 14px 5px;
+    min-height: 42px;
+    padding: 11px 13px 4px;
   }
 
   .composerPromptLine {
     gap: 6px;
-    padding: 13px 14px 5px;
+    padding: 11px 13px 4px;
   }
 
   .composerPromptLine textarea {
     flex-basis: 140px;
     min-width: 120px;
-    min-height: 45px;
+    min-height: 36px;
     padding: 0;
   }
 
@@ -6407,27 +6862,44 @@ button.fileRowActive:hover {
 
   .composerControls {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     overflow: visible;
-    padding: 5px 8px 8px;
+    padding: 3px 7px 8px;
+  }
+
+  .composerControls > .composerActionControl,
+  .composerControls > .composerRoundButton {
+    flex: 0 0 28px;
+  }
+
+  .composerControls > .composerRoundButton {
+    width: 28px;
+    height: 28px;
   }
 
   .composerControls > .permissionControlWrap {
-    max-width: 124px;
+    flex: 1 1 98px;
+    min-width: 0;
+    max-width: 112px;
   }
 
   .composerControls > .permissionControlWrap .permissionControl {
-    max-width: 124px;
+    width: 100%;
+    max-width: 112px;
+    padding: 0 6px;
   }
 
   .composerControls > .modeSelect,
   .composerControls > .targetSelect {
-    max-width: 96px;
+    flex: 0 0 auto;
+    max-width: 62px;
+    padding: 0 6px;
   }
 
   .composerControls > .runtimeControl {
+    flex: 0 1 auto;
     margin-left: auto;
   }
 
@@ -6460,7 +6932,8 @@ button.fileRowActive:hover {
   }
 
   .runtimeButton {
-    max-width: 116px;
+    max-width: 96px;
+    padding: 0 6px;
   }
 
   .composerControls > .controlSpacer {
@@ -6489,8 +6962,10 @@ button.fileRowActive:hover {
   }
 
   .sendButton {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
     margin-left: 0;
-    justify-self: end;
   }
 
   .fileRow {
