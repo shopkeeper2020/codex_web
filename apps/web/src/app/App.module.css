@@ -1298,41 +1298,6 @@
   margin-bottom: 4px;
 }
 
-.foldoutSummary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-}
-
-.foldoutSummary .messageAuthor {
-  margin-bottom: 0;
-}
-
-.foldoutChevron,
-.foldoutChevronOpen {
-  justify-self: end;
-  color: var(--color-text-muted);
-  transition: transform 140ms ease;
-}
-
-.foldoutChevronOpen {
-  transform: rotate(180deg);
-}
-
-.foldoutBody {
-  display: block;
-  margin-top: 10px;
-}
-
 .avatar {
   width: 28px;
   height: 28px;
@@ -2641,10 +2606,6 @@
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.mobileAuxiliaryPanels {
-  display: none;
 }
 
 .activityPanel {
@@ -6623,10 +6584,6 @@ button.fileRowActive:hover {
     display: none;
   }
 
-  .mobileAuxiliaryPanels {
-    display: block;
-  }
-
   .composerDock {
     display: block;
     width: 100%;
@@ -6734,18 +6691,6 @@ button.fileRowActive:hover {
 
   .detailRows div {
     grid-template-columns: 92px minmax(0, 1fr);
-  }
-
-  .mobileFoldout {
-    padding: 2px 0;
-  }
-
-  .foldoutBody {
-    display: none;
-  }
-
-  .foldoutBodyOpen {
-    display: block;
   }
 
   .settingsPanel {

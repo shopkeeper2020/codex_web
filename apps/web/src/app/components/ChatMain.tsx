@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronUp,
   Clock3,
-  Code2,
   Command,
   FileDiff,
   FileText,
@@ -540,51 +539,6 @@ function ownerRuntimeDisplay(
   return label;
 }
 
-function MobileFoldout({
-  icon,
-  label,
-  meta,
-  children,
-}: {
-  icon: ReactElement;
-  label: string;
-  meta: string;
-  children: ReactNode;
-}): ReactElement {
-  const [open, setOpen] = useState(() =>
-    typeof window === "undefined"
-      ? true
-      : !window.matchMedia("(max-width: 680px)").matches,
-  );
-  const bodyClassName = open
-    ? `${styles.foldoutBody} ${styles.foldoutBodyOpen}`
-    : styles.foldoutBody;
-
-  return (
-    <article className={`${styles.assistantMessage} ${styles.mobileFoldout}`}>
-      <button
-        className={styles.foldoutSummary}
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className={styles.messageAuthor}>
-          <span className={styles.avatar}>{icon}</span>
-          <span>
-            <span className={styles.authorName}>{label}</span>
-            <span className={styles.authorMeta}>{meta}</span>
-          </span>
-        </span>
-        <ChevronDown
-          className={open ? styles.foldoutChevronOpen : styles.foldoutChevron}
-          size={16}
-        />
-      </button>
-      <div className={bodyClassName}>{children}</div>
-    </article>
-  );
-}
-
 function ProjectFilesBrowser({
   root,
   compact = false,
@@ -793,23 +747,6 @@ function ProjectFilesBrowser({
         </div>
       ) : null}
     </div>
-  );
-}
-
-function ProjectFilesPanel({
-  root,
-}: {
-  root: string | null;
-}): ReactElement | null {
-  if (!root) return null;
-  return (
-    <MobileFoldout
-      icon={<FolderOpen size={16} />}
-      label="文件"
-      meta="只读项目视图"
-    >
-      <ProjectFilesBrowser root={root} />
-    </MobileFoldout>
   );
 }
 
@@ -3005,30 +2942,6 @@ export function ChatMain({
     () => turnsScrollSignature(turns),
     [turns],
   );
-  const mobileAuxiliaryPanels = isDraftThread ? null : (
-    <div className={styles.mobileAuxiliaryPanels}>
-      <ProjectFilesPanel root={projectRoot} />
-      <MobileFoldout
-        icon={<Activity size={16} />}
-        label="运行状态"
-        meta="实时同步快照"
-      >
-        <RuntimeStatusContent
-          ipc={ipc}
-          appServer={appServer}
-          selectedThread={selectedThread}
-          realtimeEvents={realtimeEvents}
-        />
-      </MobileFoldout>
-      <MobileFoldout
-        icon={<Code2 size={16} />}
-        label="运行详情"
-        meta="本机服务"
-      >
-        <RuntimeDetailsContent config={config} appServer={appServer} />
-      </MobileFoldout>
-    </div>
-  );
   const shouldVirtualizeMessages =
     messageRows.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
   const messageVirtualizer = useVirtualizer({
@@ -3176,7 +3089,6 @@ export function ChatMain({
               ) : (
                 messageRows
               )}
-              {mobileAuxiliaryPanels}
             </div>
             {!nearBottom ? (
               <button
