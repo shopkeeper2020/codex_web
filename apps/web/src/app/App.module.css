@@ -210,7 +210,6 @@
   font-size: 13px;
 }
 
-.sidebarHeader,
 .sectionHeader,
 .drawerTopbar {
   display: flex;
@@ -241,26 +240,6 @@
   color: var(--color-text-primary);
 }
 
-.workspaceButton {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 16px;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  height: 38px;
-  border: 0;
-  border-radius: var(--radius-row);
-  padding: 0 8px;
-  background: transparent;
-  color: var(--color-text-primary);
-  cursor: pointer;
-  text-align: left;
-}
-
-.workspaceButton:hover {
-  background: var(--color-bg-hover);
-}
-
 .workspaceMark {
   display: inline-grid;
   place-items: center;
@@ -273,8 +252,6 @@
   font-weight: 700;
 }
 
-.workspaceName,
-.workspaceMeta,
 .rowTitle,
 .rowMeta,
 .authorName,
@@ -286,7 +263,6 @@
   white-space: nowrap;
 }
 
-.workspaceName,
 .rowTitle,
 .authorName {
   color: var(--color-text-primary);
@@ -294,7 +270,6 @@
   font-weight: 600;
 }
 
-.workspaceMeta,
 .rowMeta,
 .authorMeta {
   color: var(--color-text-muted);
@@ -401,7 +376,8 @@
 
 .projectRow:hover,
 .threadRow:hover,
-.threadRowShell:hover {
+.threadRowShell:hover,
+.threadRowShell:focus-within {
   background: var(--color-bg-hover);
 }
 
@@ -424,19 +400,21 @@
 
 .threadRowShell,
 .threadRowShellActive {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   width: 100%;
   min-width: 0;
   min-height: 42px;
+  overflow: hidden;
   border-radius: var(--radius-row);
   color: var(--color-text-secondary);
 }
 
 .threadRowMain {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr) 76px;
   gap: 8px;
   align-items: center;
   width: 100%;
@@ -456,10 +434,16 @@
 }
 
 .threadRowActions {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 1px;
-  padding-right: 4px;
+  width: 74px;
+  transform: translateY(-50%);
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms ease;
@@ -467,6 +451,8 @@
 
 .threadRowShell:hover .threadRowActions,
 .threadRowShellActive:hover .threadRowActions,
+.threadRowShell:focus-within .threadRowActions,
+.threadRowShellActive:focus-within .threadRowActions,
 .threadRowActions:focus-within {
   opacity: 1;
   pointer-events: auto;
@@ -522,8 +508,17 @@
 }
 
 .threadTime {
+  justify-self: end;
   color: var(--color-text-muted);
   font-size: 11px;
+  transition: opacity 120ms ease;
+}
+
+.threadRowShell:hover .threadTime,
+.threadRowShellActive:hover .threadTime,
+.threadRowShell:focus-within .threadTime,
+.threadRowShellActive:focus-within .threadTime {
+  opacity: 0;
 }
 
 .virtualThreadList {
@@ -3190,8 +3185,8 @@ button.fileRowActive:hover {
 }
 
 .sideChatShell {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -3259,13 +3254,45 @@ button.fileRowActive:hover {
   line-height: 1.2;
 }
 
+.sideChatTranscriptFrame {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .sideChatTranscript {
   display: block;
+  width: 100%;
+  height: 100%;
   min-width: 0;
-  min-height: 160px;
-  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  padding: 18px 28px 16px;
+  padding: 18px 28px 24px;
+  scrollbar-gutter: stable;
+}
+
+.sideChatScrollToLatestButton {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: 14px;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 94%);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 13%);
+  transform: translateX(-50%);
+}
+
+.sideChatScrollToLatestButton:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
 }
 
 .sideChatSyncNotice {
@@ -3308,7 +3335,8 @@ button.fileRowActive:hover {
 }
 
 .sideChatComposerShell {
-  margin: 0 18px 18px;
+  min-width: 0;
+  margin: 0 18px;
   background: var(--color-bg-elevated);
 }
 
@@ -3320,13 +3348,44 @@ button.fileRowActive:hover {
   min-height: 58px;
 }
 
+.sideChatComposerShell .composerControls {
+  gap: 5px;
+  padding-right: 8px;
+}
+
+.sideChatComposerShell .permissionControlWrap {
+  flex: 0 1 118px;
+  min-width: 0;
+  max-width: 118px;
+}
+
 .sideChatComposerShell .permissionControl {
-  width: 30px;
-  padding: 0;
+  width: auto;
+  max-width: 118px;
+  padding: 0 7px;
+}
+
+.sideChatComposerShell .permissionControl span {
+  max-width: 78px;
+}
+
+.sideChatComposerShell .runtimeControl {
+  flex: 0 1 116px;
+  min-width: 0;
 }
 
 .sideChatComposerShell .runtimeButton {
-  max-width: 72px;
+  width: 100%;
+  max-width: 116px;
+}
+
+.sideChatComposerShell .controlSpacer {
+  min-width: 4px;
+}
+
+.sideChatComposerShell .sendButton {
+  flex: 0 0 auto;
+  margin-left: 0;
 }
 
 .sideChatComposerBar {

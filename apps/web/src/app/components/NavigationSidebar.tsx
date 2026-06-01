@@ -1,6 +1,5 @@
 import {
   Archive,
-  ChevronDown,
   CircleUser,
   ExternalLink,
   Folder,
@@ -536,10 +535,6 @@ function SidebarContent({
   const noProjectCount = threadList.threads.filter(
     (thread) => !thread.projectId,
   ).length;
-  const loadedThreadLabel = threadListLoading
-    ? "正在同步会话"
-    : `${threadList.threads.length}${hasMoreThreads ? "+" : ""} 个同步会话`;
-
   return (
     <aside
       className={styles.sidebarSurface}
@@ -573,25 +568,6 @@ function SidebarContent({
           <span>自动化</span>
         </button>
       </nav>
-
-      <div className={styles.sidebarHeader}>
-        <button className={styles.workspaceButton} type="button">
-          <span className={styles.workspaceMark}>cw</span>
-          <span>
-            <span className={styles.workspaceName}>codex_web</span>
-            <span className={styles.workspaceMeta}>{loadedThreadLabel}</span>
-          </span>
-          <ChevronDown size={16} />
-        </button>
-        <button
-          className={styles.iconButton}
-          type="button"
-          aria-label="新建会话"
-          onClick={() => onCreateThread(createThreadCwd)}
-        >
-          <SquarePen size={17} />
-        </button>
-      </div>
 
       <label className={styles.searchBox}>
         <Search size={15} />

@@ -161,6 +161,72 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function compactProtocolType(value: unknown): string {
+  return readString(value)
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+}
+
+function isContextCompactionItem(value: unknown): boolean {
+  const record = asRecord(value);
+  if (!record) return false;
+  const rawRecord = asRecord(record.raw);
+  return [
+    record.type,
+    record.rawType,
+    record.raw_type,
+    rawRecord?.type,
+    rawRecord?.rawType,
+    rawRecord?.raw_type,
+  ].some((entry) => compactProtocolType(entry) === "contextcompaction");
+}
+
+const OMIT_BROADCAST_VALUE = Symbol("omit-broadcast-value");
+
+function sanitizeOfficialBroadcastValue(
+  value: unknown,
+): unknown | typeof OMIT_BROADCAST_VALUE {
+  if (isContextCompactionItem(value)) return OMIT_BROADCAST_VALUE;
+
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next: unknown[] = [];
+    for (const entry of value) {
+      const sanitized = sanitizeOfficialBroadcastValue(entry);
+      if (sanitized === OMIT_BROADCAST_VALUE) {
+        changed = true;
+        continue;
+      }
+      if (sanitized !== entry) changed = true;
+      next.push(sanitized);
+    }
+    return changed ? next : value;
+  }
+
+  const record = asRecord(value);
+  if (!record) return value;
+
+  let changed = false;
+  const next: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    const sanitized = sanitizeOfficialBroadcastValue(entry);
+    if (sanitized === OMIT_BROADCAST_VALUE) {
+      changed = true;
+      continue;
+    }
+    if (sanitized !== entry) changed = true;
+    next[key] = sanitized;
+  }
+  return changed ? next : value;
+}
+
+function sanitizeConversationStateForOfficialBroadcast(
+  conversationState: unknown,
+): unknown {
+  const sanitized = sanitizeOfficialBroadcastValue(conversationState);
+  return sanitized === OMIT_BROADCAST_VALUE ? null : sanitized;
+}
+
 function patchPath(value: unknown): Array<string | number> {
   if (!Array.isArray(value)) return [];
   return value.filter(
@@ -682,6 +748,8 @@ export class OfficialIpcBridge {
     if (!normalizedThreadId || !this.clientId) return false;
     if (this.localOnlyOwnedConversationIds.has(normalizedThreadId))
       return false;
+    const officialConversationState =
+      sanitizeConversationStateForOfficialBroadcast(conversationState);
     this.ownedConversationIds.add(normalizedThreadId);
     this.storeThreadStreamState({
       threadId: normalizedThreadId,
@@ -689,13 +757,16 @@ export class OfficialIpcBridge {
       hostId: "local",
       ownerClientId: this.clientId,
       sourceClientId: this.clientId,
-      conversationState,
+      conversationState: officialConversationState,
       changeType: "snapshot",
     });
     this.sendBroadcast("thread-stream-state-changed", {
       hostId: "local",
       conversationId: normalizedThreadId,
-      change: { type: "snapshot", conversationState },
+      change: {
+        type: "snapshot",
+        conversationState: officialConversationState,
+      },
     });
     return true;
   }

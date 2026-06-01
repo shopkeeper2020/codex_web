@@ -715,6 +715,119 @@ test.describe("codex_web app shell", () => {
     expect(createCalled).toBe(0);
   });
 
+  test("keeps Desktop side chat scroller and composer controls aligned", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "Desktop-only right sidebar regression",
+    );
+
+    await installActiveTurnMocks(page, {
+      threadDetailOverrides: () => ({
+        sideConversations: [
+          {
+            id: "side-chat-layout-e2e",
+            title: "侧边聊天布局回归",
+            createdAtIso: "2026-05-31T08:26:05.000Z",
+            updatedAtIso: "2026-05-31T08:30:41.000Z",
+            inProgress: false,
+            hasUnread: false,
+            turnCount: 1,
+            turns: [
+              {
+                id: "side-turn-layout-e2e",
+                status: "completed",
+                items: [
+                  {
+                    type: "user",
+                    id: "side-layout-user-e2e",
+                    text: "请检查侧边聊天的滚动和底部控件。",
+                  },
+                  ...Array.from({ length: 28 }, (_, index) => ({
+                    type: "assistant",
+                    id: `side-layout-assistant-${index}`,
+                    text: `侧边聊天第 ${index + 1} 条布局回归内容，用来撑开滚动区域并检查底部按钮不会被 Composer 遮住。`,
+                  })),
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "打开右侧栏" }).click();
+
+    const sideChat = page.getByRole("region", { name: "侧边聊天" });
+    const transcript = sideChat.getByTestId("side-chat-transcript");
+    await expect(sideChat).toBeVisible();
+    await expect(transcript).toBeVisible();
+
+    await transcript.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    const scrollButton = sideChat.getByRole("button", {
+      name: "滚动侧边聊天到底部",
+    });
+    await expect(scrollButton).toBeVisible();
+    await scrollButton.click();
+    await expect
+      .poll(() =>
+        transcript.evaluate(
+          (element) =>
+            element.scrollHeight - element.scrollTop - element.clientHeight,
+        ),
+      )
+      .toBeLessThan(140);
+    await expect(
+      sideChat.getByText("侧边聊天第 28 条布局回归内容"),
+    ).toBeVisible();
+
+    const mainComposer = page.getByRole("form", {
+      name: "Composer",
+      exact: true,
+    });
+    const sideComposer = sideChat.getByRole("form", {
+      name: "侧边聊天 Composer",
+    });
+    await expect(mainComposer).toBeVisible();
+    await expect(sideComposer).toBeVisible();
+    const metrics = await page.evaluate(() => {
+      const main = document
+        .querySelector('form[aria-label="Composer"]')
+        ?.getBoundingClientRect();
+      const side = document
+        .querySelector('form[aria-label="侧边聊天 Composer"]')
+        ?.getBoundingClientRect();
+      const sidePermission = document
+        .querySelector('form[aria-label="侧边聊天 Composer"] [aria-label="权限设置"]')
+        ?.getBoundingClientRect();
+      const sideRuntime = document
+        .querySelector(
+          'form[aria-label="侧边聊天 Composer"] [aria-label="模型与思考深度"]',
+        )
+        ?.getBoundingClientRect();
+      if (!main || !side || !sidePermission || !sideRuntime) {
+        throw new Error("composer geometry missing");
+      }
+      return {
+        bottomDelta: Math.abs(main.bottom - side.bottom),
+        permissionRightOverflow: sidePermission.right - side.right,
+        permissionWidth: sidePermission.width,
+        runtimeRightOverflow: sideRuntime.right - side.right,
+        runtimeWidth: sideRuntime.width,
+      };
+    });
+    expect(metrics.bottomDelta).toBeLessThanOrEqual(2);
+    expect(metrics.permissionWidth).toBeGreaterThan(84);
+    expect(metrics.runtimeWidth).toBeGreaterThan(84);
+    expect(metrics.permissionRightOverflow).toBeLessThanOrEqual(0);
+    expect(metrics.runtimeRightOverflow).toBeLessThanOrEqual(0);
+  });
+
   test("syncs composer goal controls with Desktop thread goal APIs", async ({
     page,
   }, testInfo) => {
@@ -917,6 +1030,15 @@ test.describe("codex_web app shell", () => {
       .getByRole("button", { name: /Active turn composer state/ })
       .first();
     await expect(activeRow).toBeVisible();
+    const rowWidths = await activeRow.evaluate((element) => {
+      const button = element.getBoundingClientRect();
+      const shell = element.parentElement?.getBoundingClientRect();
+      return {
+        button: button.width,
+        shell: shell?.width ?? button.width,
+      };
+    });
+    expect(rowWidths.shell - rowWidths.button).toBeLessThanOrEqual(2);
 
     await activeRow.hover();
     await page

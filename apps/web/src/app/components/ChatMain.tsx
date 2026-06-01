@@ -802,6 +802,11 @@ function SideChatPane({
   const { t } = useI18n();
   const sideConversationId = sideConversation?.id ?? "";
   const displayedTurns = sideConversation?.turns ?? [];
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const lastSideConversationIdRef = useRef<string | null>(null);
+  const lastRenderedRowsCountRef = useRef(0);
+  const lastSideChatScrollSignatureRef = useRef("empty");
+  const [nearSideChatBottom, setNearSideChatBottom] = useState(true);
   const renderedRows = useMemo(
     () =>
       sideConversation
@@ -816,6 +821,22 @@ function SideChatPane({
         : [],
     [displayedTurns, onOpenFileReference, projectRoot, sideConversation],
   );
+  const sideChatScrollSignature = useMemo(() => {
+    const latestTurn = displayedTurns.at(-1);
+    const latestItem = latestTurn?.items.at(-1);
+    const textLength =
+      latestItem && "text" in latestItem && typeof latestItem.text === "string"
+        ? latestItem.text.length
+        : 0;
+    return [
+      latestTurn?.id ?? "empty",
+      latestTurn?.status ?? "",
+      latestTurn?.items.length ?? 0,
+      latestItem?.id ?? "",
+      latestItem?.type ?? "",
+      textLength,
+    ].join(":");
+  }, [displayedTurns]);
 
   const sendSideConversation = useCallback(
     async (
@@ -829,20 +850,102 @@ function SideChatPane({
     [onSendSideChat, sideConversationId],
   );
 
+  const scrollSideChatToLatest = useCallback(
+    (behavior: ScrollBehavior = "auto") => {
+      const scroller = transcriptRef.current;
+      if (!scroller) return;
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+      setNearSideChatBottom(true);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const scroller = transcriptRef.current;
+    if (!scroller) return;
+    const update = () => {
+      setNearSideChatBottom(
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <
+          140,
+      );
+    };
+    update();
+    scroller.addEventListener("scroll", update, { passive: true });
+    return () => scroller.removeEventListener("scroll", update);
+  }, [renderedRows.length, sideConversationId]);
+
+  useEffect(() => {
+    const scroller = transcriptRef.current;
+    const previousConversationId = lastSideConversationIdRef.current;
+    const previousRowsCount = lastRenderedRowsCountRef.current;
+    const previousSignature = lastSideChatScrollSignatureRef.current;
+    lastSideConversationIdRef.current = sideConversationId || null;
+    lastRenderedRowsCountRef.current = renderedRows.length;
+    lastSideChatScrollSignatureRef.current = sideChatScrollSignature;
+
+    if (!scroller || !sideConversationId || renderedRows.length === 0) return;
+    if (hasTextSelectionInside(scroller)) return;
+
+    const conversationChanged = previousConversationId !== sideConversationId;
+    const rowsIncreased = renderedRows.length > previousRowsCount;
+    const contentChanged = previousSignature !== sideChatScrollSignature;
+    const isNearBottom =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 200;
+
+    if (!conversationChanged && previousRowsCount > 0) {
+      if (!rowsIncreased && !contentChanged) return;
+      if (!isNearBottom) return;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() =>
+      scrollSideChatToLatest("auto"),
+    );
+    const timeout = window.setTimeout(
+      () => scrollSideChatToLatest("auto"),
+      80,
+    );
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(timeout);
+    };
+  }, [
+    renderedRows.length,
+    scrollSideChatToLatest,
+    sideChatScrollSignature,
+    sideConversationId,
+  ]);
+
   return (
     <section
       className={styles.sideChatShell}
       aria-label={t("rightSidebar.tabs.chat.label")}
     >
-      <div className={styles.sideChatTranscript}>
-        {sideConversation ? (
-          renderedRows.length > 0 ? renderedRows : null
-        ) : (
-          <div className={styles.sideChatSyncNotice}>
-            <strong>{t("rightSidebar.chat.desktopSyncPending")}</strong>
-            <span>{t("rightSidebar.chat.desktopSyncDescription")}</span>
-          </div>
-        )}
+      <div className={styles.sideChatTranscriptFrame}>
+        <div
+          className={styles.sideChatTranscript}
+          data-testid="side-chat-transcript"
+          ref={transcriptRef}
+        >
+          {sideConversation ? (
+            renderedRows.length > 0 ? renderedRows : null
+          ) : (
+            <div className={styles.sideChatSyncNotice}>
+              <strong>{t("rightSidebar.chat.desktopSyncPending")}</strong>
+              <span>{t("rightSidebar.chat.desktopSyncDescription")}</span>
+            </div>
+          )}
+        </div>
+        {!nearSideChatBottom ? (
+          <button
+            className={styles.sideChatScrollToLatestButton}
+            type="button"
+            aria-label="滚动侧边聊天到底部"
+            title="滚动到底部"
+            onClick={() => scrollSideChatToLatest("smooth")}
+          >
+            <ArrowDown size={17} />
+          </button>
+        ) : null}
       </div>
       <div className={styles.sideChatComposerShell}>
         <Composer

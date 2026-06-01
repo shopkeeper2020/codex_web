@@ -412,6 +412,45 @@ describe("official IPC helpers", () => {
     expect(bridge.claimLocalOnlyConversation("thread-no-client")).toBe(false);
   });
 
+  it("omits context compaction items from Web-owned snapshots sent to official clients", () => {
+    const bridge = new OfficialIpcBridge("");
+    (bridge as unknown as { clientId: string | null }).clientId = "web-client";
+    const snapshot = {
+      turns: [
+        {
+          id: "turn-with-context-compaction",
+          status: "completed",
+          items: [
+            { type: "userMessage", id: "user-1", text: "before" },
+            { type: "contextCompaction", id: "compact-direct" },
+            {
+              type: "unknown",
+              id: "compact-unknown",
+              rawType: "context_compaction",
+              raw: { type: "contextCompaction", id: "raw-compact" },
+            },
+            { type: "agentMessage", id: "assistant-1", text: "after" },
+          ],
+        },
+      ],
+    };
+    const originalSnapshot = JSON.stringify(snapshot);
+
+    expect(
+      bridge.broadcastConversationSnapshot("thread-context", snapshot),
+    ).toBe(true);
+
+    const state = bridge.getThreadStreamState("thread-context")
+      ?.conversationState as {
+      turns?: Array<{ items?: unknown[] }>;
+    };
+    expect(state?.turns?.[0]?.items).toEqual([
+      { type: "userMessage", id: "user-1", text: "before" },
+      { type: "agentMessage", id: "assistant-1", text: "after" },
+    ]);
+    expect(JSON.stringify(snapshot)).toBe(originalSnapshot);
+  });
+
   it("claims local-only conversations without publishing stream state", () => {
     const bridge = new OfficialIpcBridge("");
     (bridge as unknown as { clientId: string | null }).clientId = "web-client";
