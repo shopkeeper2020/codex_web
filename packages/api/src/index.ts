@@ -61,11 +61,12 @@ export const turnStartRequestSchema = z
     const hasText = value.text.trim().length > 0;
     const hasAttachments =
       value.attachmentIds?.some((id) => id.trim().length > 0) ?? false;
-    if (!hasText && !hasAttachments) {
+    const hasSkills = (value.skills?.length ?? 0) > 0;
+    if (!hasText && !hasAttachments && !hasSkills) {
       context.addIssue({
         code: "custom",
         path: ["text"],
-        message: "Missing text or attachmentIds",
+        message: "Missing text, attachmentIds, or skills",
       });
     }
     return {
@@ -113,11 +114,12 @@ export const turnSteerRequestSchema = z
     const hasText = value.text.trim().length > 0;
     const hasAttachments =
       value.attachmentIds?.some((id) => id.trim().length > 0) ?? false;
-    if (!hasText && !hasAttachments) {
+    const hasSkills = (value.skills?.length ?? 0) > 0;
+    if (!hasText && !hasAttachments && !hasSkills) {
       context.addIssue({
         code: "custom",
         path: ["text"],
-        message: "Missing text or attachmentIds",
+        message: "Missing text, attachmentIds, or skills",
       });
     }
     return {
@@ -203,6 +205,15 @@ const planStepSchema = z.object({
   status: z.string().nullable(),
 });
 
+const agentTaskSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.string().nullable(),
+  prompt: z.string(),
+  model: z.string().nullable(),
+  reasoningEffort: z.string().nullable(),
+});
+
 const textMessageItemFields = {
   id: z.string(),
   text: z.string(),
@@ -258,6 +269,17 @@ export const messageItemSchema = z.discriminatedUnion("type", [
     text: z.string(),
     steps: z.array(planStepSchema),
     status: z.string().nullable(),
+  }),
+  z.object({
+    type: z.literal("agentTask"),
+    id: z.string(),
+    title: z.string(),
+    status: z.string().nullable(),
+    prompt: z.string(),
+    model: z.string().nullable(),
+    reasoningEffort: z.string().nullable(),
+    agents: z.array(agentTaskSchema),
+    rawType: z.string(),
   }),
   z.object({
     type: z.literal("approval"),

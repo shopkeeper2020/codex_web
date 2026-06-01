@@ -65,6 +65,15 @@ export type PlanStep = {
   status: string | null
 }
 
+export type AgentTask = {
+  id: string
+  name: string
+  status: string | null
+  prompt: string
+  model: string | null
+  reasoningEffort: string | null
+}
+
 export type MessageItem =
   | { type: 'user'; id: string; text: string; images?: MessageImageContent[] }
   | { type: 'assistant'; id: string; text: string; images?: MessageImageContent[] }
@@ -90,6 +99,17 @@ export type MessageItem =
       changes?: FileChangeContent[]
     }
   | { type: 'plan'; id: string; text: string; steps: PlanStep[]; status: string | null }
+  | {
+      type: 'agentTask'
+      id: string
+      title: string
+      status: string | null
+      prompt: string
+      model: string | null
+      reasoningEffort: string | null
+      agents: AgentTask[]
+      rawType: string
+    }
   | {
       type: 'approval'
       id: string
@@ -511,6 +531,168 @@ function normalizeFileChanges(record: Record<string, unknown> | null): FileChang
   ]
 }
 
+function readAgentTaskPrompt(record: Record<string, unknown> | null): string {
+  return (
+    readString(record?.prompt) ||
+    readTextContent(record?.prompt ?? record?.input ?? record?.content ?? record?.message ?? record?.text)
+  )
+}
+
+function hasAgentTaskPayload(record: Record<string, unknown> | null): boolean {
+  if (!record) return false
+  return Boolean(
+    readAgentTaskPrompt(record) ||
+      asRecord(record.agentsStates) ||
+      readArray(record.receiverThreadIds).length ||
+      readArray(record.receiverThreads).length,
+  )
+}
+
+function isAgentTaskToolCall(
+  record: Record<string, unknown> | null,
+  normalizedType: string,
+  compactType: string,
+): boolean {
+  if (!record) return false
+  const tool = readString(record.tool).toLowerCase()
+  const looksLikeAgentToolCall =
+    compactType === 'collabagenttoolcall' ||
+    compactType === 'spawnagent' ||
+    tool === 'spawnagent' ||
+    (normalizedType.includes('collabagent') && normalizedType.includes('tool')) ||
+    (compactType.includes('agent') && compactType.includes('toolcall'))
+  return looksLikeAgentToolCall && hasAgentTaskPayload(record)
+}
+
+function normalizeAgentTaskAgents(
+  record: Record<string, unknown>,
+  fallbackId: string,
+  fallbackPrompt: string,
+  fallbackStatus: string | null,
+  fallbackModel: string | null,
+  fallbackReasoningEffort: string | null,
+): AgentTask[] {
+  const agents: AgentTask[] = []
+  const seen = new Set<string>()
+  const agentsStates = asRecord(record.agentsStates)
+  const receiverThreads = readArray(record.receiverThreads)
+  const receiverById = new Map<string, unknown>()
+  for (const receiver of receiverThreads) {
+    const id = readReceiverThreadId(receiver)
+    if (id) receiverById.set(id, receiver)
+  }
+
+  const pushAgent = (id: string, receiver: unknown, stateValue: unknown, index: number): void => {
+    const key = id || `${fallbackId}-agent-${index}`
+    if (seen.has(key)) return
+    seen.add(key)
+    const state = asRecord(stateValue)
+    const prompt = readAgentTaskPrompt(state) || fallbackPrompt
+    agents.push({
+      id: key,
+      name:
+        readString(state?.name) ||
+        readString(state?.agentNickname) ||
+        readReceiverThreadName(receiver) ||
+        `Agent ${shortAgentId(key)}`,
+      status:
+        readStatusString(state?.status) ||
+        readStatusString(state?.state) ||
+        fallbackStatus,
+      prompt,
+      model: readString(state?.model) || fallbackModel,
+      reasoningEffort:
+        readString(state?.reasoningEffort) ||
+        readString(state?.reasoning_effort) ||
+        fallbackReasoningEffort,
+    })
+  }
+
+  if (agentsStates) {
+    for (const [id, stateValue] of Object.entries(agentsStates)) {
+      pushAgent(id, receiverById.get(id), stateValue, agents.length)
+    }
+  }
+
+  for (const receiverIdValue of readArray(record.receiverThreadIds)) {
+    const id = readString(receiverIdValue)
+    if (!id) continue
+    pushAgent(id, receiverById.get(id), null, agents.length)
+  }
+
+  for (const receiver of receiverThreads) {
+    const id = readReceiverThreadId(receiver)
+    if (!id) continue
+    pushAgent(id, receiver, null, agents.length)
+  }
+
+  if (agents.length === 0 && fallbackPrompt) {
+    pushAgent(`${fallbackId}-agent`, null, null, 0)
+  }
+
+  return agents
+}
+
+function normalizeAgentTaskMessageItem(
+  record: Record<string, unknown>,
+  id: string,
+  rawType: string,
+): MessageItem {
+  const prompt = readAgentTaskPrompt(record)
+  const status = readStatusString(record.status) || readStatusString(record.state) || null
+  const model = readString(record.model) || null
+  const reasoningEffort = readString(record.reasoningEffort) || readString(record.reasoning_effort) || null
+  return {
+    type: 'agentTask',
+    id,
+    title: readString(record.title) || readString(record.name) || readString(record.tool) || 'spawnAgent',
+    status,
+    prompt,
+    model,
+    reasoningEffort,
+    agents: normalizeAgentTaskAgents(record, id, prompt, status, model, reasoningEffort),
+    rawType: rawType || 'collabAgentToolCall',
+  }
+}
+
+function normalizeAgentTaskTextMessageItem(
+  text: string,
+  id: string,
+  rawType: string,
+): MessageItem | null {
+  const normalized = text.trim()
+  const header = /^(正在生成|已生成)\s*\d+\s*[个個]智能[体體](?:\s|$)/u.exec(normalized)
+  if (!header) return null
+  if (!/(?:输入|輸入|任务|任務|工作目标|工作目標)\s*[:：]/u.test(normalized)) return null
+
+  const status = header[1] === '正在生成' ? 'active' : 'completed'
+  const prompt = normalized
+    .slice(header[0].length)
+    .replace(/^\s*(?:正在生成|已生成)\s*/u, '')
+    .trim()
+  const agentPrompt = prompt || normalized
+  return {
+    type: 'agentTask',
+    id,
+    title: 'spawnAgent',
+    status,
+    prompt: agentPrompt,
+    model: null,
+    reasoningEffort: null,
+    agents: [
+      {
+        id: `${id}-agent`,
+        name: 'Agent',
+        status,
+        prompt: agentPrompt,
+        model: null,
+        reasoningEffort: null,
+      },
+    ],
+    rawType: rawType || 'assistantAgentTaskText',
+  }
+}
+
 function normalizeMessageItem(value: unknown, index: number): MessageItem {
   const record = asRecord(value)
   const type = readString(record?.type)
@@ -523,6 +705,10 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
     const rawType = readString(record?.rawType) || readString(rawRecord?.type)
     const compactRawType = rawType.toLowerCase().replace(/[-_]/g, '')
     if (rawRecord && compactRawType === 'steeringusermessage') {
+      const normalizedRaw = normalizeMessageItem(rawRecord, index)
+      return { ...normalizedRaw, id }
+    }
+    if (rawRecord && isAgentTaskToolCall(rawRecord, rawType.toLowerCase(), compactRawType)) {
       const normalizedRaw = normalizeMessageItem(rawRecord, index)
       return { ...normalizedRaw, id }
     }
@@ -554,10 +740,13 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
   }
   if (type === 'agentMessage' || type === 'assistantMessage' || normalizedType === 'assistant') {
     const images = readImagesContent(record?.content)
+    const text = readString(record?.text) || readTextContent(record?.content)
+    const agentTaskTextItem = normalizeAgentTaskTextMessageItem(text, id, type)
+    if (agentTaskTextItem) return agentTaskTextItem
     return {
       type: 'assistant',
       id,
-      text: readString(record?.text) || readTextContent(record?.content),
+      text,
       ...(images.length ? { images } : {}),
     }
   }
@@ -652,6 +841,9 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
       status: readStatusString(record?.status) || null,
       rawType: type || 'webSearch',
     }
+  }
+  if (isAgentTaskToolCall(record, normalizedType, compactType)) {
+    return normalizeAgentTaskMessageItem(record ?? {}, id, type)
   }
   if (normalizedType.includes('tool') || normalizedType.includes('mcp') || normalizedType.includes('function')) {
     return {

@@ -622,6 +622,53 @@ describe("turn HTTP routes", () => {
     ]);
   });
 
+  it("passes skill-only start and steer requests without synthetic text input", async () => {
+    const { context, officialIpc } = await createHarness({
+      errorMessage: "",
+      hasOfficialState: true,
+    });
+
+    const startResponse = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn-start",
+      payload: {
+        threadId: "thread-a",
+        text: "   ",
+        skills: [{ name: "docs", path: "C:\\skill\\SKILL.md" }],
+      },
+    });
+
+    expect(startResponse.statusCode).toBe(200);
+    expect(officialIpc.followerStartCalls.at(-1)).toMatchObject({
+      threadId: "thread-a",
+      params: {
+        threadId: "thread-a",
+        input: [{ type: "skill", name: "docs", path: "C:\\skill\\SKILL.md" }],
+      },
+    });
+
+    const steerResponse = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn-steer",
+      payload: {
+        threadId: "thread-a",
+        expectedTurnId: "turn-active",
+        text: "",
+        skills: [{ name: "docs", path: "C:\\skill\\SKILL.md" }],
+      },
+    });
+
+    expect(steerResponse.statusCode).toBe(200);
+    expect(officialIpc.followerSteerCalls.at(-1)).toMatchObject({
+      threadId: "thread-a",
+      params: {
+        threadId: "thread-a",
+        expectedTurnId: "turn-active",
+        input: [{ type: "skill", name: "docs", path: "C:\\skill\\SKILL.md" }],
+      },
+    });
+  });
+
   it("passes full access as the official tagged sandbox policy", async () => {
     const { context, officialIpc, appServer } = await createHarness({
       errorMessage: "",

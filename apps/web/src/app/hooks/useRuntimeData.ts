@@ -85,12 +85,28 @@ const WEBSOCKET_ERROR_REALTIME_EVENT: RealtimeEvent = {
 const ACTIVE_THREAD_POLL_INTERVAL_MS = 5_000;
 const REALTIME_REFRESH_DEBOUNCE_MS = 2_000;
 
+function hasSendContent(
+  text: string,
+  attachmentIds: string[] = [],
+  options: SendOptions = {},
+): boolean {
+  return (
+    text.trim().length > 0 ||
+    attachmentIds.length > 0 ||
+    Boolean(options.skills?.length)
+  );
+}
+
 function activeTurnIdFromDetail(detail: ThreadDetail | null): string {
   return (
     [...(detail?.turns ?? [])]
       .reverse()
       .find((turn) => turn.status === "active")?.id ?? ""
   );
+}
+
+function detailInProgress(detail: ThreadDetail | null): boolean {
+  return Boolean(detail?.thread.inProgress || activeTurnIdFromDetail(detail));
 }
 
 type RefreshThreadDetailOptions = {
@@ -178,6 +194,7 @@ export type QueuedThreadMessage = {
   threadId: string;
   text: string;
   attachmentCount: number;
+  skillCount: number;
   createdAtMs: number;
 };
 
@@ -202,6 +219,7 @@ function toQueuedMessageView(
     threadId: message.threadId,
     text: message.text,
     attachmentCount: message.attachmentCount,
+    skillCount: message.skillCount,
     createdAtMs: message.createdAtMs,
   };
 }
@@ -719,7 +737,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       attachmentIds: string[] = [],
       options: SendOptions = {},
     ) => {
-      if (!enabled || (!text.trim() && attachmentIds.length === 0)) {
+      if (!enabled || !hasSendContent(text, attachmentIds, options)) {
         return null;
       }
       setSending(true);
@@ -968,6 +986,13 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     if (!enabled || !selectedThreadId) return;
     const activeTurn = activeTurnIdFromDetail(threadDetail);
     if (!activeTurn) {
+      const selectedThreadInProgress = threadList.threads.some(
+        (thread) => thread.id === selectedThreadId && thread.inProgress,
+      );
+      if (detailInProgress(threadDetail) || selectedThreadInProgress) {
+        await stopThreadBackgroundById(selectedThreadId);
+        return;
+      }
       setError("没有可中断的 active turn");
       return;
     }
@@ -987,7 +1012,9 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     refreshThreadDetail,
     refreshThreads,
     selectedThreadId,
+    stopThreadBackgroundById,
     threadDetail,
+    threadList.threads,
   ]);
 
   const compactSelectedThread = useCallback(async () => {
@@ -1108,6 +1135,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         threadId,
         text,
         attachmentCount: attachmentIds.length,
+        skillCount: options.skills?.length ?? 0,
         attachmentIds: [...attachmentIds],
         createdAtMs: Date.now(),
         options: { ...options, mode: "start" },
@@ -1196,12 +1224,13 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       attachmentIds: string[] = [],
       options: SendOptions = {},
     ) => {
-      if (!selectedThreadId || (!text.trim() && attachmentIds.length === 0)) {
+      if (!selectedThreadId || !hasSendContent(text, attachmentIds, options)) {
         return;
       }
       const trimmedText = text.trim();
       const activeTurnId = activeTurnIdFromDetail(threadDetail);
-      if (activeTurnId && options.mode !== "steer") {
+      const runningThread = detailInProgress(threadDetail);
+      if (runningThread && options.mode !== "steer") {
         enqueueQueuedMessage(
           selectedThreadId,
           trimmedText,
@@ -1256,7 +1285,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
 
   useEffect(() => {
     if (!enabled || !selectedThreadId || !threadDetail) return;
-    if (activeTurnIdFromDetail(threadDetail)) return;
+    if (detailInProgress(threadDetail)) return;
     const nextMessage = queuedMessagesByThread[selectedThreadId]?.[0];
     if (!nextMessage) return;
     if (queueFlushInFlightRef.current.has(selectedThreadId)) return;
@@ -1311,7 +1340,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       if (
         !enabled ||
         !sideConversationId ||
-        (!trimmedText && attachmentIds.length === 0)
+        !hasSendContent(trimmedText, attachmentIds, options)
       )
         return;
       setSending(true);

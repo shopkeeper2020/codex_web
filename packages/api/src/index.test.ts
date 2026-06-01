@@ -212,13 +212,27 @@ describe("API contract schemas", () => {
     });
   });
 
+  it("allows skill-only turn-start requests", () => {
+    expect(
+      turnStartRequestSchema.parse({
+        threadId: "thread-a",
+        text: "   ",
+        skills: [{ name: "docs", path: "C:\\skill\\SKILL.md" }],
+      }),
+    ).toMatchObject({
+      threadId: "thread-a",
+      text: "   ",
+      skills: [{ name: "docs", path: "C:\\skill\\SKILL.md" }],
+    });
+  });
+
   it("rejects missing thread id and empty content", () => {
     const parsed = turnStartRequestSchema.safeParse({ text: "   " });
     expect(parsed.success).toBe(false);
     if (!parsed.success) {
       expect(formatZodError(parsed.error)).toContain("Missing threadId");
       expect(formatZodError(parsed.error)).toContain(
-        "Missing text or attachmentIds",
+        "Missing text, attachmentIds, or skills",
       );
     }
   });
@@ -260,6 +274,19 @@ describe("API contract schemas", () => {
       threadId: "thread-a",
       expectedTurnId: "turn-a",
       attachmentIds: ["att-a"],
+    });
+
+    expect(
+      turnSteerRequestSchema.parse({
+        threadId: "thread-a",
+        expectedTurnId: "turn-a",
+        text: "",
+        skills: [{ name: "docs", path: "C:\\skill\\SKILL.md" }],
+      }),
+    ).toMatchObject({
+      threadId: "thread-a",
+      expectedTurnId: "turn-a",
+      skills: [{ name: "docs", path: "C:\\skill\\SKILL.md" }],
     });
 
     expect(
@@ -1090,6 +1117,26 @@ describe("API contract schemas", () => {
         text: "plan",
         steps: [{ text: "step", status: "completed" }],
         status: null,
+      },
+      {
+        type: "agentTask" as const,
+        id: "agent-task-a",
+        title: "spawnAgent",
+        status: "completed",
+        prompt: "输入内容\n\n任务：核对事实",
+        model: "gpt-5.5",
+        reasoningEffort: "xhigh",
+        agents: [
+          {
+            id: "agent-a",
+            name: "Agent a",
+            status: "pendingInit",
+            prompt: "输入内容\n\n任务：核对事实",
+            model: "gpt-5.5",
+            reasoningEffort: "xhigh",
+          },
+        ],
+        rawType: "collabAgentToolCall",
       },
       {
         type: "approval" as const,

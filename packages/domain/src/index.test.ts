@@ -214,6 +214,14 @@ describe('domain normalization', () => {
                 id: 'call-spawn',
                 tool: 'spawnAgent',
                 status: 'completed',
+                prompt: [
+                  '请协助查证 C:\\Users\\user\\Desktop\\日报\\_factcheck_work\\extracted_text 内以下文件。',
+                  '1) 02_阿伦日报-2+3页（2016-2025）.txt',
+                  '',
+                  '任务：逐个主事件抽取主要事实声称，用网络资料核对。',
+                ].join('\n'),
+                model: 'gpt-5.5',
+                reasoningEffort: 'xhigh',
                 receiverThreadIds: ['00000000-0000-4000-8000-000000000001'],
                 receiverThreads: [
                   {
@@ -243,6 +251,68 @@ describe('domain normalization', () => {
         source: 'official-ipc',
       },
     ])
+    expect(normalized?.turns[0]?.items[0]).toMatchObject({
+      type: 'agentTask',
+      id: 'call-spawn',
+      title: 'spawnAgent',
+      status: 'completed',
+      rawType: 'collabAgentToolCall',
+      model: 'gpt-5.5',
+      reasoningEffort: 'xhigh',
+      agents: [
+        {
+          id: '00000000-0000-4000-8000-000000000001',
+          name: 'Agent 00000000',
+          status: 'pendingInit',
+          model: 'gpt-5.5',
+          reasoningEffort: 'xhigh',
+        },
+      ],
+    })
+  })
+
+  it('normalizes desktop textual agent generation messages into agent tasks', () => {
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-agent-text',
+      owner: null,
+      thread: {
+        id: 'thread-agent-text',
+        turns: [
+          {
+            id: 'turn-agent-text',
+            status: 'active',
+            items: [
+              {
+                type: 'agentMessage',
+                id: 'item-agent-text',
+                text: [
+                  '正在生成1個智能體',
+                  '正在生成',
+                  '輸入：你是本倉庫的子 agent reviewer。',
+                  '',
+                  '工作目標：只審查本次改動，不要修改文件。',
+                ].join('\n'),
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.turns[0]?.items[0]).toMatchObject({
+      type: 'agentTask',
+      id: 'item-agent-text',
+      title: 'spawnAgent',
+      status: 'active',
+      rawType: 'agentMessage',
+      agents: [
+        {
+          id: 'item-agent-text-agent',
+          name: 'Agent',
+          status: 'active',
+        },
+      ],
+    })
   })
 
   it('normalizes steering user messages and official file change arrays', () => {

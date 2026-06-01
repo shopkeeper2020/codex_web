@@ -486,6 +486,99 @@ describe("thread detail route", () => {
     expect(context.database.status().threadDetailCount).toBe(0);
   });
 
+  it("preserves richer official stream turn items when reopening an active external thread", async () => {
+    const officialIpc = createBridge();
+    officialIpc.restoreThreadStreamState({
+      threadId: "thread-live-items",
+      conversationId: "thread-live-items",
+      hostId: "local",
+      ownerClientId: "desktop-client",
+      sourceClientId: "desktop-client",
+      conversationState: {
+        id: "thread-live-items",
+        name: "Live command snapshot",
+        threadRuntimeStatus: { type: "active" },
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [
+              { type: "agentMessage", text: "live intro" },
+              {
+                type: "commandExecution",
+                id: "call-live-command",
+                command: "pnpm --filter @codex-web/web typecheck",
+                status: "completed",
+                output: "typecheck ok",
+              },
+            ],
+          },
+        ],
+      },
+      changeType: "snapshot",
+      cacheVersion: 9,
+      updatedAtIso: "2026-05-29T00:00:00.000Z",
+      isInProgress: true,
+      activeTurnId: "turn-live",
+    });
+    const { context, appServer } = await createHarness(officialIpc);
+    appServer.threadReadResult = {
+      thread: {
+        id: "thread-live-items",
+        name: "App-server lagging thread",
+        cwd: "C:\\workspace\\codex_web",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        status: "active",
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [{ type: "agentMessage", text: "app-server intro only" }],
+          },
+        ],
+      },
+    };
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-live-items",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "app-server-readonly",
+      data: {
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [
+              { type: "assistant", text: "live intro" },
+              {
+                type: "command",
+                id: "call-live-command",
+                command: "pnpm --filter @codex-web/web typecheck",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(officialIpc.getThreadStreamState("thread-live-items")).toMatchObject({
+      conversationState: {
+        turns: [
+          {
+            id: "turn-live",
+            items: [
+              { text: "live intro" },
+              { type: "commandExecution", command: "pnpm --filter @codex-web/web typecheck" },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   it("retires a stale external active cache when app-server has a newer completed turn", async () => {
     const officialIpc = createBridge();
     officialIpc.restoreThreadStreamState({

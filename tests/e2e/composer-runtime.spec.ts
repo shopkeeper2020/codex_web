@@ -9,6 +9,12 @@ const secondSkillPath = "C:\\codex-web-test\\skills\\edge-web-ops\\SKILL.md";
 
 type JsonBody = Record<string, unknown>;
 type ActiveTurnOption = boolean | (() => boolean);
+type ComposerRuntimeMockOptions = {
+  activeTurn?: ActiveTurnOption;
+  runtimeOptions?: JsonBody;
+  threadInProgress?: ActiveTurnOption;
+  onThreadStopBackground?: (body: JsonBody) => void;
+};
 
 async function fulfillJson(route: Route, body: JsonBody): Promise<void> {
   await route.fulfill({
@@ -20,12 +26,19 @@ async function fulfillJson(route: Route, body: JsonBody): Promise<void> {
 async function installComposerRuntimeMocks(
   page: Page,
   onTurnStart: (body: JsonBody) => void,
-  options: { activeTurn?: ActiveTurnOption; runtimeOptions?: JsonBody } = {},
+  options: ComposerRuntimeMockOptions = {},
 ): Promise<void> {
   const isActiveTurn = (): boolean =>
     typeof options.activeTurn === "function"
       ? options.activeTurn()
       : Boolean(options.activeTurn);
+  const isThreadInProgress = (): boolean => {
+    const configured =
+      typeof options.threadInProgress === "function"
+        ? options.threadInProgress()
+        : options.threadInProgress;
+    return isActiveTurn() || Boolean(configured);
+  };
   const activeTurnId = (): string =>
     isActiveTurn() ? "turn-active-runtime-e2e" : "";
 
@@ -33,6 +46,7 @@ async function installComposerRuntimeMocks(
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     const currentActiveTurnId = activeTurnId();
+    const currentThreadInProgress = isThreadInProgress();
     await fulfillJson(route, {
       data: {
         projects: [
@@ -52,7 +66,7 @@ async function installComposerRuntimeMocks(
                 projectId: projectRoot,
                 path: projectRoot,
                 updatedAtIso: "2026-05-29T00:00:00.000Z",
-                inProgress: Boolean(currentActiveTurnId),
+                inProgress: currentThreadInProgress,
                 pinned: false,
                 owner: null,
               },
@@ -65,6 +79,7 @@ async function installComposerRuntimeMocks(
 
   await page.route("**/api/domain/thread-detail**", async (route) => {
     const currentActiveTurnId = activeTurnId();
+    const currentThreadInProgress = isThreadInProgress();
     await fulfillJson(route, {
       data: {
         thread: {
@@ -73,7 +88,7 @@ async function installComposerRuntimeMocks(
           projectId: projectRoot,
           path: projectRoot,
           updatedAtIso: "2026-05-29T00:00:00.000Z",
-          inProgress: Boolean(currentActiveTurnId),
+          inProgress: currentThreadInProgress,
           pinned: false,
           owner: null,
         },
@@ -225,9 +240,42 @@ async function installComposerRuntimeMocks(
       },
     });
   });
+
+  await page.route("**/api/domain/thread-stop-background", async (route) => {
+    const body = route.request().postDataJSON() as JsonBody;
+    options.onThreadStopBackground?.(body);
+    await fulfillJson(route, {
+      data: {
+        ok: true,
+        interrupted: 1,
+        results: [{ turnId: "turn-from-official-stream", mode: "official-follower" }],
+      },
+    });
+  });
 }
 
 test.describe("composer runtime options", () => {
+  test("shows stop control for thread-level running state without active turn id", async ({
+    page,
+  }) => {
+    let stopBody: JsonBody | null = null;
+    await installComposerRuntimeMocks(page, () => undefined, {
+      threadInProgress: true,
+      onThreadStopBackground: (body) => {
+        stopBody = body;
+      },
+    });
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const composer = page.getByRole("form", { name: "Composer" });
+    await expect(
+      composer.getByRole("button", { name: "停止当前回复" }),
+    ).toBeVisible();
+    await composer.getByRole("button", { name: "停止当前回复" }).click();
+    await expect.poll(() => stopBody?.threadId).toBe(threadId);
+  });
+
   test("renders Desktop-like native dictation controls while recording", async ({
     page,
   }, testInfo) => {
@@ -829,6 +877,49 @@ test.describe("composer runtime options", () => {
     });
   });
 
+  test("sends a selected skill without typed text", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "skill-only 请求体链路先在桌面项目验证一次",
+    );
+
+    let capturedTurnStart: JsonBody | null = null;
+    await installComposerRuntimeMocks(page, (body) => {
+      capturedTurnStart = body;
+    });
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const input = page.getByLabel("输入消息");
+    await page.getByLabel("打开输入选项").click();
+    const inputMenu = page.getByRole("menu", { name: "输入选项" });
+    await expect(inputMenu).toBeVisible();
+    await inputMenu.getByRole("button", { name: "插件" }).click();
+    await inputMenu.getByText("Docs Skill").click();
+    await expect(input).toHaveValue("");
+    await expect(
+      page.getByTestId("composer-inline-skills").getByText("Docs Skill"),
+    ).toBeVisible();
+
+    const sendButton = page.getByRole("button", {
+      name: "发送",
+      exact: true,
+    });
+    await expect(sendButton).toBeEnabled();
+    await page.keyboard.press("Escape");
+    await sendButton.click();
+
+    await expect.poll(() => capturedTurnStart).not.toBeNull();
+    expect(capturedTurnStart).toMatchObject({
+      threadId,
+      text: "",
+      skills: [{ name: "docs", path: skillPath }],
+    });
+    await expect(page.getByTestId("composer-inline-skills")).toHaveCount(0);
+  });
+
   test("keeps the keyboard-selected slash command item visible", async ({
     page,
   }, testInfo) => {
@@ -841,7 +932,8 @@ test.describe("composer runtime options", () => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
     const input = page.getByLabel("输入消息");
-    await input.fill("/");
+    await input.focus();
+    await input.press("/");
     const slashMenu = page.getByRole("menu", { name: "斜杠菜单" });
     await expect(slashMenu).toBeVisible();
 

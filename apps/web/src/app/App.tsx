@@ -410,6 +410,14 @@ export function App(): ReactElement {
                         null)
                   }
                   activeTurnId={draftThread ? "" : activeTurnId}
+                  threadInProgress={
+                    draftThread
+                      ? false
+                      : Boolean(
+                          threadDetail?.thread.inProgress ||
+                            selectedThread?.inProgress,
+                        )
+                  }
                   runtimeOptions={runtimeOptions}
                   disabled={draftThread ? false : !selectedThreadId}
                   sending={sending}

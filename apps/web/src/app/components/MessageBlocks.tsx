@@ -1,4 +1,5 @@
 import {
+  Bot,
   Brain,
   Check,
   CheckCircle2,
@@ -36,6 +37,8 @@ type MessageImage = NonNullable<Extract<MessageItem, { type: 'user' }>['images']
 type CommandItem = Extract<MessageItem, { type: 'command' }>
 type FileChangeItem = Extract<MessageItem, { type: 'fileChange' }>
 type FileChangeEntry = NonNullable<FileChangeItem['changes']>[number]
+type AgentTaskItem = Extract<MessageItem, { type: 'agentTask' }>
+type AgentTaskEntry = AgentTaskItem['agents'][number]
 type ReasoningItem = Extract<MessageItem, { type: 'reasoning' }>
 type ToolOutputItem = Extract<MessageItem, { type: 'toolOutput' }>
 type UnknownItem = Extract<MessageItem, { type: 'unknown' }>
@@ -47,14 +50,17 @@ type RenderOptions = {
 
 const USER_MESSAGE_COLLAPSE_LINE_COUNT = 9
 const USER_MESSAGE_COLLAPSE_CHAR_COUNT = 560
+const AGENT_TASK_COLLAPSE_LINE_COUNT = 7
+const AGENT_TASK_COLLAPSE_CHAR_COUNT = 520
 const FILE_CHANGE_INITIAL_ROW_COUNT = 3
 const FILE_REFERENCE_EXTENSIONS =
-  'tsx?|jsx?|mjs|cjs|css|scss|sass|less|mdx?|jsonc?|ya?ml|toml|lock|html?|xml|svg|png|jpe?g|gif|webp|bmp|ico|pdf|txt|csv|tsv|log|py|ps1|sh|bat|cmd|rs|go|java|cs|cpp|c|h|hpp|sql|env|ini'
+  'tsx?|jsx?|mjs|cjs|css|scss|sass|less|mdx?|jsonc?|ya?ml|toml|lock|html?|xml|svg|png|jpe?g|gif|webp|bmp|ico|pdf|docx?|xlsx?|xlsm|pptx?|txt|csv|tsv|log|py|ps1|sh|bat|cmd|rs|go|java|cs|cpp|c|h|hpp|sql|env|ini'
+const FILE_REFERENCE_LOCATION_SUFFIX = '(?::\\d+(?::\\d+)?)?'
 const INLINE_FILE_REFERENCE_PATTERN = new RegExp(
   [
-    `[a-z]:[\\\\/][^\\r\\n"'<>|]+?\\.(?:${FILE_REFERENCE_EXTENSIONS})\\b`,
-    `(?:\\.{1,2}[\\\\/])?(?:[\\w .-]+[\\\\/])+[\\w .-]+\\.(?:${FILE_REFERENCE_EXTENSIONS})\\b`,
-    `\\b[\\w.-]+\\.(?:${FILE_REFERENCE_EXTENSIONS})\\b`,
+    `[a-z]:[\\\\/][^\\r\\n"'<>|]+?\\.(?:${FILE_REFERENCE_EXTENSIONS})\\b${FILE_REFERENCE_LOCATION_SUFFIX}`,
+    `(?:\\.{1,2}[\\\\/])?(?:[\\w .-]+[\\\\/])+[\\w .-]+\\.(?:${FILE_REFERENCE_EXTENSIONS})\\b${FILE_REFERENCE_LOCATION_SUFFIX}`,
+    `\\b[\\w.-]+\\.(?:${FILE_REFERENCE_EXTENSIONS})\\b${FILE_REFERENCE_LOCATION_SUFFIX}`,
   ].join('|'),
   'gi',
 )
@@ -116,6 +122,30 @@ function joinProjectPath(root: string, relativePath: string): string {
   return `${cleanRoot}${separator}${cleanRelative}`
 }
 
+function stripFileReferenceLocation(value: string): { path: string; line: number | null } {
+  const cleaned = value.trim().replace(/\s+\((?:line|行)\s+\d+\)$/i, '')
+  const match = /^(.*\.[a-z0-9]{1,12})(?::(\d+)(?::\d+)?)$/i.exec(cleaned)
+  if (!match) return { path: cleaned, line: null }
+  return { path: match[1] ?? cleaned, line: Number(match[2] ?? 0) }
+}
+
+function normalizeAbsoluteWindowsCandidate(value: string): string {
+  return /^\/[a-z]:[\\/]/i.test(value) ? value.slice(1) : value
+}
+
+function relativePathInsideProject(path: string, projectRoot?: string | null): string | null {
+  if (!projectRoot) return null
+  const normalized = path.replaceAll('\\', '/')
+  const root = projectRoot.replaceAll('\\', '/').replace(/\/+$/, '')
+  if (normalized.toLowerCase() === root.toLowerCase()) return ''
+  if (!normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`)) return null
+  return normalized.slice(root.length + 1)
+}
+
+function withFileReferenceLine(path: string, line: number | null): string {
+  return line ? `${path}:${line}` : path
+}
+
 function fileReferenceTarget({
   href,
   label,
@@ -124,31 +154,36 @@ function fileReferenceTarget({
   href?: string | null
   label: string
   projectRoot?: string | null
-}): { display: string; openPath: string; absolutePath: string; relativePath: string | null } | null {
-  const rawTarget = decodeFileUrl(href || label).trim()
+}): { display: string; openPath: string; absolutePath: string; relativePath: string | null; line: number | null } | null {
+  const rawTarget = normalizeAbsoluteWindowsCandidate(decodeFileUrl(href || label).trim())
   if (!rawTarget || isExternalLink(rawTarget)) return null
-  const target = rawTarget.replace(/[?#].*$/, '')
+  const withoutHash = rawTarget.replace(/[?#].*$/, '')
+  const location = stripFileReferenceLocation(withoutHash)
+  const target = normalizeAbsoluteWindowsCandidate(location.path)
   const display = label.trim() || target.split(/[\\/]/).filter(Boolean).at(-1) || target
   if (!looksLikeFileReference(target) && !looksLikeFileReference(display)) return null
 
   if (isAbsoluteWindowsPath(target)) {
     const normalized = normalizedFileReference(target)
-    const relative = projectRoot ? displayPath(normalized, projectRoot) : null
+    const relative = relativePathInsideProject(normalized, projectRoot)
     return {
       display,
-      openPath: normalized,
+      openPath: withFileReferenceLine(normalized, location.line),
       absolutePath: normalized,
-      relativePath: relative && relative !== normalized.replaceAll('\\', '/') ? relative : null,
+      relativePath: relative ? withFileReferenceLine(relative, location.line) : null,
+      line: location.line,
     }
   }
 
   const relativePath = target.replace(/^[.\\/]+/, '')
   const absolutePath = projectRoot ? joinProjectPath(projectRoot, relativePath) : relativePath
+  const openPath = projectRoot ? absolutePath : relativePath
   return {
     display,
-    openPath: relativePath,
+    openPath: withFileReferenceLine(openPath, location.line),
     absolutePath,
-    relativePath,
+    relativePath: withFileReferenceLine(relativePath, location.line),
+    line: location.line,
   }
 }
 
@@ -191,31 +226,22 @@ function FileReference({
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={target.absolutePath}
+        title={target.relativePath ?? withFileReferenceLine(target.absolutePath, target.line)}
         onClick={() => setOpen((value) => !value)}
       >
         {target.display}
       </button>
       {open ? (
         <span className={styles.fileReferenceMenu} role="menu">
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => runAndClose(() => void writeClipboard(target.absolutePath))}
-          >
-            {t('message.fileReference.copyPath')}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!target.relativePath}
-            onClick={() => {
-              if (!target.relativePath) return
-              runAndClose(() => void writeClipboard(target.relativePath ?? ''))
-            }}
-          >
-            {t('message.fileReference.copyRelativePath')}
-          </button>
+          {target.relativePath ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runAndClose(() => void writeClipboard(target.relativePath ?? ''))}
+            >
+              {t('message.fileReference.copyRelativePath')}
+            </button>
+          ) : null}
           <button
             type="button"
             role="menuitem"
@@ -389,7 +415,15 @@ function formatDurationMs(value: number | null): string {
 
 function decodeFileUrl(value: string): string {
   const trimmed = value.trim()
-  if (!trimmed.toLowerCase().startsWith('file:')) return trimmed
+  if (isExternalLink(trimmed)) return trimmed
+  if (!trimmed.toLowerCase().startsWith('file:')) {
+    if (!/%[0-9a-f]{2}/i.test(trimmed)) return trimmed
+    try {
+      return decodeURIComponent(trimmed)
+    } catch {
+      return trimmed
+    }
+  }
   try {
     const url = new URL(trimmed)
     const pathname = decodeURIComponent(url.pathname)
@@ -432,6 +466,7 @@ function imageSource(image: MessageImage, projectRoot?: string | null): string |
 
 function MessageImages({ images, projectRoot }: { images?: MessageImage[]; projectRoot?: string | null }): ReactElement | null {
   const [activeImage, setActiveImage] = useState<{ src: string; label: string } | null>(null)
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({})
   useEffect(() => {
     if (!activeImage) return
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -471,15 +506,31 @@ function MessageImages({ images, projectRoot }: { images?: MessageImage[]; proje
         {images.map((image, index) => {
           const src = imageSource(image, projectRoot)
           const label = image.alt ?? image.mimeType ?? image.path ?? image.url ?? 'image'
+          const failedKey = `${src ?? image.url ?? image.path ?? 'image'}-${index}`
+          const failed = Boolean(failedImages[failedKey])
           return (
             <button
               className={styles.imageBlock}
-              disabled={!src}
+              disabled={!src || failed}
               key={`${image.url ?? image.path ?? 'image'}-${index}`}
               type="button"
               onClick={() => src ? setActiveImage({ src, label }) : undefined}
             >
-              {src ? <img src={src} alt={image.alt ?? image.path ?? 'attachment'} loading="lazy" /> : null}
+              {src && !failed ? (
+                <img
+                  src={src}
+                  alt={image.alt ?? image.path ?? 'attachment'}
+                  loading="lazy"
+                  onError={() =>
+                    setFailedImages((current) => ({
+                      ...current,
+                      [failedKey]: true,
+                    }))
+                  }
+                />
+              ) : (
+                <span className={styles.imageUnavailable}>图片文件不可用</span>
+              )}
               <span>{label}</span>
             </button>
           )
@@ -1171,6 +1222,167 @@ function ToolOutputMessage({ item }: { item: ToolOutputItem }): ReactElement {
   )
 }
 
+function agentTaskEntries(item: AgentTaskItem): AgentTaskEntry[] {
+  if (item.agents.length) return item.agents
+  return [
+    {
+      id: `${item.id}-agent`,
+      name: item.title || 'Agent',
+      status: item.status,
+      prompt: item.prompt,
+      model: item.model,
+      reasoningEffort: item.reasoningEffort,
+    },
+  ]
+}
+
+function isActiveAgentStatus(value?: string | null): boolean {
+  const normalized = compactStatus(value)
+  return isActiveMessageStatus(value) || [
+    'initializing',
+    'pendinginit',
+    'queued',
+    'starting',
+    'working',
+  ].includes(normalized)
+}
+
+function isAgentTaskActive(item: AgentTaskItem, turnStatus: string): boolean {
+  if (!isActiveMessageStatus(turnStatus)) return false
+  if (isActiveAgentStatus(item.status)) return true
+  return agentTaskEntries(item).some((agent) => isActiveAgentStatus(agent.status))
+}
+
+function agentTaskSummary(item: AgentTaskItem, turnStatus: string): { label: string; active: boolean } {
+  const count = Math.max(1, agentTaskEntries(item).length)
+  const active = isAgentTaskActive(item, turnStatus)
+  return {
+    label: `${active ? '正在生成' : '已生成'} ${count} 个智能体`,
+    active,
+  }
+}
+
+function agentTaskStatusLabel(status: string | null, active: boolean): string {
+  if (active) return '正在生成'
+  if (status && ['failed', 'error'].includes(compactStatus(status))) return '生成失败'
+  return '已生成'
+}
+
+function splitAgentPrompt(prompt: string): { input: string; task: string } {
+  const normalized = prompt.trim()
+  if (!normalized) return { input: '', task: '' }
+  const markerPattern = /(?:任务|任務|工作目标|工作目標)\s*[:：]\s*/u
+  const match =
+    new RegExp(`(?:^|\\r?\\n\\s*\\r?\\n)\\s*${markerPattern.source}`, 'u').exec(normalized) ||
+    new RegExp(`(?:^|\\r?\\n)\\s*${markerPattern.source}`, 'u').exec(normalized)
+  if (!match || match.index === undefined) return { input: normalized, task: '' }
+
+  const marker = markerPattern.exec(match[0])
+  if (!marker || marker.index === undefined) return { input: normalized, task: '' }
+  const markerStart = match.index + marker.index
+  const taskStart = markerStart + marker[0].length
+  return {
+    input: normalized.slice(0, markerStart).trim(),
+    task: normalized.slice(taskStart).trim(),
+  }
+}
+
+function AgentTaskSection({
+  label,
+  text,
+  projectRoot,
+  onOpenFileReference,
+}: {
+  label: string
+  text: string
+  projectRoot?: string | null
+  onOpenFileReference?: (path: string) => void
+}): ReactElement | null {
+  const shouldCollapse =
+    text.length > AGENT_TASK_COLLAPSE_CHAR_COUNT ||
+    text.split(/\r?\n/).length > AGENT_TASK_COLLAPSE_LINE_COUNT
+  const [expanded, setExpanded] = useState(false)
+  if (!text) return null
+  const collapsed = shouldCollapse && !expanded
+  return (
+    <div className={styles.agentTaskSection}>
+      <span className={styles.agentTaskLabel}>{label}</span>
+      <span className={[styles.agentTaskText, collapsed ? styles.agentTaskTextCollapsed : ''].filter(Boolean).join(' ')}>
+        {renderFileReferencesInText(text, { projectRoot, onOpenFileReference })}
+      </span>
+      {shouldCollapse ? (
+        <button
+          aria-expanded={expanded}
+          className={styles.agentTaskToggle}
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? '收起' : '展开'}
+          <ChevronDown className={expanded ? styles.agentTaskToggleIconOpen : styles.agentTaskToggleIcon} size={14} />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function AgentTaskMessage({
+  item,
+  turnStatus,
+  projectRoot,
+  onOpenFileReference,
+}: {
+  item: AgentTaskItem
+  turnStatus: string
+  projectRoot?: string | null
+  onOpenFileReference?: (path: string) => void
+}): ReactElement {
+  const summary = agentTaskSummary(item, turnStatus)
+  const [expanded, setExpanded] = useState(true)
+  const entries = agentTaskEntries(item)
+  return (
+    <article className={styles.assistantMessage} key={item.id}>
+      <CollapsedMessageToggle
+        icon={<Bot size={16} />}
+        label={summary.label}
+        expanded={expanded}
+        active={summary.active}
+        onToggle={() => setExpanded((value) => !value)}
+      />
+      {expanded ? (
+        <div className={styles.agentTaskBody}>
+          {entries.map((agent, index) => {
+            const sections = splitAgentPrompt(agent.prompt || item.prompt)
+            const active = isActiveAgentStatus(agent.status) && isActiveMessageStatus(turnStatus)
+            return (
+              <section className={styles.agentTaskEntry} key={agent.id || `${item.id}-agent-${index}`}>
+                <div className={styles.agentTaskStatus}>
+                  <span>{agentTaskStatusLabel(agent.status ?? item.status, active)}</span>
+                  {entries.length > 1 && agent.name ? <span>{agent.name}</span> : null}
+                </div>
+                <AgentTaskSection
+                  label="输入："
+                  text={sections.input}
+                  projectRoot={projectRoot}
+                  onOpenFileReference={onOpenFileReference}
+                />
+                <AgentTaskSection
+                  label="任务："
+                  text={sections.task}
+                  projectRoot={projectRoot}
+                  onOpenFileReference={onOpenFileReference}
+                />
+                {!sections.input && !sections.task ? (
+                  <span className={styles.agentTaskEmpty}>暂无智能体输入</span>
+                ) : null}
+              </section>
+            )
+          })}
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
 function UnknownMessage({ item, turnStatus }: { item: UnknownItem; turnStatus: string }): ReactElement {
   const [expanded, setExpanded] = useState(false)
   const rawText = JSON.stringify(item.raw, null, 2)
@@ -1626,6 +1838,17 @@ export function renderMessageItem(item: MessageItem, turnStatus: string, options
           </ol>
         </div>
       </article>
+    )
+  }
+  if (item.type === 'agentTask') {
+    return (
+      <AgentTaskMessage
+        item={item}
+        key={item.id}
+        onOpenFileReference={options.onOpenFileReference}
+        projectRoot={options.projectRoot}
+        turnStatus={turnStatus}
+      />
     )
   }
   if (item.type === 'approval') {

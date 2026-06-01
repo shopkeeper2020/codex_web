@@ -237,6 +237,7 @@ export function Composer({
   threadId,
   cwd,
   activeTurnId,
+  threadInProgress = false,
   runtimeOptions,
   disabled,
   sending,
@@ -250,6 +251,7 @@ export function Composer({
   threadId: string;
   cwd: string | null;
   activeTurnId: string;
+  threadInProgress?: boolean;
   runtimeOptions: RuntimeOptions | null;
   disabled: boolean;
   sending: boolean;
@@ -323,6 +325,7 @@ export function Composer({
   const previousRuntimeDefaultsRef = useRef(effectiveRuntimeOptions.defaults);
   const uploadFocusRequestedRef = useRef(false);
   const focusRetryTimerRef = useRef<number | null>(null);
+  const hasRunningThread = Boolean(activeTurnId) || threadInProgress;
   const activeSteerMode = Boolean(activeTurnId) && sendMode === "steer";
   const selectedModel =
     modelOptions.find((option) => option.model === model) ??
@@ -347,13 +350,15 @@ export function Composer({
   const selectedSkillOptions = skills.filter((skill) =>
     selectedSkillIds.includes(skill.id),
   );
+  const hasSelectedSkills = selectedSkillOptions.length > 0;
   const imageAttachments = attachments.filter((attachment) =>
     attachment.mimeType.startsWith("image/"),
   );
   const fileAttachments = attachments.filter(
     (attachment) => !attachment.mimeType.startsWith("image/"),
   );
-  const hasSubmitContent = text.trim().length > 0 || attachments.length > 0;
+  const hasSubmitContent =
+    text.trim().length > 0 || attachments.length > 0 || hasSelectedSkills;
   const controlsDisabled = disabled || sending || uploading;
   const dictationStatusText =
     dictationState === "transcribing" ? "正在转写..." : "";
@@ -376,11 +381,11 @@ export function Composer({
         ? "正在转写..."
         : activeSteerMode
           ? "引导当前回复"
-          : activeTurnId
+          : hasRunningThread
             ? "排队下一条消息"
             : "要求后续变更";
   const stopActiveTurnMode =
-    Boolean(activeTurnId) && !hasSubmitContent && !sending && !uploading;
+    hasRunningThread && !hasSubmitContent && !sending && !uploading;
   const slashQuery =
     slashMenuOpen && text.startsWith("/")
       ? text.slice(1).trim().toLowerCase()
@@ -1085,7 +1090,7 @@ export function Composer({
     const trimmed = text.trim();
     if (slashMenuOpen && trimmed.startsWith("/")) return;
     if (
-      (!trimmed && attachments.length === 0) ||
+      !hasSubmitContent ||
       disabled ||
       sending ||
       uploading
@@ -1125,7 +1130,7 @@ export function Composer({
   }
 
   async function handleInterrupt(): Promise<void> {
-    if (!activeTurnId || disabled || sending || uploading) return;
+    if (!hasRunningThread || disabled || sending || uploading) return;
     await onInterrupt();
   }
 

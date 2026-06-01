@@ -101,7 +101,11 @@ import {
   type OfficialIpcNotification,
   type OfficialThreadStreamState,
 } from "@codex-web/protocol";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 import { CodexAppServerProcess } from "./appServerProcess.js";
 import { initializeAuth } from "./auth/config.js";
 import { installAuth } from "./auth/middleware.js";
@@ -410,8 +414,48 @@ function isPathInside(parent: string, child: string): boolean {
 }
 
 function contentDispositionFilename(filename: string): string {
-  const fallback = filename.replace(/["\\\r\n]/g, "_") || "attachment";
+  const fallback =
+    filename.replace(/[^\x20-\x7e]|["\\\r\n]/g, "_") || "attachment";
   return `inline; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+type ByteRange =
+  | { kind: "full" }
+  | { kind: "invalid" }
+  | { kind: "partial"; start: number; end: number; length: number };
+
+function parseByteRangeHeader(
+  rangeHeader: string | undefined,
+  size: number,
+): ByteRange {
+  if (!rangeHeader) return { kind: "full" };
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match || size < 0) return { kind: "invalid" };
+
+  const [, startText, endText] = match;
+  if (!startText && !endText) return { kind: "invalid" };
+
+  let start = 0;
+  let end = size - 1;
+
+  if (!startText) {
+    const suffixLength = Number(endText);
+    if (!Number.isInteger(suffixLength) || suffixLength <= 0) {
+      return { kind: "invalid" };
+    }
+    start = Math.max(size - suffixLength, 0);
+  } else {
+    start = Number(startText);
+    if (!Number.isInteger(start) || start < 0) return { kind: "invalid" };
+    if (endText) {
+      end = Number(endText);
+      if (!Number.isInteger(end) || end < start) return { kind: "invalid" };
+    }
+  }
+
+  if (size <= 0 || start >= size) return { kind: "invalid" };
+  end = Math.min(end, size - 1);
+  return { kind: "partial", start, end, length: end - start + 1 };
 }
 
 function buildPublicAccountStatus(input: {
@@ -802,7 +846,7 @@ function preserveOfficialLiveState(
 
   const record = asRecord(conversationState);
   if (!record) return conversationState;
-  const activeTurnId = streamState.activeTurnId;
+  const activeTurnId = readActiveTurnIdFromStreamState(streamState);
   const turns = Array.isArray(record.turns) ? record.turns : [];
   let matchedActiveTurn = false;
   const nextTurns =
@@ -831,6 +875,84 @@ function preserveOfficialLiveState(
       type: "active",
     },
     turns: nextTurns,
+  };
+}
+
+function readTurnItems(value: unknown): unknown[] {
+  const turn = asRecord(value);
+  return Array.isArray(turn?.items) ? turn.items : [];
+}
+
+function turnItemsScore(value: unknown): number {
+  const items = readTurnItems(value);
+  try {
+    return JSON.stringify(items).length;
+  } catch {
+    return items.length;
+  }
+}
+
+function mergeTurnWithRicherItems(primary: unknown, live: unknown): unknown {
+  const primaryTurn = asRecord(primary);
+  const liveTurn = asRecord(live);
+  if (!primaryTurn || !liveTurn) return primary ?? live;
+  const primaryItems = readTurnItems(primaryTurn);
+  const liveItems = readTurnItems(liveTurn);
+  const liveIsRicher =
+    liveItems.length > primaryItems.length ||
+    (liveItems.length === primaryItems.length &&
+      liveItems.length > 0 &&
+      turnItemsScore(liveTurn) > turnItemsScore(primaryTurn));
+  if (!liveIsRicher) return primary;
+  return {
+    ...liveTurn,
+    ...primaryTurn,
+    items: liveItems,
+  };
+}
+
+function preserveRicherOfficialStreamItems(
+  conversationState: unknown,
+  streamConversationState: unknown,
+): unknown {
+  const record = asRecord(conversationState);
+  const streamRecord = asRecord(streamConversationState);
+  if (!record || !streamRecord) return conversationState;
+  const turns = Array.isArray(record.turns) ? record.turns : [];
+  const streamTurns = Array.isArray(streamRecord.turns) ? streamRecord.turns : [];
+  if (streamTurns.length === 0) return conversationState;
+
+  const streamTurnsById = new Map<string, unknown>();
+  for (const turnValue of streamTurns) {
+    const turn = asRecord(turnValue);
+    if (!turn) continue;
+    const id = readTurnRecordId(turn);
+    if (id) streamTurnsById.set(id, turnValue);
+  }
+
+  const usedStreamTurnIds = new Set<string>();
+  const mergedTurns = turns.map((turnValue) => {
+    const turn = asRecord(turnValue);
+    if (!turn) return turnValue;
+    const id = readTurnRecordId(turn);
+    const streamTurn = id ? streamTurnsById.get(id) : null;
+    if (!streamTurn) return turnValue;
+    usedStreamTurnIds.add(id);
+    return mergeTurnWithRicherItems(turnValue, streamTurn);
+  });
+
+  for (const streamTurnValue of streamTurns) {
+    const streamTurn = asRecord(streamTurnValue);
+    if (!streamTurn) continue;
+    const id = readTurnRecordId(streamTurn);
+    if (!id || usedStreamTurnIds.has(id)) continue;
+    if (readTurnItems(streamTurn).length === 0) continue;
+    mergedTurns.push(streamTurnValue);
+  }
+
+  return {
+    ...record,
+    turns: mergedTurns,
   };
 }
 
@@ -903,8 +1025,9 @@ async function buildTurnStartParams(input: {
       attachments.map((attachment) => toTurnStartImageInput(attachment)),
     )
   ).filter((entry): entry is TurnStartImageInput => Boolean(entry));
+  const skillInputs = readSkillInputs(input.skills);
   const textInputs =
-    input.text.trim() || imageInputs.length === 0
+    input.text.trim() || (imageInputs.length === 0 && skillInputs.length === 0)
       ? [{ type: "text", text: input.text, text_elements: [] }]
       : [];
   const params: TurnStartParams = {
@@ -915,7 +1038,7 @@ async function buildTurnStartParams(input: {
         entry.placeholderInput,
         entry.input,
       ]),
-      ...readSkillInputs(input.skills),
+      ...skillInputs,
     ],
   };
   const model = readString(input.model);
@@ -952,8 +1075,9 @@ async function buildTurnSteerParams(input: {
       attachments.map((attachment) => toTurnStartImageInput(attachment)),
     )
   ).filter((entry): entry is TurnStartImageInput => Boolean(entry));
+  const skillInputs = readSkillInputs(input.skills);
   const textInputs =
-    input.text.trim() || imageInputs.length === 0
+    input.text.trim() || (imageInputs.length === 0 && skillInputs.length === 0)
       ? [{ type: "text", text: input.text, text_elements: [] }]
       : [];
   const params: TurnSteerParams = {
@@ -965,7 +1089,7 @@ async function buildTurnSteerParams(input: {
         entry.placeholderInput,
         entry.input,
       ]),
-      ...readSkillInputs(input.skills),
+      ...skillInputs,
     ],
     restoreMessage: buildSteerRestoreMessage({
       text: input.text,
@@ -1868,6 +1992,7 @@ export async function createServer(
         filePath: readString(query.path),
         root,
         allowedRoots: allowedFilePreviewRoots(root),
+        allowAbsolutePath: !requestedRoot,
         maxBytes:
           Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : undefined,
       });
@@ -1896,7 +2021,10 @@ export async function createServer(
     }
   });
 
-  app.get("/api/files/content", async (request, reply) => {
+  const sendFileContent = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<undefined> => {
     const query = request.query as Record<string, unknown>;
     try {
       const requestedRoot = readString(query.root);
@@ -1907,6 +2035,7 @@ export async function createServer(
         filePath: readString(query.path),
         root,
         allowedRoots: allowedFilePreviewRoots(root),
+        allowAbsolutePath: !requestedRoot,
       });
       let size = 0;
       try {
@@ -1920,14 +2049,48 @@ export async function createServer(
         await reply.code(404).send({ error: "File not found" });
         return undefined;
       }
-      await reply
-        .type(detectFileMimeType(filePath))
-        .header("Content-Length", String(size))
+      const rangeHeader = Array.isArray(request.headers.range)
+        ? request.headers.range[0]
+        : request.headers.range;
+      const range = parseByteRangeHeader(rangeHeader, size);
+      const mimeType = detectFileMimeType(filePath);
+      const sendBody = request.method !== "HEAD";
+      if (range.kind === "invalid") {
+        await reply
+          .code(416)
+          .type("text/plain")
+          .header("Accept-Ranges", "bytes")
+          .header("Content-Range", `bytes */${size}`)
+          .send(sendBody ? "Requested range not satisfiable" : undefined);
+        return undefined;
+      }
+      const response = reply
+        .code(range.kind === "partial" ? 206 : 200)
+        .type(mimeType)
+        .header("Accept-Ranges", "bytes")
+        .header(
+          "Content-Length",
+          String(range.kind === "partial" ? range.length : size),
+        )
         .header(
           "Content-Disposition",
           contentDispositionFilename(basename(filePath)),
-        )
-        .send(createFilePreviewStream(filePath));
+        );
+      if (range.kind === "partial") {
+        response.header(
+          "Content-Range",
+          `bytes ${range.start}-${range.end}/${size}`,
+        );
+      }
+      if (!sendBody) {
+        await response.send();
+        return undefined;
+      }
+      const stream =
+        range.kind === "partial"
+          ? createReadStream(filePath, { start: range.start, end: range.end })
+          : createFilePreviewStream(filePath);
+      await response.send(stream);
       return undefined;
     } catch (error) {
       const statusCode =
@@ -1937,7 +2100,9 @@ export async function createServer(
       });
       return undefined;
     }
-  });
+  };
+
+  app.get("/api/files/content", sendFileContent);
 
   app.get("/api/workspace/status", async (request, reply) => {
     const query = request.query as Record<string, unknown>;
@@ -2740,14 +2905,18 @@ export async function createServer(
         includeTurns: true,
       });
       const rawThread = asRecord(result)?.thread ?? result;
+      const mergedThread =
+        hasExternalOfficialState && state
+          ? preserveRicherOfficialStreamItems(rawThread, state.conversationState)
+          : rawThread;
       const retiredStaleOfficialActive =
         hasExternalOfficialState &&
         state !== null &&
-        shouldRetireStaleOfficialActiveState(rawThread, state);
+        shouldRetireStaleOfficialActiveState(mergedThread, state);
       const threadSnapshot =
         hasExternalOfficialState && state && !retiredStaleOfficialActive
-          ? preserveOfficialLiveState(rawThread, state)
-          : rawThread;
+          ? preserveOfficialLiveState(mergedThread, state)
+          : mergedThread;
       const detail = await hydrateThreadGoal(
         threadId,
         hydratePinnedDetail(

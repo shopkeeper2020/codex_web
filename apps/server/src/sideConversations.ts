@@ -235,6 +235,10 @@ function turnItemText(item: Turn["items"][number]): string {
     case "reasoning":
     case "toolOutput":
       return item.text;
+    case "agentTask":
+      return [item.prompt, ...item.agents.map((agent) => agent.prompt)]
+        .filter(Boolean)
+        .join("\n");
     case "error":
       return item.message;
     case "plan":

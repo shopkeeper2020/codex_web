@@ -51,8 +51,28 @@ test.describe("complex message blocks", () => {
     await expect(chat.getByText("bold sentinel")).toBeVisible();
     await expect(chat.getByText("markdownCodeSentinel")).toBeVisible();
     await expect(chat.getByText("markdown-table-sentinel")).toBeVisible();
+    await expect(chat.getByText("已生成 1 个智能体")).toBeVisible();
+    await expect(chat.getByText("输入：")).toBeVisible();
+    await expect(chat.getByText("任务：")).toBeVisible();
+    await expect(chat.getByText("agent task detail sentinel")).toBeVisible();
+    await expect(
+      chat.getByRole("button", { name: "docs/agent_task_reference.txt" }),
+    ).toBeVisible();
+    const collapsedAgentInput = chat.locator('[class*="agentTaskTextCollapsed"]').first();
+    await expect(collapsedAgentInput).toBeVisible();
+    await expect
+      .poll(() =>
+        collapsedAgentInput.evaluate(
+          (element) => element.scrollHeight > element.clientHeight,
+        ),
+      )
+      .toBe(true);
+    await chat.getByRole("button", { name: "展开" }).first().click();
+    await expect(chat.getByText("agent task collapsed tail sentinel")).toBeVisible();
+    await expect(chat.getByText("collabAgentToolCall")).toHaveCount(0);
     const fileReference = chat.getByRole("button", {
       name: "implementation_status.md",
+      exact: true,
     });
     await expect(fileReference).toBeVisible();
     await expect(
@@ -60,7 +80,7 @@ test.describe("complex message blocks", () => {
     ).toHaveCount(0);
     await fileReference.click();
     await expect(
-      page.getByRole("menuitem", { name: "复制路径" }),
+      page.getByRole("menuitem", { name: "复制相对路径" }),
     ).toBeVisible();
     await page
       .getByRole("menuitem", { name: "在右侧“文件”标签页打开" })
@@ -69,6 +89,16 @@ test.describe("complex message blocks", () => {
       page.getByRole("complementary", { name: "右侧栏" }),
     ).toBeVisible();
     await expect(page.getByText("docs/implementation_status.md")).toBeVisible();
+    const lineReference = chat.getByRole("button", {
+      name: "implementation_status.md:12",
+      exact: true,
+    });
+    await expect(lineReference).toBeVisible();
+    await lineReference.click();
+    await page
+      .getByRole("menuitem", { name: "在右侧“文件”标签页打开" })
+      .click();
+    await expect(page.getByText("docs/implementation_status.md:12")).toBeVisible();
     const plainPathReference = chat.getByRole("button", {
       name: "docs/ui_fidelity.md",
     });

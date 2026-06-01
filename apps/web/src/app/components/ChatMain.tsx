@@ -168,6 +168,13 @@ function itemScrollSignature(item: TurnItem): string {
       .map((step) => `${step.status ?? ""}:${step.text.length}`)
       .join("|")}`;
   }
+  if (item.type === "agentTask") {
+    return `${item.type}:${item.id}:${item.status ?? ""}:${item.prompt.length}:${
+      item.agents
+        .map((agent) => `${agent.id}:${agent.status ?? ""}:${agent.prompt.length}`)
+        .join("|")
+    }`;
+  }
   if (item.type === "approval") {
     return `${item.type}:${item.id}:${item.status ?? ""}:${item.title.length}`;
   }
@@ -237,12 +244,43 @@ function rightSidebarTabIcon(type: RightSidebarTab, size = 16): ReactElement {
   }
 }
 
+function previewPathLocation(path: string): { path: string; line: number | null } {
+  const trimmed = path.trim();
+  const parseLocation = (value: string): { path: string; line: number | null } => {
+    const cleaned = value.replace(/\s+\((?:line|行)\s+\d+\)$/i, "");
+    const match = /^(.*\.[a-z0-9]{1,12})(?::(\d+)(?::\d+)?)$/i.exec(cleaned);
+    return { path: match?.[1] ?? cleaned, line: match?.[2] ? Number(match[2]) : null };
+  };
+  if (trimmed.toLowerCase().startsWith("file:")) {
+    try {
+      const url = new URL(trimmed);
+      const pathname = decodeURIComponent(url.pathname);
+      if (url.hostname) return parseLocation(`\\\\${url.hostname}${pathname.replaceAll("/", "\\")}`);
+      if (/^\/[a-z]:\//i.test(pathname)) return parseLocation(pathname.slice(1).replaceAll("/", "\\"));
+      return parseLocation(pathname.replaceAll("/", "\\"));
+    } catch {
+      return parseLocation(trimmed.replace(/^file:\/\/\/?/i, "").replaceAll("/", "\\"));
+    }
+  }
+  if (!/%[0-9a-f]{2}/i.test(trimmed)) return parseLocation(trimmed);
+  try {
+    return parseLocation(decodeURIComponent(trimmed));
+  } catch {
+    return parseLocation(trimmed);
+  }
+}
+
+function decodePreviewPath(path: string): string {
+  return previewPathLocation(path).path;
+}
+
 function normalizePathForCompare(path: string): string {
-  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  return decodePreviewPath(path).replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
 }
 
 function isAbsoluteFsPath(path: string): boolean {
-  return /^[a-z]:[\\/]/i.test(path) || path.startsWith("\\\\");
+  const decoded = decodePreviewPath(path);
+  return /^[a-z]:[\\/]/i.test(decoded) || decoded.startsWith("\\\\");
 }
 
 function relativePathFromTarget(
@@ -250,15 +288,16 @@ function relativePathFromTarget(
   targetPath?: string | null,
 ): string | null {
   if (!targetPath) return null;
-  const normalizedTarget = targetPath.replaceAll("\\", "/");
-  if (!isAbsoluteFsPath(targetPath))
+  const decodedTarget = decodePreviewPath(targetPath);
+  const normalizedTarget = decodedTarget.replaceAll("\\", "/");
+  if (!isAbsoluteFsPath(decodedTarget))
     return normalizedTarget.replace(/^\.?\//, "");
   if (!root) return null;
   const normalizedRoot = normalizePathForCompare(root);
-  const normalizedAbsoluteTarget = normalizePathForCompare(targetPath);
+  const normalizedAbsoluteTarget = normalizePathForCompare(decodedTarget);
   if (normalizedAbsoluteTarget === normalizedRoot) return "";
   if (!normalizedAbsoluteTarget.startsWith(`${normalizedRoot}/`)) return null;
-  return targetPath
+  return decodedTarget
     .replaceAll("\\", "/")
     .slice(root.replaceAll("\\", "/").length + 1);
 }
@@ -273,7 +312,8 @@ function filePreviewRequestForPath(
   path: string,
   root: string | null,
 ): { path: string; root?: string | null } {
-  return isAbsoluteFsPath(path) ? { path } : { path, root };
+  const decodedPath = decodePreviewPath(path);
+  return isAbsoluteFsPath(decodedPath) ? { path: decodedPath } : { path: decodedPath, root };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -282,6 +322,29 @@ function clamp(value: number, min: number, max: number): number {
 
 const RIGHT_SIDEBAR_WIDTH_STORAGE_KEY = "codex_web.rightSidebarWidth";
 const FILE_TREE_WIDTH_STORAGE_KEY = "codex_web.fileTreeWidth";
+const RIGHT_SIDEBAR_MIN_WIDTH = 380;
+const RIGHT_SIDEBAR_DEFAULT_WIDTH = 560;
+const RIGHT_SIDEBAR_MAX_WIDTH = 1320;
+const RIGHT_SIDEBAR_MIN_CHAT_WIDTH = 320;
+const DESKTOP_RIGHT_RAIL_WIDTH = 260;
+const DESKTOP_PANE_RESIZER_WIDTH = 8;
+
+function rightSidebarMaxWidth(
+  containerWidth: number | null | undefined,
+  summaryOpen: boolean,
+): number {
+  if (!Number.isFinite(containerWidth) || !containerWidth) {
+    return RIGHT_SIDEBAR_MAX_WIDTH;
+  }
+  const reservedWidth =
+    RIGHT_SIDEBAR_MIN_CHAT_WIDTH +
+    DESKTOP_PANE_RESIZER_WIDTH +
+    (summaryOpen ? DESKTOP_RIGHT_RAIL_WIDTH : 0);
+  return Math.max(
+    RIGHT_SIDEBAR_MIN_WIDTH,
+    Math.min(RIGHT_SIDEBAR_MAX_WIDTH, Math.floor(containerWidth - reservedWidth)),
+  );
+}
 
 function readStoredWidth(
   key: string,
@@ -666,10 +729,12 @@ function FilePreviewPane({
   }
 
   const previewRequest = filePreviewRequestForPath(path, root);
+  const location = previewPathLocation(path);
+  const displayPath = `${relativePathFromTarget(root, path) ?? location.path}${location.line ? `:${location.line}` : ""}`;
   return (
     <div className={styles.filePreviewPane}>
       <div className={styles.filePreviewHeader}>
-        <span title={path}>{relativePathFromTarget(root, path) ?? path}</span>
+        <span title={displayPath}>{displayPath}</span>
       </div>
       {loading ? (
         <div className={styles.filePreviewNotice}>正在读取文件...</div>
@@ -687,7 +752,7 @@ function FilePreviewPane({
         </div>
       ) : null}
       {!loading && !error && preview?.kind === "text" ? (
-        preview.filename.toLowerCase().endsWith(".md") ? (
+        preview.filename.toLowerCase().endsWith(".md") || preview.mimeType === "text/markdown" ? (
           <div className={styles.filePreviewMarkdownPane}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {preview.content ?? ""}
@@ -697,10 +762,20 @@ function FilePreviewPane({
           <pre className={styles.filePreviewPre}>{preview.content ?? ""}</pre>
         )
       ) : null}
+      {!loading && !error && preview?.kind === "binary" && preview.mimeType === "application/pdf" ? (
+        <iframe
+          className={styles.filePreviewPdfFrame}
+          src={fileContentUrl(previewRequest)}
+          aria-label={preview.filename}
+          title={preview.filename}
+        />
+      ) : null}
       {!loading && !error && preview?.kind === "binary" ? (
-        <div className={styles.filePreviewNotice}>
-          {preview.filename} 是二进制文件，大小 {formatBytes(preview.size)}。
-        </div>
+        preview.mimeType === "application/pdf" ? null : (
+          <div className={styles.filePreviewNotice}>
+            {preview.filename} 是二进制文件，大小 {formatBytes(preview.size)}。
+          </div>
+        )
       ) : null}
       {preview?.truncated ? (
         <div className={styles.filePreviewNotice}>文件较大，已截断预览。</div>
@@ -806,6 +881,8 @@ function SideChatPane({
   const lastSideConversationIdRef = useRef<string | null>(null);
   const lastRenderedRowsCountRef = useRef(0);
   const lastSideChatScrollSignatureRef = useRef("empty");
+  const sideChatAutoScrollingRef = useRef(false);
+  const sideChatUserScrolledAwayRef = useRef(false);
   const [nearSideChatBottom, setNearSideChatBottom] = useState(true);
   const renderedRows = useMemo(
     () =>
@@ -854,8 +931,16 @@ function SideChatPane({
     (behavior: ScrollBehavior = "auto") => {
       const scroller = transcriptRef.current;
       if (!scroller) return;
+      sideChatAutoScrollingRef.current = true;
+      sideChatUserScrolledAwayRef.current = false;
       scroller.scrollTo({ top: scroller.scrollHeight, behavior });
       setNearSideChatBottom(true);
+      window.setTimeout(
+        () => {
+          sideChatAutoScrollingRef.current = false;
+        },
+        behavior === "smooth" ? 260 : 0,
+      );
     },
     [],
   );
@@ -864,10 +949,15 @@ function SideChatPane({
     const scroller = transcriptRef.current;
     if (!scroller) return;
     const update = () => {
-      setNearSideChatBottom(
+      const nearBottom =
         scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <
-          140,
-      );
+        140;
+      setNearSideChatBottom(nearBottom);
+      if (nearBottom) {
+        sideChatUserScrolledAwayRef.current = false;
+      } else if (!sideChatAutoScrollingRef.current) {
+        sideChatUserScrolledAwayRef.current = true;
+      }
     };
     update();
     scroller.addEventListener("scroll", update, { passive: true });
@@ -891,19 +981,20 @@ function SideChatPane({
     const contentChanged = previousSignature !== sideChatScrollSignature;
     const isNearBottom =
       scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 200;
+    sideChatUserScrolledAwayRef.current = false;
 
     if (!conversationChanged && previousRowsCount > 0) {
       if (!rowsIncreased && !contentChanged) return;
       if (!isNearBottom) return;
     }
 
-    const animationFrame = window.requestAnimationFrame(() =>
-      scrollSideChatToLatest("auto"),
+    const scrollIfUserHasNotMovedAway = () => {
+      if (!sideChatUserScrolledAwayRef.current) scrollSideChatToLatest("auto");
+    };
+    const animationFrame = window.requestAnimationFrame(
+      scrollIfUserHasNotMovedAway,
     );
-    const timeout = window.setTimeout(
-      () => scrollSideChatToLatest("auto"),
-      80,
-    );
+    const timeout = window.setTimeout(scrollIfUserHasNotMovedAway, 80);
     return () => {
       window.cancelAnimationFrame(animationFrame);
       window.clearTimeout(timeout);
@@ -1639,9 +1730,12 @@ function QueuedMessagesStrip({
     <div className={styles.queuedComposerStrip} aria-label="排队消息">
       {messages.map((message) => {
         const hasText = message.text.trim().length > 0;
+        const hasSkills = message.skillCount > 0;
         const label = hasText
           ? message.text
-          : `${message.attachmentCount} 个附件`;
+          : hasSkills
+            ? `${message.skillCount} 个 Skill`
+            : `${message.attachmentCount} 个附件`;
         return (
           <div className={styles.queuedComposerRow} key={message.id}>
             <span className={styles.composerActivityIcon} aria-hidden="true">
@@ -2128,17 +2222,23 @@ export function ChatMain({
   );
   const projectRoot =
     draftThread?.cwd ??
-    selectedProject?.path ??
     selectedThread?.projectId ??
     selectedThread?.path ??
+    selectedProject?.path ??
     null;
   const draftProjectLabel = draftThread?.projectName ?? "当前工作区";
+  const chatLayoutRef = useRef<HTMLDivElement | null>(null);
   const chatColumnRef = useRef<HTMLDivElement | null>(null);
   const lastThreadIdRef = useRef<string | null>(null);
   const lastRowCountRef = useRef(0);
   const lastMessageSignatureRef = useRef("none");
   const [rightSidebarWidth, setRightSidebarWidth] = useState(() =>
-    readStoredWidth(RIGHT_SIDEBAR_WIDTH_STORAGE_KEY, 560, 380, 780),
+    readStoredWidth(
+      RIGHT_SIDEBAR_WIDTH_STORAGE_KEY,
+      RIGHT_SIDEBAR_DEFAULT_WIDTH,
+      RIGHT_SIDEBAR_MIN_WIDTH,
+      RIGHT_SIDEBAR_MAX_WIDTH,
+    ),
   );
   const [fileTreeWidth, setFileTreeWidth] = useState(() =>
     readStoredWidth(FILE_TREE_WIDTH_STORAGE_KEY, 270, 220, 460),
@@ -2175,6 +2275,23 @@ export function ChatMain({
   useEffect(() => {
     writeStoredWidth(RIGHT_SIDEBAR_WIDTH_STORAGE_KEY, rightSidebarWidth);
   }, [rightSidebarWidth]);
+
+  useEffect(() => {
+    if (!rightSidebarOpen) return;
+    const clampRightSidebarWidth = (): void => {
+      const containerWidth =
+        chatLayoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+      const maxWidth = rightSidebarMaxWidth(containerWidth, pinnedSummaryOpen);
+      setRightSidebarWidth((current) =>
+        clamp(current, RIGHT_SIDEBAR_MIN_WIDTH, maxWidth),
+      );
+    };
+    clampRightSidebarWidth();
+    window.addEventListener("resize", clampRightSidebarWidth);
+    return () => {
+      window.removeEventListener("resize", clampRightSidebarWidth);
+    };
+  }, [pinnedSummaryOpen, rightSidebarOpen]);
 
   useEffect(() => {
     writeStoredWidth(FILE_TREE_WIDTH_STORAGE_KEY, fileTreeWidth);
@@ -2462,11 +2579,16 @@ export function ChatMain({
       event.preventDefault();
       const startX = event.clientX;
       const startWidth = rightSidebarWidth;
+      const containerWidth =
+        event.currentTarget.parentElement?.getBoundingClientRect().width ??
+        chatLayoutRef.current?.getBoundingClientRect().width ??
+        window.innerWidth;
+      const maxWidth = rightSidebarMaxWidth(containerWidth, pinnedSummaryOpen);
       const handlePointerMove = (moveEvent: PointerEvent): void => {
         const nextWidth = clamp(
           startWidth + startX - moveEvent.clientX,
-          380,
-          780,
+          RIGHT_SIDEBAR_MIN_WIDTH,
+          maxWidth,
         );
         setRightSidebarWidth(nextWidth);
       };
@@ -2476,7 +2598,7 @@ export function ChatMain({
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", stopResize, { once: true });
     },
-    [rightSidebarWidth],
+    [pinnedSummaryOpen, rightSidebarWidth],
   );
   const handleFileTreeResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -2851,7 +2973,11 @@ export function ChatMain({
   return (
     <section className={styles.chatViewport}>
       <div className={styles.chatWorkspace}>
-        <div className={chatLayoutClassName} style={chatLayoutStyle}>
+        <div
+          className={chatLayoutClassName}
+          ref={chatLayoutRef}
+          style={chatLayoutStyle}
+        >
           <div
             className={[
               styles.chatStack,

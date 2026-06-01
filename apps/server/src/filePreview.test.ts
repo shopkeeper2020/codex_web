@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import * as XLSX from 'xlsx'
 import { FileBrowserError } from './fileBrowser.js'
 import { detectFileMimeType, readFilePreview, resolveFilePreviewPath } from './filePreview.js'
 
@@ -52,6 +53,49 @@ describe('file preview', () => {
     expect(preview.content).toBeNull()
   })
 
+  it('recognizes PDFs as inline binary previews', async () => {
+    const root = await createTempRoot()
+    await writeFile(join(root, 'report.pdf'), Buffer.from('%PDF-1.7\n% preview\n'))
+
+    const preview = await readFilePreview({
+      filePath: 'report.pdf',
+      root,
+      allowedRoots: [root],
+    })
+
+    expect(preview.kind).toBe('binary')
+    expect(preview.mimeType).toBe('application/pdf')
+    expect(preview.content).toBeNull()
+  })
+
+  it('extracts spreadsheet files into a markdown preview', async () => {
+    const root = await createTempRoot()
+    const filePath = join(root, 'sheet.xlsx')
+    const workbook = XLSX.utils.book_new()
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['Name', 'Score'],
+      ['Darwin', 98],
+      ['Locke', 87],
+    ])
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Scores')
+    XLSX.writeFile(workbook, filePath)
+
+    const preview = await readFilePreview({
+      filePath: 'sheet.xlsx',
+      root,
+      allowedRoots: [root],
+    })
+
+    expect(preview).toMatchObject({
+      filename: 'sheet.xlsx',
+      kind: 'text',
+      mimeType: 'text/markdown',
+    })
+    expect(preview.content).toContain('## Scores')
+    expect(preview.content).toContain('| Name | Score |')
+    expect(preview.content).toContain('| Darwin | 98 |')
+  })
+
   it('rejects paths outside allowed roots', async () => {
     const root = await createTempRoot()
     const sibling = await createTempRoot()
@@ -63,6 +107,62 @@ describe('file preview', () => {
         allowedRoots: [root],
       }),
     ).toThrowError(FileBrowserError)
+  })
+
+  it('allows direct previews for absolute local file paths', async () => {
+    const root = await createTempRoot()
+    const sibling = await createTempRoot()
+    await writeFile(join(sibling, 'report.md'), '# report outside project\n')
+
+    const preview = await readFilePreview({
+      filePath: join(sibling, 'report.md'),
+      allowedRoots: [root],
+      allowAbsolutePath: true,
+    })
+
+    expect(preview).toMatchObject({
+      filename: 'report.md',
+      kind: 'text',
+      mimeType: 'text/markdown',
+    })
+    expect(preview.content).toContain('report outside project')
+  })
+
+  it('decodes percent-encoded absolute local file paths before previewing', async () => {
+    const root = await createTempRoot()
+    const sibling = await createTempRoot()
+    const filePath = join(sibling, '日報核對.md')
+    await writeFile(filePath, '# encoded path preview\n')
+
+    const preview = await readFilePreview({
+      filePath: encodeURI(filePath),
+      allowedRoots: [root],
+      allowAbsolutePath: true,
+    })
+
+    expect(preview).toMatchObject({
+      filename: '日報核對.md',
+      kind: 'text',
+      mimeType: 'text/markdown',
+    })
+    expect(preview.content).toContain('encoded path preview')
+  })
+
+  it('strips editor line suffixes before resolving preview paths', async () => {
+    const root = await createTempRoot()
+    await writeFile(join(root, 'report.md'), '# report with line suffix\n')
+
+    const preview = await readFilePreview({
+      filePath: 'report.md:1',
+      root,
+      allowedRoots: [root],
+    })
+
+    expect(preview).toMatchObject({
+      filename: 'report.md',
+      kind: 'text',
+    })
+    expect(preview.content).toContain('line suffix')
   })
 
   it('falls back to binary for unknown files with nul bytes', async () => {

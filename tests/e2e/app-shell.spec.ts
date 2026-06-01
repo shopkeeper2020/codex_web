@@ -372,6 +372,21 @@ test.describe("codex_web app shell", () => {
           ),
         )
         .toBeGreaterThan(600);
+      const wideResizeBox = await rightResize.boundingBox();
+      expect(wideResizeBox).not.toBeNull();
+      await page.mouse.move(
+        (wideResizeBox?.x ?? 0) + (wideResizeBox?.width ?? 0) / 2,
+        (wideResizeBox?.y ?? 0) + (wideResizeBox?.height ?? 0) / 2,
+      );
+      await page.mouse.down();
+      await page.mouse.move(
+        (wideResizeBox?.x ?? 0) - 360,
+        (wideResizeBox?.y ?? 0) + (wideResizeBox?.height ?? 0) / 2,
+      );
+      await page.mouse.up();
+      await expect
+        .poll(async () => (await rightPanel.boundingBox())?.width ?? 0)
+        .toBeGreaterThan(850);
 
       const fileList = page.getByRole("list", { name: "项目文件" }).last();
       await expect(fileList).toBeVisible();
