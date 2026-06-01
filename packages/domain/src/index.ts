@@ -975,7 +975,9 @@ export function normalizeOfficialThreadDetail(input: {
       return {
         id: readString(turn?.turnId) || readString(turn?.id) || `turn-${turnIndex}`,
         status: readTurnStatus(turn?.status),
-        items: itemsRaw.map(normalizeMessageItem),
+        items: itemsRaw.flatMap((itemValue, itemIndex) =>
+          itemValue == null ? [] : [normalizeMessageItem(itemValue, itemIndex)],
+        ),
       }
     }),
   }

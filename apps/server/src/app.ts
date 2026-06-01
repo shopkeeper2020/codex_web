@@ -111,6 +111,7 @@ import type {
   TurnSteerParams,
 } from "./appServerProcess.js";
 import { Diagnostics } from "./diagnostics.js";
+import { syncDesktopWorkspaceRoot } from "./desktopWorkspaceRoots.js";
 import { buildSafeDiagnosticsExport } from "./diagnosticsExport.js";
 import { DatabaseStore } from "./db/index.js";
 import { EventBus } from "./events.js";
@@ -1733,6 +1734,18 @@ export async function createServer(
         .map((entry) => projectFromPath(entry, "web-favorite"))
         .filter((project): project is Project => Boolean(project));
       database.upsertProjects(projects);
+      const desktopSync = syncDesktopWorkspaceRoot(path);
+      diagnostics.record(
+        desktopSync.status === "failed" ? "warn" : "info",
+        "projects",
+        "desktop-workspace-root-sync",
+        {
+          status: desktopSync.status,
+          path: desktopSync.path,
+          globalStatePath: desktopSync.globalStatePath,
+          ...(desktopSync.error ? { error: desktopSync.error } : {}),
+        },
+      );
       diagnostics.record("info", "projects", "favorite-project-added", {
         path,
       });

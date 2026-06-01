@@ -388,6 +388,84 @@ test.describe("composer runtime options", () => {
     ).toHaveCount(0);
   });
 
+  test("opens uploaded image attachments in a preview dialog", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "图片预览交互先在桌面尺寸验证",
+    );
+
+    await installComposerRuntimeMocks(page, () => undefined);
+    await page.route("**/api/attachments?**", async (route) => {
+      await fulfillJson(route, {
+        data: {
+          id: "attachment-preview-image",
+          filename: "web-preview.png",
+          mimeType: "image/png",
+          size: 21,
+          path: "C:\\workspace\\codex_web\\data\\attachments\\web-preview.png",
+          sha256:
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          createdAtIso: "2026-05-29T00:00:00.000Z",
+          threadId,
+          turnId: null,
+          officialReferenceId: null,
+        },
+      });
+    });
+    await page.route(
+      "**/api/attachments/attachment-preview-image/content",
+      async (route) => {
+        await route.fulfill({
+          contentType: "image/png",
+          body: Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+            "base64",
+          ),
+        });
+      },
+    );
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await page.getByLabel("打开输入选项").click();
+    await page.getByRole("menuitem", { name: "添加照片和文件" }).click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles([
+      {
+        name: "web-preview.png",
+        mimeType: "image/png",
+        buffer: Buffer.from("image preview", "utf8"),
+      },
+    ]);
+
+    const previewButton = page.getByRole("button", {
+      name: "预览 web-preview.png",
+    });
+    await expect(previewButton).toBeVisible();
+    await previewButton.click();
+
+    const dialog = page.getByRole("dialog", {
+      name: "预览 web-preview.png",
+    });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("img", { name: "web-preview.png" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("link", {
+        name: "下载 web-preview.png",
+      }),
+    ).toBeVisible();
+
+    await dialog
+      .getByRole("button", { name: "关闭 web-preview.png 预览" })
+      .click();
+    await expect(dialog).toHaveCount(0);
+  });
+
   test("keeps focus in the composer after pasting an image", async ({
     page,
   }, testInfo) => {

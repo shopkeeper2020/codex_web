@@ -456,6 +456,118 @@ test.describe("codex_web app shell", () => {
     });
   });
 
+  test("keeps the project filter unchanged when opening a thread from all sessions", async ({
+    page,
+  }, testInfo) => {
+    await installActiveTurnMocks(page);
+    const mcpProjectRoot = "C:\\workspace\\mcp_server";
+    const codexThread = {
+      id: "thread-codex-web",
+      title: "你是谁?",
+      projectId: activeProjectRoot,
+      path: activeProjectRoot,
+      updatedAtIso: "2026-06-01T02:40:00.000Z",
+      inProgress: false,
+      pinned: false,
+      owner: null,
+    };
+    const mcpThread = {
+      id: "thread-mcp-server",
+      title: "部署 newapi",
+      projectId: mcpProjectRoot,
+      path: mcpProjectRoot,
+      updatedAtIso: "2026-06-01T02:31:00.000Z",
+      inProgress: false,
+      pinned: false,
+      owner: null,
+    };
+
+    await page.unroute("**/api/domain/threads**").catch(() => undefined);
+    await page.route("**/api/domain/threads**", async (route) => {
+      const url = new URL(route.request().url());
+      const archived = url.searchParams.get("archived") === "true";
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            projects: [
+              {
+                id: activeProjectRoot,
+                name: "codex_web",
+                path: activeProjectRoot,
+                source: "official",
+              },
+              {
+                id: mcpProjectRoot,
+                name: "mcp_server",
+                path: mcpProjectRoot,
+                source: "official",
+              },
+            ],
+            threads: archived ? [] : [codexThread, mcpThread],
+            nextCursor: null,
+            backwardsCursor: null,
+          },
+        }),
+      });
+    });
+    await page.unroute("**/api/domain/thread-detail**").catch(() => undefined);
+    await page.route("**/api/domain/thread-detail**", async (route) => {
+      const url = new URL(route.request().url());
+      const thread =
+        url.searchParams.get("threadId") === mcpThread.id
+          ? mcpThread
+          : codexThread;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            thread,
+            turns: [
+              {
+                id: `${thread.id}-turn`,
+                status: "completed",
+                items: [
+                  {
+                    type: "assistant",
+                    id: `${thread.id}-assistant`,
+                    text: `${thread.title} thread body`,
+                  },
+                ],
+              },
+            ],
+            subAgents: [],
+            sideConversations: [],
+          },
+          source: "e2e-mock",
+        }),
+      });
+    });
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    if (testInfo.project.name.includes("mobile")) {
+      await page.getByRole("button", { name: "打开导航" }).first().click();
+    }
+
+    let sidebar = page.getByLabel("项目和会话").last();
+    await expect(sidebar.getByRole("button", { name: /全部会话/ })).toBeVisible();
+    await expect(sidebar.getByText("部署 newapi", { exact: true })).toBeVisible();
+    await sidebar.getByText("你是谁?", { exact: true }).click();
+
+    await expect(page).toHaveURL(/\/thread\/thread-codex-web$/);
+    await expect(page.getByText("你是谁? thread body")).toBeVisible();
+
+    if (testInfo.project.name.includes("mobile")) {
+      await page.getByRole("button", { name: "打开导航" }).first().click();
+    }
+    sidebar = page.getByLabel("项目和会话").last();
+    await expect(sidebar.getByRole("button", { name: /全部会话/ })).toBeVisible();
+    await expect(sidebar.getByText("部署 newapi", { exact: true })).toBeVisible();
+    await expect(
+      sidebar.getByRole("button", { name: "选择项目 codex_web" }),
+    ).toHaveAttribute("title", "当前会话所属项目");
+  });
+
   test("restores pinned summary after closing the real right sidebar", async ({
     page,
   }, testInfo) => {
@@ -1287,7 +1399,7 @@ test.describe("codex_web app shell", () => {
     await expect(settingsDialog.getByText("Clean unassociated")).toBeVisible();
     await settingsDialog.getByRole("tab", { name: "Projects" }).click();
     await expect(
-      settingsDialog.getByRole("heading", { name: "Project favorites" }),
+      settingsDialog.getByRole("heading", { name: "项目收藏" }),
     ).toBeVisible();
     await settingsDialog.getByRole("tab", { name: "Security" }).click();
     await expect(

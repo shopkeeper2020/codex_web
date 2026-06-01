@@ -63,6 +63,16 @@ function ActivityDot({ active }: { active?: boolean }): ReactElement {
   );
 }
 
+function projectRowClass(input: {
+  filterActive: boolean;
+  currentThreadProject: boolean;
+}): string {
+  if (input.filterActive) return styles.projectRowActive ?? "";
+  return input.currentThreadProject
+    ? [styles.projectRow, styles.projectRowCurrent].filter(Boolean).join(" ")
+    : (styles.projectRow ?? "");
+}
+
 function Rail({
   onOpenDrawer,
   onOpenSearch,
@@ -400,6 +410,7 @@ function SidebarContent({
   loadingMoreArchivedThreads,
   selectedThreadId,
   selectedProjectId,
+  selectedThreadProjectId,
   onSelectThread,
   onSelectProject,
   onOpenSearch,
@@ -425,6 +436,7 @@ function SidebarContent({
   loadingMoreArchivedThreads: boolean;
   selectedThreadId: string;
   selectedProjectId: string | null;
+  selectedThreadProjectId: string | null;
   onSelectThread: (threadId: string) => void;
   onSelectProject: (projectId: string | null) => void;
   onOpenSearch: () => void;
@@ -456,6 +468,10 @@ function SidebarContent({
       : null;
   const selectedProjectCwd =
     selectedProject?.path ?? selectedProject?.id ?? null;
+  const createThreadCwd =
+    selectedProjectId === NO_PROJECT_FILTER_ID
+      ? null
+      : (selectedProjectCwd ?? undefined);
   const visibleProjects = normalizedQuery
     ? threadList.projects.filter((project) =>
         [project.name, project.path ?? project.id].some((value) =>
@@ -534,7 +550,7 @@ function SidebarContent({
         <button
           className={styles.sidebarNavRow}
           type="button"
-          onClick={() => onCreateThread(selectedProjectCwd)}
+          onClick={() => onCreateThread(createThreadCwd)}
         >
           <SquarePen size={17} />
           <span>新对话</span>
@@ -571,7 +587,7 @@ function SidebarContent({
           className={styles.iconButton}
           type="button"
           aria-label="新建会话"
-          onClick={() => onCreateThread(selectedProjectCwd)}
+          onClick={() => onCreateThread(createThreadCwd)}
         >
           <SquarePen size={17} />
         </button>
@@ -622,15 +638,17 @@ function SidebarContent({
             className={styles.tinyIconButton}
             type="button"
             aria-label="新增项目"
+            title="新增项目"
             onClick={onAddFavoriteProject}
           >
             <Plus size={14} />
           </button>
         </div>
         <button
-          className={
-            !selectedProjectId ? styles.projectRowActive : styles.projectRow
-          }
+          className={projectRowClass({
+            filterActive: !selectedProjectId,
+            currentThreadProject: false,
+          })}
           type="button"
           onClick={() => onSelectProject(null)}
         >
@@ -642,32 +660,35 @@ function SidebarContent({
             <span className={styles.rowMeta}>
               {threadListLoading
                 ? "正在同步会话"
-                : `${threadList.threads.length} 个同步会话`}
+              : `${threadList.threads.length} 个同步会话`}
             </span>
           </span>
-          <ActivityDot active={!selectedProjectId} />
+          <ActivityDot active={false} />
         </button>
-        {renderedProjects.map((project) => (
-          <button
-            className={
-              project.id === selectedProjectId
-                ? styles.projectRowActive
-                : styles.projectRow
-            }
-            key={project.id}
-            type="button"
-            aria-label={`选择项目 ${project.name}`}
-            onClick={() => onSelectProject(project.id)}
-          >
-            <span className={styles.projectIcon}>
-              <Folder size={15} />
-            </span>
-            <span className={styles.rowText}>
-              <span className={styles.rowTitle}>{project.name}</span>
-            </span>
-            <ActivityDot active={project.id === selectedProjectId} />
-          </button>
-        ))}
+        {renderedProjects.map((project) => {
+          const currentThreadProject = project.id === selectedThreadProjectId;
+          return (
+            <button
+              className={projectRowClass({
+                filterActive: project.id === selectedProjectId,
+                currentThreadProject,
+              })}
+              key={project.id}
+              type="button"
+              aria-label={`选择项目 ${project.name}`}
+              title={currentThreadProject ? "当前会话所属项目" : undefined}
+              onClick={() => onSelectProject(project.id)}
+            >
+              <span className={styles.projectIcon}>
+                <Folder size={15} />
+              </span>
+              <span className={styles.rowText}>
+                <span className={styles.rowTitle}>{project.name}</span>
+              </span>
+              <ActivityDot active={currentThreadProject} />
+            </button>
+          );
+        })}
         <ExpandRowsButton
           expanded={projectsExpanded}
           hiddenCount={
@@ -679,13 +700,18 @@ function SidebarContent({
         />
         {noProjectCount > 0 ? (
           <button
-            className={
-              selectedProjectId === NO_PROJECT_FILTER_ID
-                ? styles.projectRowActive
-                : styles.projectRow
-            }
+            className={projectRowClass({
+              filterActive: selectedProjectId === NO_PROJECT_FILTER_ID,
+              currentThreadProject:
+                selectedThreadProjectId === NO_PROJECT_FILTER_ID,
+            })}
             type="button"
             onClick={() => onSelectProject(NO_PROJECT_FILTER_ID)}
+            title={
+              selectedThreadProjectId === NO_PROJECT_FILTER_ID
+                ? "当前会话无项目"
+                : undefined
+            }
           >
             <span className={styles.projectIcon}>
               <MessageSquare size={15} />
@@ -696,7 +722,9 @@ function SidebarContent({
                 {noProjectCount} 个全局会话
               </span>
             </span>
-            <ActivityDot active={selectedProjectId === NO_PROJECT_FILTER_ID} />
+            <ActivityDot
+              active={selectedThreadProjectId === NO_PROJECT_FILTER_ID}
+            />
           </button>
         ) : null}
       </section>
@@ -834,6 +862,7 @@ export function DesktopSidebar({
   loadingMoreArchivedThreads,
   selectedThreadId,
   selectedProjectId,
+  selectedThreadProjectId,
   onSelectThread,
   onOpenDrawer,
   onOpenSearch,
@@ -860,6 +889,7 @@ export function DesktopSidebar({
   loadingMoreArchivedThreads: boolean;
   selectedThreadId: string;
   selectedProjectId: string | null;
+  selectedThreadProjectId: string | null;
   onSelectThread: (threadId: string) => void;
   onOpenDrawer: () => void;
   onOpenSearch: () => void;
@@ -889,6 +919,7 @@ export function DesktopSidebar({
         loadingMoreArchivedThreads={loadingMoreArchivedThreads}
         selectedThreadId={selectedThreadId}
         selectedProjectId={selectedProjectId}
+        selectedThreadProjectId={selectedThreadProjectId}
         onSelectThread={onSelectThread}
         onSelectProject={onSelectProject}
         onOpenSearch={onOpenSearch}
@@ -925,6 +956,7 @@ export function MobileDrawer({
   loadingMoreArchivedThreads,
   selectedThreadId,
   selectedProjectId,
+  selectedThreadProjectId,
   onSelectThread,
   onSelectProject,
   onCreateThread,
@@ -952,6 +984,7 @@ export function MobileDrawer({
   loadingMoreArchivedThreads: boolean;
   selectedThreadId: string;
   selectedProjectId: string | null;
+  selectedThreadProjectId: string | null;
   onSelectThread: (threadId: string) => void;
   onSelectProject: (projectId: string | null) => void;
   onCreateThread: (cwd?: string | null) => void;
@@ -993,9 +1026,10 @@ export function MobileDrawer({
           hasMoreArchivedThreads={hasMoreArchivedThreads}
           loadingMoreThreads={loadingMoreThreads}
           loadingMoreArchivedThreads={loadingMoreArchivedThreads}
-        selectedThreadId={selectedThreadId}
-        selectedProjectId={selectedProjectId}
-        onSelectThread={(threadId) => {
+          selectedThreadId={selectedThreadId}
+          selectedProjectId={selectedProjectId}
+          selectedThreadProjectId={selectedThreadProjectId}
+          onSelectThread={(threadId) => {
             onSelectThread(threadId);
             onClose();
           }}
@@ -1007,7 +1041,7 @@ export function MobileDrawer({
           onOpenSettings={onOpenSettings}
           auth={auth}
           accountStatus={accountStatus}
-        onCreateThread={(cwd) => {
+          onCreateThread={(cwd) => {
             onCreateThread(cwd);
             onClose();
           }}

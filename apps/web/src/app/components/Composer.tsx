@@ -4,6 +4,7 @@ import {
   Brain,
   Check,
   ChevronDown,
+  Download,
   FileCode2,
   FileText,
   Hand,
@@ -26,6 +27,7 @@ import type {
   ReactElement,
 } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   attachmentContentUrl,
   getSkills,
@@ -284,6 +286,8 @@ export function Composer({
   const [skillsError, setSkillsError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [previewAttachment, setPreviewAttachment] =
+    useState<Attachment | null>(null);
   const [dictationState, setDictationState] = useState<
     "idle" | "recording" | "transcribing"
   >("idle");
@@ -531,7 +535,12 @@ export function Composer({
     ] ?? null;
 
   function removeAttachment(id: string) {
+    setPreviewAttachment((current) => (current?.id === id ? null : current));
     setAttachments((current) => current.filter((item) => item.id !== id));
+  }
+
+  function closeAttachmentPreview(): void {
+    setPreviewAttachment(null);
   }
 
   useEffect(() => {
@@ -597,7 +606,21 @@ export function Composer({
     setPermissionMenuOpen(false);
     setRuntimeMenuOpen(false);
     setSendModeTouched(false);
+    setPreviewAttachment(null);
   }, [threadId]);
+
+  useEffect(() => {
+    if (!previewAttachment) return;
+
+    function handleKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key === "Escape") closeAttachmentPreview();
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [previewAttachment]);
 
   useEffect(() => {
     if (!runtimeOptions) return;
@@ -1091,6 +1114,7 @@ export function Composer({
     setText("");
     setSelectedSkillIds([]);
     setAttachments([]);
+    setPreviewAttachment(null);
   }
 
   async function handleSubmit(
@@ -1135,12 +1159,20 @@ export function Composer({
                     className={styles.attachmentImageChip}
                     key={attachment.id}
                   >
-                    <img
-                      src={attachmentContentUrl(attachment.id)}
-                      alt={attachment.filename}
-                    />
                     <button
                       type="button"
+                      className={styles.attachmentImagePreviewButton}
+                      aria-label={`预览 ${attachment.filename}`}
+                      onClick={() => setPreviewAttachment(attachment)}
+                    >
+                      <img
+                        src={attachmentContentUrl(attachment.id)}
+                        alt={attachment.filename}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.attachmentImageRemoveButton}
                       aria-label={`移除 ${attachment.filename}`}
                       onClick={() => removeAttachment(attachment.id)}
                     >
@@ -1739,6 +1771,44 @@ export function Composer({
           )}
         </div>
       </form>
+      {previewAttachment
+        ? createPortal(
+            <div
+              className={styles.imageLightbox}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`预览 ${previewAttachment.filename}`}
+              data-testid="attachment-preview-dialog"
+              onClick={closeAttachmentPreview}
+            >
+              <div
+                className={styles.imageLightboxToolbar}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <a
+                  href={attachmentContentUrl(previewAttachment.id)}
+                  download={previewAttachment.filename}
+                  aria-label={`下载 ${previewAttachment.filename}`}
+                >
+                  <Download size={18} />
+                </a>
+                <button
+                  type="button"
+                  aria-label={`关闭 ${previewAttachment.filename} 预览`}
+                  onClick={closeAttachmentPreview}
+                >
+                  <X size={22} />
+                </button>
+              </div>
+              <img
+                src={attachmentContentUrl(previewAttachment.id)}
+                alt={previewAttachment.filename}
+                onClick={(event) => event.stopPropagation()}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

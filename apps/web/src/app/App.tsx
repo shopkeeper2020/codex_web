@@ -104,11 +104,6 @@ export function App(): ReactElement {
   const draftThreadCounterRef = useRef(1);
 
   useEffect(() => {
-    if (!selectedThread) return;
-    setSelectedProjectId(selectedThread.projectId ?? NO_PROJECT_FILTER_ID);
-  }, [selectedThread?.id, selectedThread?.projectId]);
-
-  useEffect(() => {
     if (!selectedProjectId || selectedProjectId === NO_PROJECT_FILTER_ID)
       return;
     if (
@@ -276,6 +271,9 @@ export function App(): ReactElement {
     : null;
   const visibleSelectedThread = draftThread ? null : selectedThread;
   const visibleSelectedThreadId = draftThread ? "" : selectedThreadId;
+  const visibleSelectedThreadProjectId = visibleSelectedThread
+    ? (visibleSelectedThread.projectId ?? NO_PROJECT_FILTER_ID)
+    : null;
   const visiblePinnedSummaryOpen = draftThread ? false : pinnedSummaryOpen;
   const visibleRightSidebarOpen = draftThread ? false : rightSidebarOpen;
   const visibleBottomTerminalOpen = draftThread ? false : bottomTerminalOpen;
@@ -306,6 +304,7 @@ export function App(): ReactElement {
         loadingMoreArchivedThreads={loadingMoreArchivedThreads}
         selectedThreadId={visibleSelectedThreadId}
         selectedProjectId={selectedProjectId}
+        selectedThreadProjectId={visibleSelectedThreadProjectId}
         onSelectThread={selectSyncedThread}
         onSelectProject={setSelectedProjectId}
         onOpenDrawer={() => setDrawerOpen(true)}
@@ -447,6 +446,7 @@ export function App(): ReactElement {
         loadingMoreArchivedThreads={loadingMoreArchivedThreads}
         selectedThreadId={visibleSelectedThreadId}
         selectedProjectId={selectedProjectId}
+        selectedThreadProjectId={visibleSelectedThreadProjectId}
         onSelectThread={selectSyncedThread}
         onSelectProject={setSelectedProjectId}
         onCreateThread={openThreadDraft}

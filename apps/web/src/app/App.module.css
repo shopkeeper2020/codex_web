@@ -405,6 +405,16 @@
   background: var(--color-bg-hover);
 }
 
+.projectRowCurrent {
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-success);
+  color: var(--color-text-primary);
+}
+
+.projectRowCurrent:hover {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-hover));
+}
+
 .projectRowActive,
 .threadRowActive,
 .threadRowShellActive {
@@ -4196,6 +4206,23 @@ button.fileRowActive:hover {
   box-shadow: 0 4px 14px rgb(15 23 42 / 7%);
 }
 
+.attachmentImagePreviewButton {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 1px);
+  padding: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.attachmentImagePreviewButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 .attachmentImageChip img {
   width: 100%;
   height: 100%;
@@ -4203,7 +4230,7 @@ button.fileRowActive:hover {
   object-fit: cover;
 }
 
-.attachmentImageChip button {
+.attachmentImageRemoveButton {
   position: absolute;
   top: -7px;
   right: -7px;
@@ -4219,8 +4246,105 @@ button.fileRowActive:hover {
   cursor: pointer;
 }
 
-.attachmentImageChip button:hover {
+.attachmentImageRemoveButton:hover {
   background: var(--color-text-secondary);
+}
+
+.attachmentPreviewLayer {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.attachmentPreviewScrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgb(15 23 42 / 58%);
+  cursor: zoom-out;
+}
+
+.attachmentPreviewDialog {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(94vw, 980px);
+  max-height: min(86vh, 820px);
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 24px 70px rgb(15 23 42 / 28%);
+}
+
+.attachmentPreviewHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 6px 8px 6px 14px;
+}
+
+.attachmentPreviewTitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachmentPreviewIconButton {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.attachmentPreviewIconButton:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.attachmentPreviewCanvas {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  background:
+    linear-gradient(45deg, rgb(148 163 184 / 16%) 25%, transparent 25%),
+    linear-gradient(-45deg, rgb(148 163 184 / 16%) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgb(148 163 184 / 16%) 75%),
+    linear-gradient(-45deg, transparent 75%, rgb(148 163 184 / 16%) 75%);
+  background-color: var(--color-bg-subtle);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+
+.attachmentPreviewCanvas img {
+  max-width: 100%;
+  max-height: calc(86vh - 88px);
+  border-radius: calc(var(--radius-control) - 2px);
+  object-fit: contain;
+  box-shadow: 0 10px 36px rgb(15 23 42 / 18%);
 }
 
 .attachmentError {

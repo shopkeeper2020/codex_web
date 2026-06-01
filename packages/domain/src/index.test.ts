@@ -108,6 +108,41 @@ describe('domain normalization', () => {
     ])
   })
 
+  it('drops sparse or null official turn item placeholders', () => {
+    const sparseItems = [
+      {
+        type: 'userMessage',
+        id: 'item-user',
+        content: [{ type: 'text', text: 'hello' }],
+      },
+    ]
+    sparseItems.length = 4
+    sparseItems.push(null as never, undefined as never, {
+      type: 'agentMessage',
+      id: 'item-agent',
+      text: 'world',
+    } as never)
+
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-sparse-items',
+      owner: null,
+      thread: {
+        id: 'thread-sparse-items',
+        turns: [
+          {
+            id: 'turn-sparse-items',
+            items: sparseItems,
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.turns[0]?.items).toEqual([
+      { type: 'user', id: 'item-user', text: 'hello' },
+      { type: 'assistant', id: 'item-agent', text: 'world' },
+    ])
+  })
+
   it('normalizes explicit official subagent arrays without inventing missing agents', () => {
     const normalized = normalizeOfficialThreadDetail({
       fallbackThreadId: 'thread-agents',

@@ -76,7 +76,7 @@ data/
 
 `config.local.json` 保存端口、主题、诊断开关和 LAN 密码 hash；该文件是本机私有运行配置，不能提交。
 
-`config.local.json` 的 `projects.favorites` 保存 Web 本地收藏项目路径；官方项目仍来自 app-server thread/list，Web 收藏只是补充。
+`config.local.json` 的 `projects.favorites` 保存 Web 添加的项目路径；官方项目仍来自 app-server thread/list。添加项目时后端会 best-effort 同步写入 Desktop 的 `~/.codex/.codex-global-state.json` 中的 saved workspace roots，但不修改 active workspace roots。
 
 `attachments/` 保存 Web 上传文件的持久副本；SQLite 的 `attachments` 表保存 id、文件名、MIME、大小、sha256、thread/turn 关联和本地路径。附件目录默认不提交。
 

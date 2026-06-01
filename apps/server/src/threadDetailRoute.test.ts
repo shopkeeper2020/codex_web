@@ -151,6 +151,48 @@ function applyExternalPartialActiveSnapshot(
   });
 }
 
+function applyExternalSparseItemSnapshot(
+  officialIpc: OfficialIpcBridge,
+  threadId: string,
+): void {
+  const items: unknown[] = [
+    { type: "userMessage", id: "item-user", content: "hello" },
+  ];
+  items.length = 4;
+  items.push(
+    null,
+    undefined,
+    { type: "agentMessage", id: "item-agent", text: "world" },
+  );
+  (
+    officialIpc as unknown as {
+      handleFrame: (frame: Record<string, unknown>) => void;
+    }
+  ).handleFrame({
+    type: "broadcast",
+    method: "thread-stream-state-changed",
+    sourceClientId: "desktop-client",
+    params: {
+      hostId: "local",
+      conversationId: threadId,
+      change: {
+        type: "snapshot",
+        conversationState: {
+          id: threadId,
+          name: "Desktop sparse item snapshot",
+          turns: [
+            {
+              id: "turn-sparse",
+              status: "completed",
+              items,
+            },
+          ],
+        },
+      },
+    },
+  });
+}
+
 async function createHarness(officialIpc = createBridge()): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "codex-web-thread-detail-"));
   const appServer = new FakeAppServer();
@@ -215,6 +257,41 @@ describe("thread detail route", () => {
       },
     });
     expect(context.database.status().threadDetailCount).toBe(0);
+  });
+
+  it("drops sparse official turn item placeholders before response validation", async () => {
+    const officialIpc = createBridge();
+    applyExternalSparseItemSnapshot(officialIpc, "thread-sparse");
+    const { context, appServer } = await createHarness(officialIpc);
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-sparse",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "official-ipc",
+      data: {
+        thread: {
+          id: "thread-sparse",
+          owner: {
+            clientId: "desktop-client",
+            source: "official-ipc",
+          },
+        },
+        turns: [
+          {
+            id: "turn-sparse",
+            items: [
+              { type: "user", id: "item-user", text: "hello" },
+              { type: "assistant", id: "item-agent", text: "world" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(appServer.calls).toEqual([]);
   });
 
   it("still caches app-server detail when no official stream state exists", async () => {

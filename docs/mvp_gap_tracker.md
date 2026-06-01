@@ -105,7 +105,7 @@ MVP 是个人可信设备/LAN 场景：
 
 - LAN 密码/session、本机免登录、session 撤销和命令行密码重置已落地；Settings / Network 会通过 `/api/network/lan-access` 展示当前可用于手机访问的 LAN URL，并支持复制，避免换 Wi-Fi 或网卡后还要手工查询 IP。
 - 设置页已分 General、Projects、Security、Network、Appearance、Account、Diagnostics。
-- 项目列表以官方 thread/list 投影为主，Web 本地收藏项目为补充。
+- 项目列表以官方 thread/list 投影为主，Web 添加的项目收藏为补充；添加收藏时会 best-effort 同步到 Desktop saved workspace roots。
 - 只读文件浏览已限制在官方项目、Web 收藏项目或默认项目根内。
 - 本地文件预览 API 已复用同一批允许根，支持消息中的本地图片路径和文件变更路径安全展示，不开放任意磁盘读取。
 - 右侧运行栏的工作区状态已通过后端 `/api/workspace/status` 读取真实 Git/GitHub CLI 信息，并限制在允许项目根内；前端不再硬编码分支、提交或 GitHub 状态。

@@ -81,7 +81,7 @@ Desktop Web 左侧 rail 的 `Search` 按钮会打开全局搜索面板；桌面�
 
 当前搜索范围：
 
-- 官方项目和 Web 本地收藏项目。
+- 官方项目和 Web 添加的项目收藏。
 - 普通会话。
 - 归档会话；点击归档结果会先恢复再打开。
 
@@ -331,7 +331,7 @@ Web 设置/诊断面板也提供同样的设备/session 管理入口。本机访
 右侧设置/诊断面板当前支持：
 
 - `General`：查看基础总览，并清理未绑定任何 thread/turn/官方引用的孤立附件。
-- `Projects`：查看、添加和移除 Web 本地收藏项目。
+- `Projects`：查看、添加和移除项目收藏；添加时会 best-effort 同步到 Desktop saved workspace roots。
 - `Security`：修改 LAN 访问密码，查看和撤销 LAN sessions。
 - `Network`：查看/复制当前 LAN 访问地址，并修改监听 host/port 和 Vite 开发服务器端口。
 - `Appearance`：展示当前浅色主题状态。
@@ -345,9 +345,9 @@ Web 设置/诊断面板也提供同样的设备/session 管理入口。本机访
 
 ## 项目收藏
 
-项目列表优先来自官方 app-server 的 thread/list 投影。Web 可以额外保存本地收藏项目路径，用于手机端快速在常用工作区新建会话。
+项目列表优先来自官方 app-server 的 thread/list 投影。Web 可以额外保存项目收藏路径，用于手机端快速在常用工作区新建会话。添加项目时，后端会 best-effort 同步写入 Desktop 的 saved workspace roots；该同步不修改 Desktop/Web 的当前 active workspace。
 
-侧边栏“项目”标题右侧的加号会要求输入 Windows 目录路径；后端会校验该路径必须存在且是目录，然后写入：
+侧边栏“项目”标题右侧的加号会要求输入 Windows 目录路径；后端会校验该路径必须存在且是目录，然后写入 Web 本地配置：
 
 ```text
 data/config.local.json
@@ -369,7 +369,15 @@ data/config.local.json
 Invoke-RestMethod -Uri http://127.0.0.1:18930/api/projects/favorites
 ```
 
-Settings / Diagnostics 里也有 `Project favorites`，可查看、添加和移除 Web 本地收藏项目。点击项目行会筛选该项目下的会话，并把新建会话的默认 cwd 切到该项目目录。第一版不做完整项目管理器，只做官方项目补充、本地收藏入口和轻量项目过滤。
+添加时还会追加写入：
+
+```text
+~/.codex/.codex-global-state.json
+```
+
+当前仅更新 `electron-saved-workspace-roots` 和已有的 `project-order`，不会写 `active-workspace-roots`，避免添加或打开会话时联动切换项目。移除 Web 收藏不会主动删除 Desktop saved roots。
+
+Settings / Diagnostics 里也有 `Project favorites`，可查看、添加和移除项目收藏。点击项目行会筛选该项目下的会话，并把新建会话的默认 cwd 切到该项目目录。第一版不做完整项目管理器，只做官方项目补充、项目收藏入口和轻量项目过滤。
 
 ## 只读文件浏览
 

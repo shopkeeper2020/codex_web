@@ -1269,7 +1269,7 @@ function ProjectFavorites({
       setProjects(await addFavoriteProject(path.trim()));
       setPath("");
       await onChanged();
-      setMessage("项目收藏已更新。");
+      setMessage("项目收藏已更新，并已尝试同步到 Desktop。");
     } catch (unknownError) {
       setError(
         unknownError instanceof Error
@@ -1302,10 +1302,10 @@ function ProjectFavorites({
 
   return (
     <section className={styles.diagnosticsSection}>
-      <h3>Project favorites</h3>
+      <h3>项目收藏</h3>
       <div className={styles.settingsProjectGrid}>
         <label className={styles.settingsField}>
-          <span>Windows path</span>
+          <span>Windows 路径</span>
           <input
             value={path}
             placeholder="C:\\workspace\\codex_web"
@@ -1319,7 +1319,7 @@ function ProjectFavorites({
           onClick={() => void addProject()}
         >
           <Plus size={15} />
-          {saving ? "Adding" : "Add"}
+          {saving ? "添加中" : "添加"}
         </button>
         <button
           className={styles.controlButton}
@@ -1328,7 +1328,7 @@ function ProjectFavorites({
           onClick={() => void refresh()}
         >
           <RefreshCw size={15} />
-          Refresh
+          刷新
         </button>
       </div>
       <div className={styles.sessionList}>
@@ -1340,7 +1340,7 @@ function ProjectFavorites({
                 <small>{project.path ?? project.id}</small>
                 <small>
                   {project.source === "web-favorite"
-                    ? "本地收藏项目"
+                    ? "Web 添加项目"
                     : "官方项目"}
                 </small>
               </div>
@@ -1351,14 +1351,14 @@ function ProjectFavorites({
                 onClick={() => void removeProject(project)}
               >
                 <Trash2 size={15} />
-                Remove
+                移除
               </button>
             </div>
           ))
         ) : (
           <div className={styles.emptyDiagnostics}>
             <Folder size={15} />
-            <span>还没有 Web 本地收藏项目。</span>
+            <span>还没有项目收藏。</span>
           </div>
         )}
       </div>
