@@ -122,6 +122,22 @@ describe("desktop workspace root sync", () => {
     ]);
   });
 
+  it("creates Desktop project order when only saved roots exist", () => {
+    const codexHome = createCodexHome({
+      "electron-saved-workspace-roots": ["C:\\Users\\user\\Desktop\\codex_web"],
+    });
+
+    const result = syncDesktopWorkspaceRoot(
+      "C:\\Users\\user\\Desktop\\mcp_server",
+      { codexHome },
+    );
+
+    expect(result.status).toBe("synced");
+    expect(readState(codexHome)["project-order"]).toEqual([
+      "C:\\Users\\user\\Desktop\\mcp_server",
+    ]);
+  });
+
   it("skips sync when Desktop global state is unavailable", () => {
     const codexHome = createCodexHome(null);
 

@@ -51,5 +51,15 @@ export function userFacingErrorMessage(
     return "官方 IPC 发送失败。请确认 Desktop/VS Code 仍在运行，然后重试。";
   }
 
+  const lowerMessage = message.toLocaleLowerCase();
+  if (
+    lowerMessage.includes("failed to read thread") &&
+    lowerMessage.includes("rollout") &&
+    lowerMessage.includes("jsonl") &&
+    lowerMessage.includes("is empty")
+  ) {
+    return "新会话还在初始化，内容马上会同步完成。";
+  }
+
   return message;
 }

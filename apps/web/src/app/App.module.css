@@ -76,9 +76,20 @@
 }
 
 .sidebarSurface {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+.sidebarScrollArea {
+  min-height: 0;
   padding: 14px 10px 12px;
   overflow: hidden auto;
+  overscroll-behavior: contain;
 }
 
 .sidebarQuickNav {
@@ -115,19 +126,15 @@
 }
 
 .sidebarFooter {
-  position: sticky;
-  bottom: 0;
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  margin: 18px -2px 0;
-  padding: 10px 0 0;
-  background: linear-gradient(
-    180deg,
-    rgb(244 244 245 / 0%) 0%,
-    var(--color-bg-sidebar) 34%
-  );
+  min-height: 48px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-sidebar);
 }
 
 .settingsAccountMenu {
@@ -342,8 +349,6 @@
   opacity: 0.62;
 }
 
-.projectRow,
-.projectRowActive,
 .threadRow,
 .threadRowActive {
   display: grid;
@@ -358,14 +363,6 @@
   text-align: left;
 }
 
-.projectRow,
-.projectRowActive {
-  grid-template-columns: 28px minmax(0, 1fr) 12px;
-  gap: 8px;
-  height: 42px;
-  padding: 0 8px;
-}
-
 .threadRow,
 .threadRowActive {
   grid-template-columns: 20px minmax(0, 1fr) auto;
@@ -374,27 +371,107 @@
   padding: 6px 8px;
 }
 
-.projectRow:hover,
 .threadRow:hover,
+.projectRowShell:hover,
+.projectRowShellActive:hover,
+.projectRowShell:focus-within,
+.projectRowShellActive:focus-within,
 .threadRowShell:hover,
-.threadRowShell:focus-within {
+.threadRowShellActive:hover,
+.threadRowShell:focus-within,
+.threadRowShellActive:focus-within {
   background: var(--color-bg-hover);
 }
 
-.projectRowCurrent {
+.projectRowShell,
+.projectRowShellActive {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  overflow: hidden;
+  border-radius: var(--radius-row);
+  color: var(--color-text-secondary);
+}
+
+.projectRowMain {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 12px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border: 0;
+  padding: 0 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.projectRowShellCurrent {
   background: color-mix(in srgb, var(--color-success) 8%, transparent);
   box-shadow: inset 3px 0 0 var(--color-success);
   color: var(--color-text-primary);
 }
 
-.projectRowCurrent:hover {
-  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-hover));
+.projectRowShellCurrent:hover,
+.projectRowShellCurrent:focus-within {
+  background: color-mix(
+    in srgb,
+    var(--color-success) 12%,
+    var(--color-bg-hover)
+  );
 }
 
-.projectRowActive,
 .threadRowActive,
+.projectRowShellActive,
 .threadRowShellActive {
   background: var(--color-bg-selected);
+  color: var(--color-text-primary);
+}
+
+.projectRowAction {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  z-index: 1;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--color-bg-sidebar);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.projectRowShell:hover .projectRowAction,
+.projectRowShellActive .projectRowAction,
+.projectRowShellCurrent .projectRowAction,
+.projectRowShell:focus-within .projectRowAction,
+.projectRowShellActive:focus-within .projectRowAction,
+.projectRowShellCurrent:focus-within .projectRowAction,
+.projectRowAction:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.projectRowAction:hover {
+  background: var(--color-bg-elevated);
   color: var(--color-text-primary);
 }
 
@@ -6111,6 +6188,11 @@ button.fileRowActive:hover {
     display: block;
   }
 
+  .projectRowWithAction .projectRowAction {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .debugSummary,
   .debugGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6249,6 +6331,24 @@ button.fileRowActive:hover {
 
   .composerDock {
     padding: 8px 8px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .sidebarScrollArea {
+    padding: 12px 10px 10px;
+  }
+
+  .sidebarFooter {
+    min-height: calc(48px + env(safe-area-inset-bottom));
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .projectRowWithAction .projectRowMain {
+    grid-template-columns: 28px minmax(0, 1fr) 30px;
+  }
+
+  .projectRowWithAction .activityDot,
+  .projectRowWithAction .activityDotActive {
+    opacity: 0;
   }
 
   .composer textarea {

@@ -143,4 +143,4 @@ data/          本机运行数据目录，默认被 Git 忽略
 
 ## License
 
-当前尚未选择开源许可证。在许可证明确前，请不要假定本仓库授予再分发或商用权利。
+MIT © 2026 shopkeeper2020. 详情见 [LICENSE](./LICENSE)。

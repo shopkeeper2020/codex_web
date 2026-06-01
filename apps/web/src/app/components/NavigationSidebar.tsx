@@ -66,10 +66,11 @@ function projectRowClass(input: {
   filterActive: boolean;
   currentThreadProject: boolean;
 }): string {
-  if (input.filterActive) return styles.projectRowActive ?? "";
-  return input.currentThreadProject
-    ? [styles.projectRow, styles.projectRowCurrent].filter(Boolean).join(" ")
-    : (styles.projectRow ?? "");
+  const classes = [styles.projectRowShell];
+  if (input.filterActive) classes.push(styles.projectRowShellActive);
+  if (!input.filterActive && input.currentThreadProject)
+    classes.push(styles.projectRowShellCurrent);
+  return classes.filter(Boolean).join(" ");
 }
 
 function Rail({
@@ -152,7 +153,11 @@ function threadMatchesProject(
   return thread.projectId === projectId;
 }
 
-function limitedRows<T>(items: T[], expanded: boolean, searching: boolean): T[] {
+function limitedRows<T>(
+  items: T[],
+  expanded: boolean,
+  searching: boolean,
+): T[] {
   if (expanded || searching || items.length <= COLLAPSED_SECTION_LIMIT)
     return items;
   return items.slice(0, COLLAPSED_SECTION_LIMIT);
@@ -169,10 +174,83 @@ function ExpandRowsButton({
 }): ReactElement | null {
   if (hiddenCount <= 0) return null;
   return (
-    <button className={styles.expandRowsButton} type="button" onClick={onToggle}>
+    <button
+      className={styles.expandRowsButton}
+      type="button"
+      onClick={onToggle}
+    >
       {expanded ? "收起显示" : "展开显示"}
       <span>{expanded ? "" : `+${hiddenCount}`}</span>
     </button>
+  );
+}
+
+function ProjectRow({
+  active,
+  current,
+  icon,
+  title,
+  meta,
+  activityActive,
+  selectLabel,
+  rowTitle,
+  onSelect,
+  onCreateThread,
+  createThreadLabel,
+}: {
+  active: boolean;
+  current: boolean;
+  icon: ReactElement;
+  title: string;
+  meta?: string;
+  activityActive?: boolean;
+  selectLabel: string;
+  rowTitle?: string;
+  onSelect: () => void;
+  onCreateThread?: () => void;
+  createThreadLabel?: string;
+}): ReactElement {
+  const newThreadLabel = createThreadLabel ?? `在 ${title} 中开始新对话`;
+  const className = [
+    projectRowClass({
+      filterActive: active,
+      currentThreadProject: current,
+    }),
+    onCreateThread ? styles.projectRowWithAction : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div className={className}>
+      <button
+        className={styles.projectRowMain}
+        type="button"
+        aria-label={selectLabel}
+        title={rowTitle}
+        onClick={onSelect}
+      >
+        <span className={styles.projectIcon}>{icon}</span>
+        <span className={styles.rowText}>
+          <span className={styles.rowTitle}>{title}</span>
+          {meta ? <span className={styles.rowMeta}>{meta}</span> : null}
+        </span>
+        <ActivityDot active={activityActive} />
+      </button>
+      {onCreateThread ? (
+        <button
+          className={styles.projectRowAction}
+          type="button"
+          aria-label={newThreadLabel}
+          title={newThreadLabel}
+          onClick={(event) => {
+            event.stopPropagation();
+            onCreateThread();
+          }}
+        >
+          <SquarePen size={14} />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -202,29 +280,58 @@ function SettingsAccountMenu({
   if (!open) return null;
   const accountLabel = settingsAccountLabel(auth, accountStatus);
   return (
-    <div className={styles.settingsAccountMenu} role="menu" aria-label="账户与设置">
+    <div
+      className={styles.settingsAccountMenu}
+      role="menu"
+      aria-label="账户与设置"
+    >
       <div className={styles.settingsAccountIdentity}>
         <CircleUser size={16} />
         <span>{accountLabel}</span>
       </div>
-      <button className={styles.settingsMenuItem} type="button" role="menuitem" disabled>
+      <button
+        className={styles.settingsMenuItem}
+        type="button"
+        role="menuitem"
+        disabled
+      >
         <Settings size={15} />
         <span>个人账户</span>
       </button>
-      <button className={styles.settingsMenuItem} type="button" role="menuitem" disabled>
+      <button
+        className={styles.settingsMenuItem}
+        type="button"
+        role="menuitem"
+        disabled
+      >
         <Sparkles size={15} />
         <span>升级以获享更高限额</span>
         <ExternalLink size={13} />
       </button>
-      <button className={styles.settingsMenuItem} type="button" role="menuitem" onClick={onOpenSettings}>
+      <button
+        className={styles.settingsMenuItem}
+        type="button"
+        role="menuitem"
+        onClick={onOpenSettings}
+      >
         <Settings size={15} />
         <span>设置</span>
       </button>
-      <button className={styles.settingsMenuItem} type="button" role="menuitem" disabled>
+      <button
+        className={styles.settingsMenuItem}
+        type="button"
+        role="menuitem"
+        disabled
+      >
         <Gauge size={15} />
         <span>剩余用量</span>
       </button>
-      <button className={styles.settingsMenuItem} type="button" role="menuitem" onClick={onSignOut}>
+      <button
+        className={styles.settingsMenuItem}
+        type="button"
+        role="menuitem"
+        onClick={onSignOut}
+      >
         <LogOut size={15} />
         <span>退出登录</span>
       </button>
@@ -322,7 +429,11 @@ function ThreadRows({
           onClick={() => onSelectThread(thread.id)}
         >
           {thread.pinned ? (
-            <Pin className={styles.threadPinIcon} size={15} fill="currentColor" />
+            <Pin
+              className={styles.threadPinIcon}
+              size={15}
+              fill="currentColor"
+            />
           ) : (
             <MessageSquare size={15} />
           )}
@@ -541,52 +652,159 @@ function SidebarContent({
       aria-busy={threadListLoading}
       aria-label="项目和会话"
     >
-      <nav className={styles.sidebarQuickNav} aria-label="主导航">
-        <button
-          className={styles.sidebarNavRow}
-          type="button"
-          onClick={() => onCreateThread(createThreadCwd)}
-        >
-          <SquarePen size={17} />
-          <span>新对话</span>
-        </button>
-        <button
-          className={styles.sidebarNavRow}
-          type="button"
-          aria-label="Search"
-          onClick={onOpenSearch}
-        >
-          <Search size={17} />
-          <span>搜索</span>
-        </button>
-        <button className={styles.sidebarNavRow} type="button" disabled>
-          <Puzzle size={17} />
-          <span>插件</span>
-        </button>
-        <button className={styles.sidebarNavRow} type="button" disabled>
-          <History size={17} />
-          <span>自动化</span>
-        </button>
-      </nav>
+      <div className={styles.sidebarScrollArea}>
+        <nav className={styles.sidebarQuickNav} aria-label="主导航">
+          <button
+            className={styles.sidebarNavRow}
+            type="button"
+            onClick={() => onCreateThread(createThreadCwd)}
+          >
+            <SquarePen size={17} />
+            <span>新对话</span>
+          </button>
+          <button
+            className={styles.sidebarNavRow}
+            type="button"
+            aria-label="Search"
+            onClick={onOpenSearch}
+          >
+            <Search size={17} />
+            <span>搜索</span>
+          </button>
+          <button className={styles.sidebarNavRow} type="button" disabled>
+            <Puzzle size={17} />
+            <span>插件</span>
+          </button>
+          <button className={styles.sidebarNavRow} type="button" disabled>
+            <History size={17} />
+            <span>自动化</span>
+          </button>
+        </nav>
 
-      <label className={styles.searchBox}>
-        <Search size={15} />
-        <input
-          type="search"
-          placeholder="搜索项目、会话或文件"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </label>
+        <label className={styles.searchBox}>
+          <Search size={15} />
+          <input
+            type="search"
+            placeholder="搜索项目、会话或文件"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
 
-      {visiblePinnedThreads.length > 0 ? (
+        {visiblePinnedThreads.length > 0 ? (
+          <section className={styles.navSection}>
+            <div className={styles.sectionHeader}>
+              <span>置顶</span>
+              <span>{visiblePinnedThreads.length}</span>
+            </div>
+            <ThreadRows
+              threads={renderedPinnedThreads}
+              projects={threadList.projects}
+              selectedThreadId={selectedThreadId}
+              onSelectThread={onSelectThread}
+              onRestoreThread={onRestoreThread}
+              onTogglePinThread={onTogglePinThread}
+              onArchiveThread={onArchiveThread}
+              onStopThreadBackground={onStopThreadBackground}
+            />
+            <ExpandRowsButton
+              expanded={pinnedExpanded}
+              hiddenCount={
+                normalizedQuery
+                  ? 0
+                  : visiblePinnedThreads.length - COLLAPSED_SECTION_LIMIT
+              }
+              onToggle={() => setPinnedExpanded((value) => !value)}
+            />
+          </section>
+        ) : null}
+
         <section className={styles.navSection}>
           <div className={styles.sectionHeader}>
-            <span>置顶</span>
-            <span>{visiblePinnedThreads.length}</span>
+            <span>项目</span>
+            <button
+              className={styles.tinyIconButton}
+              type="button"
+              aria-label="新增项目"
+              title="新增项目"
+              onClick={onAddFavoriteProject}
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+          <ProjectRow
+            active={!selectedProjectId}
+            current={false}
+            icon={<Home size={15} />}
+            title="全部会话"
+            meta={
+              threadListLoading
+                ? "正在同步会话"
+                : `${threadList.threads.length} 个同步会话`
+            }
+            activityActive={false}
+            selectLabel="选择全部会话"
+            onSelect={() => onSelectProject(null)}
+          />
+          {renderedProjects.map((project) => {
+            const currentThreadProject = project.id === selectedThreadProjectId;
+            const projectCwd = project.path ?? project.id;
+            return (
+              <ProjectRow
+                key={project.id}
+                active={project.id === selectedProjectId}
+                current={currentThreadProject}
+                icon={<Folder size={15} />}
+                title={project.name}
+                activityActive={currentThreadProject}
+                selectLabel={`选择项目 ${project.name}`}
+                rowTitle={currentThreadProject ? "当前会话所属项目" : undefined}
+                onSelect={() => onSelectProject(project.id)}
+                onCreateThread={() => onCreateThread(projectCwd)}
+                createThreadLabel={`在 ${project.name} 中开始新对话`}
+              />
+            );
+          })}
+          <ExpandRowsButton
+            expanded={projectsExpanded}
+            hiddenCount={
+              normalizedQuery
+                ? 0
+                : visibleProjects.length - COLLAPSED_SECTION_LIMIT
+            }
+            onToggle={() => setProjectsExpanded((value) => !value)}
+          />
+          {noProjectCount > 0 ? (
+            <ProjectRow
+              active={selectedProjectId === NO_PROJECT_FILTER_ID}
+              current={selectedThreadProjectId === NO_PROJECT_FILTER_ID}
+              icon={<MessageSquare size={15} />}
+              title="无项目会话"
+              meta={`${noProjectCount} 个全局会话`}
+              activityActive={selectedThreadProjectId === NO_PROJECT_FILTER_ID}
+              selectLabel="选择无项目会话"
+              rowTitle={
+                selectedThreadProjectId === NO_PROJECT_FILTER_ID
+                  ? "当前会话无项目"
+                  : undefined
+              }
+              onSelect={() => onSelectProject(NO_PROJECT_FILTER_ID)}
+              onCreateThread={() => onCreateThread(null)}
+              createThreadLabel="开始无项目新对话"
+            />
+          ) : null}
+        </section>
+
+        <section className={styles.navSection}>
+          <div className={styles.sectionHeader}>
+            <span>会话</span>
+            <span>
+              {threadList.threads.length}
+              {hasMoreThreads ? "+" : ""}
+            </span>
           </div>
           <ThreadRows
-            threads={renderedPinnedThreads}
+            threads={renderedThreads}
             projects={threadList.projects}
             selectedThreadId={selectedThreadId}
             onSelectThread={onSelectThread}
@@ -596,205 +814,78 @@ function SidebarContent({
             onStopThreadBackground={onStopThreadBackground}
           />
           <ExpandRowsButton
-            expanded={pinnedExpanded}
+            expanded={threadsExpanded}
             hiddenCount={
               normalizedQuery
                 ? 0
-                : visiblePinnedThreads.length - COLLAPSED_SECTION_LIMIT
+                : visibleThreads.length - COLLAPSED_SECTION_LIMIT
             }
-            onToggle={() => setPinnedExpanded((value) => !value)}
+            onToggle={() => setThreadsExpanded((value) => !value)}
           />
-        </section>
-      ) : null}
-
-      <section className={styles.navSection}>
-        <div className={styles.sectionHeader}>
-          <span>项目</span>
-          <button
-            className={styles.tinyIconButton}
-            type="button"
-            aria-label="新增项目"
-            title="新增项目"
-            onClick={onAddFavoriteProject}
-          >
-            <Plus size={14} />
-          </button>
-        </div>
-        <button
-          className={projectRowClass({
-            filterActive: !selectedProjectId,
-            currentThreadProject: false,
-          })}
-          type="button"
-          onClick={() => onSelectProject(null)}
-        >
-          <span className={styles.projectIcon}>
-            <Home size={15} />
-          </span>
-          <span className={styles.rowText}>
-            <span className={styles.rowTitle}>全部会话</span>
-            <span className={styles.rowMeta}>
-              {threadListLoading
-                ? "正在同步会话"
-              : `${threadList.threads.length} 个同步会话`}
-            </span>
-          </span>
-          <ActivityDot active={false} />
-        </button>
-        {renderedProjects.map((project) => {
-          const currentThreadProject = project.id === selectedThreadProjectId;
-          return (
+          {visibleThreads.length === 0 ? (
+            <div className={styles.emptySidebar}>
+              {threadListLoading ? "正在同步会话..." : "没有匹配的会话"}
+            </div>
+          ) : null}
+          {hasMoreThreads ? (
             <button
-              className={projectRowClass({
-                filterActive: project.id === selectedProjectId,
-                currentThreadProject,
-              })}
-              key={project.id}
+              className={styles.loadMoreRow}
               type="button"
-              aria-label={`选择项目 ${project.name}`}
-              title={currentThreadProject ? "当前会话所属项目" : undefined}
-              onClick={() => onSelectProject(project.id)}
+              disabled={loadingMoreThreads}
+              onClick={onLoadMoreThreads}
             >
-              <span className={styles.projectIcon}>
-                <Folder size={15} />
-              </span>
-              <span className={styles.rowText}>
-                <span className={styles.rowTitle}>{project.name}</span>
-              </span>
-              <ActivityDot active={currentThreadProject} />
+              {loadingMoreThreads ? "正在加载更多会话..." : "加载更多会话"}
             </button>
-          );
-        })}
-        <ExpandRowsButton
-          expanded={projectsExpanded}
-          hiddenCount={
-            normalizedQuery
-              ? 0
-              : visibleProjects.length - COLLAPSED_SECTION_LIMIT
-          }
-          onToggle={() => setProjectsExpanded((value) => !value)}
-        />
-        {noProjectCount > 0 ? (
-          <button
-            className={projectRowClass({
-              filterActive: selectedProjectId === NO_PROJECT_FILTER_ID,
-              currentThreadProject:
-                selectedThreadProjectId === NO_PROJECT_FILTER_ID,
-            })}
-            type="button"
-            onClick={() => onSelectProject(NO_PROJECT_FILTER_ID)}
-            title={
-              selectedThreadProjectId === NO_PROJECT_FILTER_ID
-                ? "当前会话无项目"
-                : undefined
+          ) : null}
+        </section>
+
+        <section className={styles.navSection}>
+          <div className={styles.sectionHeader}>
+            <span>归档</span>
+            <span>
+              {archivedThreads.length}
+              {hasMoreArchivedThreads ? "+" : ""}
+            </span>
+          </div>
+          <ThreadRows
+            threads={renderedArchivedThreads}
+            projects={threadList.projects}
+            selectedThreadId={selectedThreadId}
+            archived
+            onSelectThread={onSelectThread}
+            onRestoreThread={onRestoreThread}
+            onTogglePinThread={onTogglePinThread}
+            onArchiveThread={onArchiveThread}
+            onStopThreadBackground={onStopThreadBackground}
+          />
+          <ExpandRowsButton
+            expanded={archivedExpanded}
+            hiddenCount={
+              normalizedQuery
+                ? 0
+                : visibleArchivedThreads.length - COLLAPSED_SECTION_LIMIT
             }
-          >
-            <span className={styles.projectIcon}>
-              <MessageSquare size={15} />
-            </span>
-            <span className={styles.rowText}>
-              <span className={styles.rowTitle}>无项目会话</span>
-              <span className={styles.rowMeta}>
-                {noProjectCount} 个全局会话
-              </span>
-            </span>
-            <ActivityDot
-              active={selectedThreadProjectId === NO_PROJECT_FILTER_ID}
-            />
-          </button>
-        ) : null}
-      </section>
-
-      <section className={styles.navSection}>
-        <div className={styles.sectionHeader}>
-          <span>会话</span>
-          <span>
-            {threadList.threads.length}
-            {hasMoreThreads ? "+" : ""}
-          </span>
-        </div>
-        <ThreadRows
-          threads={renderedThreads}
-          projects={threadList.projects}
-          selectedThreadId={selectedThreadId}
-          onSelectThread={onSelectThread}
-          onRestoreThread={onRestoreThread}
-          onTogglePinThread={onTogglePinThread}
-          onArchiveThread={onArchiveThread}
-          onStopThreadBackground={onStopThreadBackground}
-        />
-        <ExpandRowsButton
-          expanded={threadsExpanded}
-          hiddenCount={
-            normalizedQuery
-              ? 0
-              : visibleThreads.length - COLLAPSED_SECTION_LIMIT
-          }
-          onToggle={() => setThreadsExpanded((value) => !value)}
-        />
-        {visibleThreads.length === 0 ? (
-          <div className={styles.emptySidebar}>
-            {threadListLoading ? "正在同步会话..." : "没有匹配的会话"}
-          </div>
-        ) : null}
-        {hasMoreThreads ? (
-          <button
-            className={styles.loadMoreRow}
-            type="button"
-            disabled={loadingMoreThreads}
-            onClick={onLoadMoreThreads}
-          >
-            {loadingMoreThreads ? "正在加载更多会话..." : "加载更多会话"}
-          </button>
-        ) : null}
-      </section>
-
-      <section className={styles.navSection}>
-        <div className={styles.sectionHeader}>
-          <span>归档</span>
-          <span>
-            {archivedThreads.length}
-            {hasMoreArchivedThreads ? "+" : ""}
-          </span>
-        </div>
-        <ThreadRows
-          threads={renderedArchivedThreads}
-          projects={threadList.projects}
-          selectedThreadId={selectedThreadId}
-          archived
-          onSelectThread={onSelectThread}
-          onRestoreThread={onRestoreThread}
-          onTogglePinThread={onTogglePinThread}
-          onArchiveThread={onArchiveThread}
-          onStopThreadBackground={onStopThreadBackground}
-        />
-        <ExpandRowsButton
-          expanded={archivedExpanded}
-          hiddenCount={
-            normalizedQuery
-              ? 0
-              : visibleArchivedThreads.length - COLLAPSED_SECTION_LIMIT
-          }
-          onToggle={() => setArchivedExpanded((value) => !value)}
-        />
-        {visibleArchivedThreads.length === 0 ? (
-          <div className={styles.emptySidebar}>
-            {threadListLoading ? "正在同步归档..." : "没有归档会话"}
-          </div>
-        ) : null}
-        {hasMoreArchivedThreads ? (
-          <button
-            className={styles.loadMoreRow}
-            type="button"
-            disabled={loadingMoreArchivedThreads}
-            onClick={onLoadMoreArchivedThreads}
-          >
-            {loadingMoreArchivedThreads
-              ? "正在加载更多归档..."
-              : "加载更多归档"}
-          </button>
-        ) : null}
-      </section>
+            onToggle={() => setArchivedExpanded((value) => !value)}
+          />
+          {visibleArchivedThreads.length === 0 ? (
+            <div className={styles.emptySidebar}>
+              {threadListLoading ? "正在同步归档..." : "没有归档会话"}
+            </div>
+          ) : null}
+          {hasMoreArchivedThreads ? (
+            <button
+              className={styles.loadMoreRow}
+              type="button"
+              disabled={loadingMoreArchivedThreads}
+              onClick={onLoadMoreArchivedThreads}
+            >
+              {loadingMoreArchivedThreads
+                ? "正在加载更多归档..."
+                : "加载更多归档"}
+            </button>
+          ) : null}
+        </section>
+      </div>
 
       <div className={styles.sidebarFooter}>
         <SettingsAccountMenu

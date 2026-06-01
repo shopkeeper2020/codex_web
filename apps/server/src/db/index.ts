@@ -133,6 +133,20 @@ export class DatabaseStore {
       .run(threadId, source, JSON.stringify(detail), new Date().toISOString());
   }
 
+  readThreadDetail(threadId: string): ThreadDetail | null {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) return null;
+    const row = this.sqlite
+      .prepare("SELECT detail_json FROM thread_details WHERE thread_id = ?")
+      .get(normalizedThreadId) as { detail_json?: unknown } | undefined;
+    if (typeof row?.detail_json !== "string") return null;
+    try {
+      return JSON.parse(row.detail_json) as ThreadDetail;
+    } catch {
+      return null;
+    }
+  }
+
   upsertOfficialStreamState(state: OfficialThreadStreamState): void {
     this.sqlite
       .prepare(

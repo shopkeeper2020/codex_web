@@ -9,6 +9,7 @@ import type { CodexAppServerProcess } from "./appServerProcess.js";
 class FakeAppServer {
   readonly calls: Array<{ method: string; params?: unknown }> = [];
   threadReadResult: unknown | null = null;
+  threadReadError: Error | null = null;
 
   onNotification(): () => void {
     return () => undefined;
@@ -29,6 +30,7 @@ class FakeAppServer {
     includeTurns: boolean;
   }): Promise<unknown> {
     this.calls.push({ method: "thread/read", params });
+    if (this.threadReadError) throw this.threadReadError;
     return (
       this.threadReadResult ?? {
         thread: {
@@ -321,6 +323,53 @@ describe("thread detail route", () => {
     expect(
       officialIpc.canBroadcastOwnedConversation("thread-app-server"),
     ).toBe(false);
+  });
+
+  it("uses cached created thread detail during transient empty rollout reads", async () => {
+    const { context, appServer } = await createHarness();
+    context.database.upsertThreadDetail(
+      "thread-created",
+      {
+        thread: {
+          id: "thread-created",
+          title: "Untitled",
+          projectId: "C:\\workspace\\codex_web",
+          path: "C:\\workspace\\codex_web",
+          updatedAtIso: "2026-06-01T00:00:00.000Z",
+          inProgress: false,
+          pinned: false,
+          owner: null,
+        },
+        goal: null,
+        turns: [],
+        subAgents: [],
+        sideConversations: [],
+      },
+      "app-server",
+    );
+    appServer.threadReadError = new Error(
+      "failed to read thread: thread-store internal error: failed to read thread C:\\Users\\lwm\\.codex\\sessions\\2026\\06\\01\\rollout-thread-created.jsonl: rollout at C:\\Users\\lwm\\.codex\\sessions\\2026\\06\\01\\rollout-thread-created.jsonl is empty",
+    );
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-created",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "app-server-cache-transient",
+      data: {
+        thread: { id: "thread-created", title: "Untitled" },
+        turns: [],
+      },
+    });
+    expect(appServer.calls).toEqual([
+      {
+        method: "thread/read",
+        params: { threadId: "thread-created", includeTurns: true },
+      },
+    ]);
   });
 
   it("overlays locally pinned state onto thread detail responses", async () => {

@@ -124,17 +124,13 @@ export function syncDesktopWorkspaceRoot(
     );
     state[DESKTOP_SAVED_ROOTS_KEY] = savedRoots.values;
 
-    let projectOrderChanged = false;
-    if (Array.isArray(state[DESKTOP_PROJECT_ORDER_KEY])) {
-      const projectOrder = appendPathIfMissing(
-        state[DESKTOP_PROJECT_ORDER_KEY],
-        normalizedPath,
-      );
-      state[DESKTOP_PROJECT_ORDER_KEY] = projectOrder.values;
-      projectOrderChanged = projectOrder.changed;
-    }
+    const projectOrder = appendPathIfMissing(
+      state[DESKTOP_PROJECT_ORDER_KEY],
+      normalizedPath,
+    );
+    state[DESKTOP_PROJECT_ORDER_KEY] = projectOrder.values;
 
-    if (!savedRoots.changed && !projectOrderChanged) {
+    if (!savedRoots.changed && !projectOrder.changed) {
       return {
         status: "already-present",
         path: normalizedPath,

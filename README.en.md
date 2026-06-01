@@ -143,4 +143,4 @@ This is an unofficial experimental project and is not affiliated with OpenAI or 
 
 ## License
 
-No open-source license has been selected yet. Until a license is added, do not assume rights to redistribute or use this repository commercially.
+MIT © 2026 shopkeeper2020. See [LICENSE](./LICENSE) for details.

@@ -183,6 +183,21 @@ function readString(value: unknown): string {
     : "";
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return typeof error === "string" ? error : "";
+}
+
+function isTransientEmptyRolloutReadError(error: unknown): boolean {
+  const message = errorMessage(error).toLocaleLowerCase();
+  return (
+    message.includes("failed to read thread") &&
+    message.includes("rollout") &&
+    message.includes("jsonl") &&
+    message.includes("is empty")
+  );
+}
+
 function readOptionalBoolean(value: unknown): boolean | null {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
@@ -3016,11 +3031,51 @@ export async function createServer(
         await reply.send(response.data);
         return;
       }
+      if (isTransientEmptyRolloutReadError(error)) {
+        const cachedDetail = await hydrateThreadGoal(
+          threadId,
+          hydratePinnedDetail(
+            hydrateSideConversations(
+              threadId,
+              database.readThreadDetail(threadId),
+            ),
+            pinnedThreadIds,
+          ),
+        );
+        if (cachedDetail) {
+          diagnostics.record(
+            "warn",
+            "domain",
+            "app-server-thread-detail-transient-cache-fallback",
+            { threadId, error: errorMessage(error) },
+          );
+          const response = threadDetailResponseSchema.safeParse({
+            data: cachedDetail,
+            source: "app-server-cache-transient",
+          });
+          if (!response.success) {
+            const validationError = formatZodError(response.error);
+            diagnostics.record(
+              "error",
+              "api",
+              "domain-thread-detail-response-validation-failed",
+              {
+                threadId,
+                source: "app-server-cache-transient",
+                error: validationError,
+              },
+            );
+            await reply.code(500).send({
+              error: `Invalid domain thread detail response: ${validationError}`,
+            });
+            return;
+          }
+          await reply.send(response.data);
+          return;
+        }
+      }
       await reply.code(502).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to read domain thread",
+        error: errorMessage(error) || "Failed to read domain thread",
       });
     }
   });
