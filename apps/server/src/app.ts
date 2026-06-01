@@ -1209,16 +1209,46 @@ export async function createServer(
     threadId: string,
     detail: ThreadDetail | null,
     reason: string,
+    conversationState?: unknown,
   ): boolean => {
     if (!detail || detail.thread.inProgress) return false;
     if (!officialIpc.canOwnConversations()) return false;
-    if (officialIpc.isExternallyOwnedConversation(threadId)) return false;
     const state = officialIpc.getThreadStreamState(threadId);
+    const staleOfficialActiveRetired = state
+      ? shouldRetireStaleOfficialActiveState(
+          conversationState ?? detail,
+          state,
+        )
+      : false;
     if (
-      state?.isInProgress ||
-      conversationStateAlreadyActive(state?.conversationState)
+      (state?.isInProgress ||
+        conversationStateAlreadyActive(state?.conversationState)) &&
+      !staleOfficialActiveRetired
     ) {
       return false;
+    }
+    if (officialIpc.isExternallyOwnedConversation(threadId)) {
+      const discarded = officialIpc.discardConversationFromCache(
+        threadId,
+        `${reason}-idle-external-owner-retired`,
+      );
+      diagnostics.record(
+        discarded ? "info" : "warn",
+        "official-ipc",
+        discarded
+          ? "idle-external-owner-retired"
+          : "idle-external-owner-retire-skipped",
+        {
+          threadId,
+          reason,
+          previousOwnerClientId: state?.ownerClientId ?? null,
+          cacheVersion: state?.cacheVersion ?? null,
+          staleOfficialActiveRetired,
+        },
+      );
+      if (!discarded && officialIpc.isExternallyOwnedConversation(threadId)) {
+        return false;
+      }
     }
     const claimed = officialIpc.claimLocalOnlyConversation(threadId);
     diagnostics.record(
@@ -1237,16 +1267,14 @@ export async function createServer(
     reason: string,
   ): Promise<boolean> => {
     try {
-      const result = await appServer.threadRead({
-        threadId,
-        includeTurns: false,
-      });
+      const result = await readAppServerThreadSnapshot(appServer, threadId);
+      if (!result) return false;
       const detail = normalizeOfficialThreadDetail({
-        thread: asRecord(result)?.thread ?? result,
+        thread: result,
         owner: null,
         fallbackThreadId: threadId,
       });
-      return claimIdleAppServerConversation(threadId, detail, reason);
+      return claimIdleAppServerConversation(threadId, detail, reason, result);
     } catch (error) {
       diagnostics.record("warn", "official-ipc", "idle-thread-claim-failed", {
         threadId,
@@ -2929,7 +2957,8 @@ export async function createServer(
       });
       if (
         !fallback.allow &&
-        fallback.reason === "official-owner-required" &&
+        (fallback.reason === "official-owner-required" ||
+          fallback.reason === "official-owner-unavailable") &&
         (await claimIdleAppServerConversationByRead(
           threadId,
           "turn-start-fallback",

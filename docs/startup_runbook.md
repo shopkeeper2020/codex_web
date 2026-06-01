@@ -525,7 +525,9 @@ Invoke-RestMethod -Uri $uri | ConvertTo-Json -Depth 10
 
 `turn-steer` 必须带 `expectedTurnId`，后端会用当前 Web domain detail 中的 active turn id 作为预条件。引导当前 turn 支持后端已管理的 `attachmentIds`；小图片会以内联 image input/restoreMessage 传给官方 owner，普通文件仍保留受控附件引用，发送成功后关联到当前 thread。
 
-如果官方 owner 不可用、IPC 未连接或当前会话没有明确 Web-owned 标记，Web 会拒绝本地 app-server fallback，返回 409/503，并在 diagnostics 里记录 `official-follower-fallback-denied`。这是为了优先避免三端分叉；后续如果要做“手动接管 owner”，应作为显式用户操作实现。
+如果官方 owner 不可用、IPC 未连接或当前会话没有明确 Web-owned 标记，Web 通常会拒绝本地 app-server fallback，返回 409/503，并在 diagnostics 里记录 `official-follower-fallback-denied`。这是为了优先避免三端分叉。
+
+唯一自动接管例外是普通 `turn-start`：当 follower start 失败后，后端会读 app-server 完整 thread 快照；只有确认该会话已空闲、没有 active turn，才会退休旧外部 owner cache，claim local-only Web owner，并用 app-server 启动新的 turn。`引导当前`、停止和 compact 仍不会这样接管，因为它们必须作用于同一个 active turn。
 
 ## 实时刷新抗竞态
 

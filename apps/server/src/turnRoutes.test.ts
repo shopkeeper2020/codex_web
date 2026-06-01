@@ -15,6 +15,7 @@ import type {
 type FakeOfficialIpcOptions = {
   errorMessage: string;
   hasOfficialState?: boolean;
+  officialState?: "active" | "idle" | "stale-active";
   webOwned?: boolean;
 };
 
@@ -26,6 +27,7 @@ class FakeOfficialIpc {
     [];
   readonly followerCompactCalls: Array<{ threadId: string }> = [];
   readonly localOnlyThreads = new Set<string>();
+  readonly discardedThreads = new Set<string>();
 
   constructor(private readonly options: FakeOfficialIpcOptions) {}
 
@@ -51,8 +53,12 @@ class FakeOfficialIpc {
     return Boolean(this.options.webOwned || this.localOnlyThreads.has(threadId));
   }
 
-  isExternallyOwnedConversation(): boolean {
-    return Boolean(this.options.hasOfficialState && !this.options.webOwned);
+  isExternallyOwnedConversation(threadId = "thread-a"): boolean {
+    return Boolean(
+      this.options.hasOfficialState &&
+        !this.options.webOwned &&
+        !this.discardedThreads.has(threadId),
+    );
   }
 
   canOwnConversations(): boolean {
@@ -66,18 +72,65 @@ class FakeOfficialIpc {
     return true;
   }
 
+  discardConversationFromCache(threadId: string): boolean {
+    if (!this.options.hasOfficialState) return false;
+    this.discardedThreads.add(threadId);
+    return true;
+  }
+
   canBroadcastOwnedConversation(threadId: string): boolean {
     return !this.localOnlyThreads.has(threadId);
   }
 
   getThreadStreamState(threadId: string): Record<string, unknown> | null {
-    if (!this.options.hasOfficialState) return null;
+    if (!this.options.hasOfficialState || this.discardedThreads.has(threadId))
+      return null;
+    const officialState = this.options.officialState ?? "active";
+    if (officialState === "idle") {
+      return {
+        conversationId: threadId,
+        ownerClientId: this.options.webOwned ? "web-test" : "official-test",
+        sourceClientId: this.options.webOwned ? "web-test" : "official-test",
+        cacheVersion: 1,
+        updatedAtIso: "2026-05-29T00:00:00.000Z",
+        isInProgress: false,
+        activeTurnId: "",
+        conversationState: {
+          id: threadId,
+          threadRuntimeStatus: { type: "completed" },
+          turns: [{ id: "turn-completed", status: "completed", items: [] }],
+        },
+      };
+    }
+    if (officialState === "stale-active") {
+      return {
+        conversationId: threadId,
+        ownerClientId: this.options.webOwned ? "web-test" : "official-test",
+        sourceClientId: this.options.webOwned ? "web-test" : "official-test",
+        cacheVersion: 1,
+        updatedAtIso: "2026-05-29T00:00:00.000Z",
+        isInProgress: true,
+        activeTurnId: "",
+        conversationState: {
+          id: threadId,
+          threadRuntimeStatus: { type: "active" },
+          turns: [],
+        },
+      };
+    }
     return {
       conversationId: threadId,
       ownerClientId: this.options.webOwned ? "web-test" : "official-test",
+      sourceClientId: this.options.webOwned ? "web-test" : "official-test",
       cacheVersion: 1,
       updatedAtIso: "2026-05-29T00:00:00.000Z",
       isInProgress: true,
+      activeTurnId: "turn-active",
+      conversationState: {
+        id: threadId,
+        threadRuntimeStatus: { type: "active" },
+        turns: [{ turnId: "turn-active", status: "inProgress", items: [] }],
+      },
     };
   }
 
@@ -168,7 +221,15 @@ class FakeAppServer {
   }
 
   async threadRead(): Promise<unknown> {
-    return { thread: { id: "thread-a", title: "Thread A", turns: [] } };
+    return {
+      thread: {
+        id: "thread-a",
+        title: "Thread A",
+        updatedAt: "2026-05-31T20:37:59.000Z",
+        threadRuntimeStatus: { type: "completed" },
+        turns: [{ id: "turn-completed", status: "completed", items: [] }],
+      },
+    };
   }
 
   async threadCompactStart(
@@ -634,6 +695,67 @@ describe("turn HTTP routes", () => {
       error: expect.stringContaining("official-owner-required"),
     });
     expect(appServer.calls).toEqual([]);
+  });
+
+  it("claims idle official-known conversations locally when the official owner is unreachable", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "official-ipc-request-failed:thread-follower-start-turn",
+      hasOfficialState: true,
+      officialState: "idle",
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn-start",
+      payload: { threadId: "thread-a", text: "hello" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
+    });
+    expect(officialIpc.discardedThreads.has("thread-a")).toBe(true);
+    expect(officialIpc.isOwnedConversation("thread-a")).toBe(true);
+    expect(appServer.calls.map((call) => call.method)).toEqual([
+      "thread/resume",
+      "turn/start",
+    ]);
+    expect(context.diagnostics.list()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "official-ipc",
+          message: "idle-external-owner-retired",
+          data: expect.objectContaining({
+            threadId: "thread-a",
+            previousOwnerClientId: "official-test",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("retires stale active owner cache before claiming an app-server-idle conversation", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "official-ipc-request-failed:thread-follower-start-turn",
+      hasOfficialState: true,
+      officialState: "stale-active",
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn-start",
+      payload: { threadId: "thread-a", text: "hello" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
+    });
+    expect(officialIpc.discardedThreads.has("thread-a")).toBe(true);
+    expect(appServer.calls.map((call) => call.method)).toEqual([
+      "thread/resume",
+      "turn/start",
+    ]);
   });
 
   it("claims idle app-server conversations locally when no official owner is cached", async () => {
