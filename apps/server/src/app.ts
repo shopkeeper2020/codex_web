@@ -3686,36 +3686,78 @@ export async function createServer(
     const { threadId, title } = parsed.data;
 
     try {
-      if (officialIpc.isExternallyOwnedConversation(threadId)) {
-        diagnostics.record(
-          "warn",
-          "thread-rename",
-          "external-owner-action-denied",
-          { threadId },
-        );
-        await reply
-          .code(409)
-          .send({ error: "official-owner-action-required:thread-rename" });
-        return;
-      }
+      const externalStateBeforeRename =
+        officialIpc.isExternallyOwnedConversation(threadId)
+          ? officialIpc.getThreadStreamState(threadId)
+          : null;
       const result = await appServer.threadRename({ threadId, name: title });
       const detailResult = await appServer
         .threadRead({ threadId, includeTurns: true })
         .catch(() => null);
+      const externalStateAfterRefresh =
+        officialIpc.isExternallyOwnedConversation(threadId)
+          ? officialIpc.getThreadStreamState(threadId)
+          : null;
+      const externalState =
+        externalStateBeforeRename && externalStateAfterRefresh
+          ? externalStateAfterRefresh
+          : null;
+      const wasExternallyOwnedBeforeRename =
+        externalStateBeforeRename !== null;
+      const rawThread = asRecord(detailResult)?.thread ?? detailResult;
+      const mergedThread =
+        externalState !== null
+          ? preserveRicherOfficialStreamItems(
+              rawThread,
+              externalState.conversationState,
+            )
+          : rawThread;
+      const retiredStaleOfficialActive =
+        externalState !== null &&
+        shouldRetireStaleOfficialActiveState(mergedThread, externalState);
+      const threadSnapshot =
+        externalState !== null && !retiredStaleOfficialActive
+          ? preserveOfficialLiveState(mergedThread, externalState)
+          : mergedThread;
       const detail = detailResult
         ? normalizeOfficialThreadDetail({
-            thread: asRecord(detailResult)?.thread ?? detailResult,
+            thread: threadSnapshot,
             owner: ownerFromOfficialState(officialIpc, threadId),
             fallbackThreadId: threadId,
           })
         : null;
       if (detail) {
         database.upsertThreads([detail.thread]);
-        database.upsertThreadDetail(threadId, detail, "app-server");
+        if (externalState) {
+          const hydrated = officialIpc.hydrateThreadStreamState({
+            threadId,
+            conversationState: threadSnapshot,
+            hostId: externalState.hostId,
+            ownerClientId: externalState.ownerClientId,
+            sourceClientId: externalState.sourceClientId,
+          });
+          diagnostics.record(
+            hydrated ? "info" : "warn",
+            "thread-rename",
+            hydrated
+              ? "external-owner-app-server-rename-hydrated"
+              : "external-owner-app-server-rename-hydrate-skipped",
+            { threadId },
+          );
+        } else if (!wasExternallyOwnedBeforeRename) {
+          database.upsertThreadDetail(threadId, detail, "app-server");
+        } else {
+          diagnostics.record(
+            "warn",
+            "thread-rename",
+            "external-owner-app-server-rename-detail-cache-skipped",
+            { threadId },
+          );
+        }
         if (officialIpc.isOwnedConversation(threadId)) {
           officialIpc.broadcastConversationSnapshot(
             threadId,
-            asRecord(detailResult)?.thread ?? detail,
+            rawThread ?? detail,
           );
         }
       }

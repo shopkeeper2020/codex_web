@@ -156,7 +156,7 @@ afterEach(async () => {
 });
 
 describe("thread rename route", () => {
-  it("rejects local rename mutations for externally owned threads", async () => {
+  it("renames externally owned threads through app-server and hydrates readonly official cache", async () => {
     const officialIpc = createBridge();
     applyExternalSnapshot(officialIpc, "thread-official");
     const { context, appServer } = await createHarness({
@@ -174,19 +174,63 @@ describe("thread rename route", () => {
       },
     });
 
-    expect(response.statusCode).toBe(409);
+    expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      error: "official-owner-action-required:thread-rename",
+      data: {
+        ok: true,
+        thread: {
+          id: "thread-official",
+          title: "Renamed official thread",
+        },
+      },
     });
-    expect(appServer.calls).toEqual([]);
+    expect(appServer.calls).toEqual([
+      {
+        method: "thread/name/set",
+        params: { threadId: "thread-official", name: "Renamed official thread" },
+      },
+      {
+        method: "thread/read",
+        params: { threadId: "thread-official", includeTurns: true },
+      },
+    ]);
     expect(officialIpc.isOwnedConversation("thread-official")).toBe(false);
     expect(officialIpc.getThreadStreamState("thread-official")).toMatchObject({
       ownerClientId: "desktop-client",
       sourceClientId: "desktop-client",
       conversationState: {
-        name: "Desktop owned thread",
+        name: "Renamed official thread",
       },
     });
+    expect(context.database.readThreadDetail("thread-official")).toBeNull();
+  });
+
+  it("does not write detail cache when external ownership disappears during rename refresh", async () => {
+    const officialIpc = createBridge();
+    applyExternalSnapshot(officialIpc, "thread-official");
+    const { context } = await createHarness({
+      officialIpc,
+      threadId: "thread-official",
+      renamedTitle: "Renamed official thread",
+      onThreadRead: () =>
+        officialIpc.discardConversationFromCache(
+          "thread-official",
+          "test-lost-external-state",
+        ),
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/thread-rename",
+      payload: {
+        threadId: "thread-official",
+        title: "Renamed official thread",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(officialIpc.getThreadStreamState("thread-official")).toBeNull();
+    expect(context.database.readThreadDetail("thread-official")).toBeNull();
   });
 
   it("rebroadcasts rename snapshots only for already Web-owned threads", async () => {

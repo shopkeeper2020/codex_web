@@ -11,7 +11,7 @@
 - 三端看到的是同一条 thread、同一条用户消息、同一段 assistant stream。
 - 同一个 marker 在 Web domain detail 中只出现一次。
 - Web 发送 official-owned thread 时，后端返回 `mode: official-follower`，IPC diagnostics 中出现 follower success。
-- stop、steer、approval 等操作在三端最终一致；rename/archive/unarchive 第一版只要求 Web-owned 操作一致，official-owned 操作在 Web 上明确拒绝或被动收敛，不允许静默本地分叉。
+- stop、steer、approval、rename 等操作在三端最终一致；archive/unarchive 第一版只要求 Web-owned 操作一致，official-owned 操作在 Web 上明确拒绝或被动收敛，不允许静默本地分叉。
 - 追求目标状态来自官方 Desktop/app-server thread goal：Web 的编辑、暂停/恢复、清除和展开/收起只能作用于同一 thread 的真实 goal，不得把 plan/progress 步骤或 Composer 可选 Plan 模式误当成目标。
 - owner 不可达、IPC 断开或协议不兼容时，Web 明确失败并暴露诊断，不静默本地分叉。
 
@@ -205,7 +205,7 @@ report 只保存 compatibility、sync readiness、recent follower/handoff、mark
 | S11 | Web 图片附件                     | Web                     | Desktop + VS Code               | 上传图片并发送 marker                            | 发送成功，三端可复看或有明确降级；不泄露敏感路径                                                  |
 | S12 | Web 普通文件附件                 | Web                     | Desktop + VS Code               | 上传无敏感内容的小文件并发送 marker              | 发送成功，附件引用可解释；孤立清理不删已关联附件                                                  |
 | S13 | Runtime options                  | Web                     | Desktop + VS Code               | 切换模型、reasoning、Default/Plan、Skills 后发送 | 实际 turn 参数被 owner 接受；若官方覆盖，Web 显示最终状态                                         |
-| S14 | Web-owned 重命名 thread          | Web                     | Desktop + VS Code               | 修改 Web-owned 测试 thread 标题                  | 三端最终标题一致；official-owned thread 在 Web 上明确拒绝，不本地分叉                             |
+| S14 | 重命名 thread                    | Web                     | Desktop + VS Code               | 分别修改 Web-owned 与 official-owned 测试 thread 标题 | 通过 app-server `thread/name/set` 改名，三端最终标题一致；official cache 不被 Web 改成 owner        |
 | S15 | Web-owned 归档/恢复              | Web                     | Desktop + VS Code               | 归档 Web-owned 测试 thread，再恢复打开           | 不 hard delete；三端列表最终一致；official-owned thread 在 Web 上明确拒绝或等待官方状态被动收敛   |
 | S16 | Web 新建 thread                  | Web                     | Desktop + VS Code               | 在测试项目中新建 thread 并发送 marker            | Web-owned 或官方 owner 路径明确；三端可见，无分叉                                                 |
 | S17 | Web-owned handoff                | Desktop 或 VS Code      | Web                             | Web-owned thread 后官方端继续/广播               | Web 记录 handoff 并释放本地 owner，后续不误判                                                     |
@@ -304,7 +304,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread-detail?threadId
 
 1. 在 Web 重命名 Web-owned 测试 thread。
 2. 观察 Desktop、VS Code、Web 标题最终一致。
-3. 对 official-owned 测试 thread 尝试 Web 重命名，应看到明确拒绝提示，不应产生本地伪成功。
+3. 对 official-owned 测试 thread 尝试 Web 重命名，应成功走 app-server `thread/name/set`，三端最终标题一致，且 Web 不声明 owner。
 4. 在 Web 归档 Web-owned 测试 thread。
 5. 确认不 hard delete，归档列表可见。
 6. 从 Web 恢复并打开，确认三端列表最终一致。

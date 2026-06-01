@@ -461,7 +461,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:18930/api/domain/thread-una
 owner 边界：
 
 - Web-owned thread 归档成功后会释放 Web owner 和本地 cached stream state。
-- 明确 external-owned 的 rename/archive/unarchive 当前会返回 `official-owner-action-required:*` / 409，不走本地 app-server mutation，避免和 Desktop/VS Code 的官方 live cache 分叉。
+- rename 已按官方 Desktop 路径走 app-server `thread/name/set`；明确 external-owned 的 rename 成功后只做 official stream cache 只读 hydrate，不声明 Web owner。archive/unarchive 当前仍会返回 `official-owner-action-required:*` / 409，不走本地 app-server mutation，避免和 Desktop/VS Code 的官方 live cache 分叉。
 - external-owned 空 official snapshot 的 thread detail 只允许只读 hydrate，不写入 `thread_details` cache。
 
 Web 侧边栏会展示一小段归档列表；点击归档项会恢复并打开该会话。
