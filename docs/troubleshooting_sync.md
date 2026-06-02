@@ -1,6 +1,6 @@
 # 三端同步排障材料收集
 
-更新时间：2026-05-29
+更新时间：2026-06-03
 
 本文用于在 Desktop、VS Code 扩展、`codex_web` 三端实时同步异常时，收集足够定位问题、又不泄露敏感内容的材料。优先搭配 `docs/sync_acceptance_checklist.md` 和 `docs/startup_runbook.md` 使用。
 
@@ -64,6 +64,9 @@ pnpm sync:doctor -- --thread <thread-id> --interrupt --report data\tmp\sync-repo
 - `recentFollowerRequests` 中如果没有 `thread-follower-start-turn success`，优先怀疑 owner discovery、stale client id 或官方 IPC 连接问题。
 - app-server warning 不一定阻塞同步；`lastError`、IPC `connected: false` 或 required handler missing 才更可能是阻塞项。
 - 如果 Web 发送失败但 Composer 保留文本，这是安全路径；不要改成本地 app-server fallback，否则会制造分叉。
+- Web 新建 thread 后如果 Desktop 红屏，先查 Web-owned `thread-stream-state-changed` snapshot 是否缺 Desktop UI 安全字段，而不是先怀疑 raw `thread/start` / `turn/start` 参数。常见危险字段是 `requests`、`turnsPagination`、turn `diff/hookRuns/commandExecutionStartedAtMsById`、`userMessage.clientId`、`agentMessage.phase/memoryCitation`。
+- Web 新建 thread 后如果 Desktop 没有立刻在侧栏显示，但官方 `state_5.sqlite` 或 `thread/list` 已经能读到该 thread，优先判断为 Desktop recent-list refresh 问题。外部 owner 的 stream snapshot 只更新 conversation cache，不会自动 `ensureRecentConversationId`。
+- Web 新建 thread 的 recent-list refresh 当前依赖 `thread-unarchived` IPC 生命周期广播触发 Desktop `refreshRecentConversations()`；这条广播只应在 Web 新建 thread 且 idle snapshot 成功广播后发送。
 
 ## 后续处理
 
@@ -75,5 +78,6 @@ pnpm sync:doctor -- --thread <thread-id> --interrupt --report data\tmp\sync-repo
 - `apps/server/src/turnFallback.ts`
 - `packages/protocol/src/officialIpc.ts`
 - `apps/server/src/syncReadiness.ts`
+- `docs/pitfalls/2026-06-03_web-created-thread-desktop-crash-and-slow-sidebar.md`
 
 如果确认是官方协议变化，先更新协议文档和 compatibility/readiness 诊断，再改实现。

@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { archiveThreadWithRecovery, startLocalTurn } from './threadActions.js'
-import type { ThreadArchiveParams, ThreadReadParams, ThreadRenameParams, TurnStartParams } from './appServerProcess.js'
+import type {
+  ThreadArchiveParams,
+  ThreadReadParams,
+  ThreadRenameParams,
+  ThreadResumeParams,
+  TurnStartParams,
+} from './appServerProcess.js'
 
 describe('thread actions', () => {
-  it('resumes before starting a local turn and still starts when resume is unsupported', async () => {
+  it('resumes before starting a local turn', async () => {
     const calls: Array<{ method: string; params: unknown }> = []
     const appServer = {
-      async rpc(method: string, params?: unknown): Promise<unknown> {
-        calls.push({ method, params })
-        throw new Error('thread/resume unsupported')
+      async threadResume(params: ThreadResumeParams): Promise<unknown> {
+        calls.push({ method: 'thread/resume', params })
+        return { ok: true }
       },
       async turnStart(params: TurnStartParams): Promise<unknown> {
         calls.push({ method: 'turn/start', params })
@@ -25,11 +31,32 @@ describe('thread actions', () => {
     ])
   })
 
+  it('does not start a local turn when resume fails', async () => {
+    const calls: Array<{ method: string; params: unknown }> = []
+    const appServer = {
+      async threadResume(params: ThreadResumeParams): Promise<unknown> {
+        calls.push({ method: 'thread/resume', params })
+        throw new Error('thread/resume failed')
+      },
+      async turnStart(params: TurnStartParams): Promise<unknown> {
+        calls.push({ method: 'turn/start', params })
+        return { turn: { id: 'turn-a' } }
+      },
+    }
+
+    await expect(
+      startLocalTurn(appServer, { threadId: 'thread-a', input: [] }),
+    ).rejects.toThrow('thread/resume failed')
+    expect(calls).toEqual([
+      { method: 'thread/resume', params: { threadId: 'thread-a' } },
+    ])
+  })
+
   it('strips UI-only turn fields before calling the raw app-server', async () => {
     const calls: Array<{ method: string; params: unknown }> = []
     const appServer = {
-      async rpc(method: string, params?: unknown): Promise<unknown> {
-        calls.push({ method, params })
+      async threadResume(params: ThreadResumeParams): Promise<unknown> {
+        calls.push({ method: 'thread/resume', params })
         return { ok: true }
       },
       async turnStart(params: TurnStartParams): Promise<unknown> {

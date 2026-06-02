@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   getCodexSpawnInvocation,
@@ -105,8 +104,6 @@ export type TurnStartParams = {
   permissions?: string;
   runtimeWorkspaceRoots?: string[];
   environments?: Array<Record<string, unknown>>;
-  additionalContext?: unknown;
-  responsesapiClientMetadata?: Record<string, unknown>;
 };
 
 export type SandboxPolicy =
@@ -127,8 +124,6 @@ export type TurnSteerParams = {
   clientUserMessageId?: string;
   restoreMessage?: Record<string, unknown>;
   attachments?: Array<Record<string, unknown>>;
-  additionalContext?: unknown;
-  responsesapiClientMetadata?: Record<string, unknown>;
 };
 
 export type TurnInterruptParams = {
@@ -498,14 +493,14 @@ export class CodexAppServerProcess {
     await this.call("initialize", {
       clientInfo: {
         name: "codex_web",
+        title: "Codex Web",
         version: "0.1.0",
-        clientId: randomUUID(),
       },
       capabilities: {
         experimentalApi: true,
       },
     });
-    this.sendNotification("initialized", {});
+    this.sendNotification("initialized");
     this.initialized = true;
   }
 
@@ -652,7 +647,6 @@ export class CodexAppServerProcess {
     }
     const id = this.nextId++;
     const frame: JsonRpcRecord = {
-      jsonrpc: "2.0",
       id,
       method,
       ...(params === undefined ? {} : { params }),
@@ -675,7 +669,6 @@ export class CodexAppServerProcess {
   private sendNotification(method: string, params?: unknown): void {
     if (!this.child?.stdin.writable) return;
     const frame: JsonRpcRecord = {
-      jsonrpc: "2.0",
       method,
       ...(params === undefined ? {} : { params }),
     };
@@ -689,7 +682,6 @@ export class CodexAppServerProcess {
   ): void {
     if (!this.child?.stdin.writable) return;
     const frame = {
-      jsonrpc: "2.0",
       id,
       ...payload,
     };

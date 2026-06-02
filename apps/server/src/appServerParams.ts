@@ -32,14 +32,10 @@ const TURN_START_OFFICIAL_OPTIONAL_KEYS = [
   "outputSchema",
   "collaborationMode",
   "environments",
-  "additionalContext",
-  "responsesapiClientMetadata",
 ];
 
 const TURN_STEER_OFFICIAL_OPTIONAL_KEYS = [
   "clientUserMessageId",
-  "additionalContext",
-  "responsesapiClientMetadata",
 ];
 
 export function toOfficialTurnStartParams(

@@ -72,6 +72,11 @@ class FakeAppServer {
     return { ok: true };
   }
 
+  async threadResume(params: Record<string, unknown>): Promise<unknown> {
+    this.calls.push({ method: "thread/resume", params });
+    return { ok: true };
+  }
+
   async rpc(method: string, params?: unknown): Promise<unknown> {
     this.calls.push({ method, params });
     return { ok: true };

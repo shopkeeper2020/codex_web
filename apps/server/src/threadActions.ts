@@ -1,9 +1,14 @@
-import type { ThreadArchiveParams, ThreadReadParams, ThreadRenameParams, TurnStartParams } from './appServerProcess.js'
+import type {
+  ThreadArchiveParams,
+  ThreadReadParams,
+  ThreadRenameParams,
+  ThreadResumeParams,
+  TurnStartParams,
+} from './appServerProcess.js'
 import { toOfficialTurnStartParams } from './appServerParams.js'
 
 type LocalTurnStarter = {
-  rpc: (method: string, params?: unknown) => Promise<unknown>
-  threadResume?: (params: { threadId: string; cwd?: string | null }) => Promise<unknown>
+  threadResume: (params: ThreadResumeParams) => Promise<unknown>
   turnStart: (params: TurnStartParams) => Promise<unknown>
 }
 
@@ -25,16 +30,11 @@ function readString(value: unknown): string {
 
 export async function startLocalTurn(appServer: LocalTurnStarter, params: TurnStartParams): Promise<unknown> {
   const officialParams = toOfficialTurnStartParams(params)
-  try {
-    const resumeParams = {
-      threadId: officialParams.threadId,
-      ...(officialParams.cwd ? { cwd: officialParams.cwd } : {}),
-    }
-    if (appServer.threadResume) await appServer.threadResume(resumeParams)
-    else await appServer.rpc('thread/resume', resumeParams)
-  } catch {
-    // Older app-server versions may not require or expose resume; turn/start remains the source of truth.
+  const resumeParams: ThreadResumeParams = {
+    threadId: officialParams.threadId,
+    ...(officialParams.cwd ? { cwd: officialParams.cwd } : {}),
   }
+  await appServer.threadResume(resumeParams)
   return await appServer.turnStart(officialParams)
 }
 

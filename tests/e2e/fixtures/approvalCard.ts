@@ -29,6 +29,7 @@ export const pendingApproval: JsonBody = {
     "apps/web/src/app/components/MessageBlocks.tsx",
   ],
   proposedExecpolicyAmendment: ["allow apply_patch in codex_web"],
+  permissions: null,
   createdAtIso: "2026-05-29T08:00:00.000Z",
   status: "pending",
 };

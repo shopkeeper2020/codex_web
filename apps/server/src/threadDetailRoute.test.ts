@@ -520,7 +520,7 @@ describe("thread detail route", () => {
         activeTurnId: "turn-active-empty",
         conversationState: {
           id: "thread-stale-active",
-          status: "active",
+          status: { type: "active", activeFlags: [] },
           threadRuntimeStatus: { type: "active" },
           turns: [
             { id: "turn-completed", status: "completed" },
@@ -813,7 +813,7 @@ describe("thread detail route", () => {
       activeTurnId: "",
       conversationState: {
         id: "thread-stale-finished",
-        status: "completed",
+        status: { type: "completed" },
         turns: [{ id: "turn-stale-active", status: "completed" }],
       },
     });

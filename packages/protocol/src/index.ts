@@ -266,6 +266,14 @@ export type OwnershipHandoffRecord = {
   reason?: string;
 };
 
+export type OwnerRebroadcastRecord = {
+  atIso: string;
+  clientId: string | null;
+  conversationIds: string[];
+  count: number;
+  reason?: string;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -330,6 +338,14 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function stableJsonSignature(value: unknown): string | null {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
 function compactProtocolType(value: unknown): string {
   return readString(value)
     .toLowerCase()
@@ -351,6 +367,13 @@ function isContextCompactionItem(value: unknown): boolean {
 }
 
 const OMIT_BROADCAST_VALUE = Symbol("omit-broadcast-value");
+
+function sanitizeOfficialMarkdownText(value: string): string {
+  return value.replace(
+    /^([ \t]*(?:`{3,}|~{3,}))[ \t]*powershell(?=[ \t\r\n])/gim,
+    "$1text",
+  );
+}
 
 function sanitizeOfficialBroadcastValue(
   value: unknown,
@@ -387,6 +410,18 @@ function sanitizeOfficialBroadcastValue(
     next[key] = sanitized;
   }
   return changed ? next : value;
+}
+
+function sanitizeOfficialMarkdownTextField(
+  record: Record<string, unknown>,
+  key: string,
+): boolean {
+  const value = record[key];
+  if (typeof value !== "string") return false;
+  const sanitized = sanitizeOfficialMarkdownText(value);
+  if (sanitized === value) return false;
+  record[key] = sanitized;
+  return true;
 }
 
 function timestampMs(value: unknown): number | null {
@@ -471,19 +506,118 @@ function normalizeOfficialBroadcastWebSearchAction(value: unknown): unknown {
       changed = true;
     }
   } else if (type === "openPage") {
-    if (typeof next.url !== "string" && next.url !== null) {
-      next.url = null;
+    if (typeof next.url !== "string") {
+      next.url = "";
       changed = true;
     }
   } else if (type === "findInPage") {
-    if (typeof next.url !== "string" && next.url !== null) {
-      next.url = null;
+    if (typeof next.url !== "string") {
+      next.url = "";
       changed = true;
     }
-    if (typeof next.pattern !== "string" && next.pattern !== null) {
-      next.pattern = null;
+    if (typeof next.pattern !== "string") {
+      next.pattern = "";
       changed = true;
     }
+  }
+  return changed ? next : value;
+}
+
+function normalizeOfficialBroadcastCollaborationMode(value: unknown): unknown {
+  const record = asRecord(value);
+  if (!record) return null;
+  const mode = readString(record.mode);
+  if (!mode || mode.toLowerCase() === "default") return null;
+  const settings = asRecord(record.settings);
+  if (settings) return value;
+  return { ...record, mode, settings: {} };
+}
+
+function filenameFromLocalPath(value: string): string {
+  return value.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? "";
+}
+
+function normalizeOfficialRestoreImageAttachment(
+  value: unknown,
+  index: number,
+): unknown {
+  const record = asRecord(value);
+  if (!record) return value;
+  let changed = false;
+  const next: Record<string, unknown> = { ...record };
+  const src = readString(record.src) || readString(record.url);
+  const localPath = readString(record.localPath) || readString(record.path);
+  if (!readString(next.id)) {
+    next.id = `image-${index}`;
+    changed = true;
+  }
+  if (typeof next.src !== "string") {
+    next.src = src;
+    changed = true;
+  }
+  if (!readString(next.localPath) && localPath) {
+    next.localPath = localPath;
+    changed = true;
+  }
+  if (typeof next.filename !== "string") {
+    next.filename = filenameFromLocalPath(localPath);
+    changed = true;
+  }
+  if (next.uploadStatus === undefined) {
+    next.uploadStatus = "idle";
+    changed = true;
+  }
+  return changed ? next : value;
+}
+
+function normalizeOfficialRestoreMessage(
+  value: unknown,
+  context: { cwd?: unknown } = {},
+): unknown {
+  const record = asRecord(value);
+  if (!record) return value;
+  let changed = false;
+  const next: Record<string, unknown> = { ...record };
+  const cwd = readString(record.cwd) || readString(context.cwd);
+  if (!readString(next.cwd) && cwd) {
+    next.cwd = cwd;
+    changed = true;
+  }
+
+  const rawContext = asRecord(record.context);
+  const messageContext: Record<string, unknown> = rawContext
+    ? { ...rawContext }
+    : {};
+  let contextChanged = !rawContext;
+  const rawImageAttachments = rawContext?.imageAttachments;
+  if (Array.isArray(rawImageAttachments)) {
+    const imageAttachments = rawImageAttachments.map((attachment, index) =>
+      normalizeOfficialRestoreImageAttachment(attachment, index),
+    );
+    if (
+      imageAttachments.some(
+        (attachment, index) => attachment !== rawImageAttachments[index],
+      )
+    ) {
+      messageContext.imageAttachments = imageAttachments;
+      contextChanged = true;
+    }
+  } else if (rawContext && rawContext.imageAttachments !== undefined) {
+    messageContext.imageAttachments = [];
+    contextChanged = true;
+  }
+
+  const workspaceRoots = rawContext?.workspaceRoots;
+  if (
+    cwd &&
+    (!Array.isArray(workspaceRoots) || workspaceRoots.length === 0)
+  ) {
+    messageContext.workspaceRoots = [cwd];
+    contextChanged = true;
+  }
+  if (contextChanged) {
+    next.context = messageContext;
+    changed = true;
   }
   return changed ? next : value;
 }
@@ -518,7 +652,12 @@ function normalizeOfficialBroadcastThreadItem(
         changed = true;
       }
     } else {
-      const text = typeof record.text === "string" ? record.text : "";
+      const text =
+        typeof rawContent === "string"
+          ? rawContent
+          : typeof record.text === "string"
+            ? record.text
+            : "";
       next.content = text
         ? [{ type: "text", text, text_elements: [] }]
         : [];
@@ -599,6 +738,22 @@ function normalizeOfficialBroadcastThreadItem(
       changed = true;
     }
   }
+  if (
+    (type === "agentMessage" ||
+      type === "assistantMessage" ||
+      type === "reasoning" ||
+      type === "plan") &&
+    sanitizeOfficialMarkdownTextField(next, "text")
+  ) {
+    changed = true;
+  }
+  const restoreMessage = normalizeOfficialRestoreMessage(next.restoreMessage, {
+    cwd: context.cwd,
+  });
+  if (restoreMessage !== next.restoreMessage) {
+    next.restoreMessage = restoreMessage;
+    changed = true;
+  }
   return changed ? next : value;
 }
 
@@ -629,11 +784,15 @@ function looksLikeAppServerThread(record: Record<string, unknown>): boolean {
   return Boolean(
     id &&
       Array.isArray(record.turns) &&
-      record.status !== undefined &&
+      (record.status !== undefined ||
+        record.threadRuntimeStatus !== undefined ||
+        record.rolloutPath !== undefined ||
+        record.resumeState !== undefined) &&
       (record.sessionId !== undefined ||
         record.createdAt !== undefined ||
         record.updatedAt !== undefined ||
-        record.cwd !== undefined),
+        record.cwd !== undefined ||
+        record.rolloutPath !== undefined),
   );
 }
 
@@ -642,7 +801,10 @@ function looksLikeAppServerTurn(record: Record<string, unknown>): boolean {
     (readString(record.id) || readString(record.turnId)) &&
       (record.startedAt !== undefined ||
         record.completedAt !== undefined ||
-        record.itemsView !== undefined),
+        record.turnStartedAtMs !== undefined ||
+        record.itemsView !== undefined ||
+        record.status !== undefined ||
+        Array.isArray(record.items)),
   );
 }
 
@@ -725,6 +887,35 @@ function normalizeOfficialBroadcastTurn(
     next.durationMs = null;
     changed = true;
   }
+  const paramsRecord = asRecord(next.params);
+  let turnCwd = readString(context.cwd);
+  if (isAppServerTurn && paramsRecord) {
+    let normalizedParams: Record<string, unknown> | null = null;
+    if ("collaborationMode" in paramsRecord) {
+      const collaborationMode = normalizeOfficialBroadcastCollaborationMode(
+        paramsRecord.collaborationMode,
+      );
+      normalizedParams = { ...paramsRecord };
+      if (collaborationMode) {
+        normalizedParams.collaborationMode = collaborationMode;
+      } else {
+        delete normalizedParams.collaborationMode;
+      }
+    }
+    const paramsCwd = readString(paramsRecord.cwd) || turnCwd;
+    const restoreMessage = normalizeOfficialRestoreMessage(
+      paramsRecord.restoreMessage,
+      { cwd: paramsCwd },
+    );
+    if (restoreMessage !== paramsRecord.restoreMessage) {
+      normalizedParams = { ...(normalizedParams ?? paramsRecord), restoreMessage };
+    }
+    if (normalizedParams) {
+      next.params = normalizedParams;
+      changed = true;
+    }
+    if (paramsCwd) turnCwd = paramsCwd;
+  }
   const rawItems = record.items;
   if (Array.isArray(rawItems)) {
     const items = rawItems
@@ -733,7 +924,7 @@ function normalizeOfficialBroadcastTurn(
         if (sanitized === OMIT_BROADCAST_VALUE) return sanitized;
         return isAppServerTurn
           ? normalizeOfficialBroadcastThreadItem(sanitized, {
-              cwd: context.cwd,
+              cwd: turnCwd,
               turnId: readString(next.id),
               index,
             })
@@ -756,6 +947,8 @@ function readFirstUserText(turns: unknown): string {
       const item = asRecord(itemValue);
       if (!item) continue;
       if (readString(item.type) !== "userMessage") continue;
+      const directText = readString(item.text);
+      if (directText) return directText;
       const content = Array.isArray(item.content) ? item.content : [];
       for (const contentValue of content) {
         const contentRecord = asRecord(contentValue);
@@ -765,6 +958,60 @@ function readFirstUserText(turns: unknown): string {
     }
   }
   return "";
+}
+
+function readLatestTurnParams(turns: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(turns)) return null;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = asRecord(turns[index]);
+    const params = asRecord(turn?.params);
+    if (params) return params;
+  }
+  return null;
+}
+
+function buildCurrentPermissions(value: unknown): unknown {
+  const existing = asRecord(value);
+  const params = readLatestTurnParams(asRecord(value)?.turns) ?? null;
+  const approvalPolicy =
+    existing?.approvalPolicy ??
+    existing?.approval_policy ??
+    params?.approvalPolicy ??
+    params?.approval_policy ??
+    null;
+  const approvalsReviewer =
+    existing?.approvalsReviewer ??
+    existing?.approvals_reviewer ??
+    params?.approvalsReviewer ??
+    params?.approvals_reviewer ??
+    null;
+  const sandboxPolicy =
+    existing?.sandboxPolicy ??
+    existing?.sandbox_policy ??
+    params?.sandboxPolicy ??
+    params?.sandbox_policy ??
+    null;
+  if (
+    approvalPolicy === null &&
+    approvalsReviewer === null &&
+    sandboxPolicy === null
+  ) {
+    return null;
+  }
+  return {
+    approvalPolicy,
+    approvalsReviewer,
+    sandboxPolicy,
+  };
+}
+
+function defaultTurnsPagination(): Record<string, unknown> {
+  return {
+    olderCursor: null,
+    oldestLoadedTurnId: null,
+    isLoadingOlder: false,
+    hasLoadedOldest: true,
+  };
 }
 
 function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
@@ -849,6 +1096,97 @@ function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
       next.name = readString(record.name) || readString(record.title) || null;
       changed = true;
     }
+    if (next.title === undefined || next.title === null) {
+      next.title =
+        readString(record.title) ||
+        readString(record.name) ||
+        readString(record.preview) ||
+        readFirstUserText(record.turns) ||
+        null;
+      changed = true;
+    }
+    if (next.name === undefined || next.name === null) {
+      next.name = readString(record.name) || readString(next.title) || null;
+      changed = true;
+    }
+    if (!Array.isArray(next.requests)) {
+      next.requests = [];
+      changed = true;
+    }
+    if (typeof next.hasUnreadTurn !== "boolean") {
+      next.hasUnreadTurn = false;
+      changed = true;
+    }
+    if (next.threadGoal === undefined) {
+      next.threadGoal = null;
+      changed = true;
+    }
+    if (next.threadGoalResumeConfirmation === undefined) {
+      next.threadGoalResumeConfirmation = null;
+      changed = true;
+    }
+    if (next.previousTurnModel === undefined) {
+      next.previousTurnModel = null;
+      changed = true;
+    }
+    const latestTurnParams = readLatestTurnParams(record.turns);
+    if (next.latestModel === undefined) {
+      next.latestModel = readString(latestTurnParams?.model) || null;
+      changed = true;
+    }
+    if (next.latestReasoningEffort === undefined) {
+      next.latestReasoningEffort =
+        readString(latestTurnParams?.effort) ||
+        readString(latestTurnParams?.reasoningEffort) ||
+        readString(latestTurnParams?.reasoning_effort) ||
+        null;
+      changed = true;
+    }
+    const latestCollaborationMode =
+      normalizeOfficialBroadcastCollaborationMode(next.latestCollaborationMode) ??
+      normalizeOfficialBroadcastCollaborationMode(
+        latestTurnParams?.collaborationMode,
+      );
+    if (latestCollaborationMode) {
+      if (next.latestCollaborationMode !== latestCollaborationMode) {
+        next.latestCollaborationMode = latestCollaborationMode;
+        changed = true;
+      }
+    } else if (next.latestCollaborationMode !== undefined) {
+      delete next.latestCollaborationMode;
+      changed = true;
+    }
+    if (next.latestTokenUsageInfo === undefined) {
+      next.latestTokenUsageInfo = null;
+      changed = true;
+    }
+    if (next.currentPermissions === undefined) {
+      next.currentPermissions = buildCurrentPermissions({
+        ...(asRecord(record.currentPermissions) ?? {}),
+        turns: record.turns,
+      });
+      changed = true;
+    }
+    if (!readString(next.resumeState)) {
+      next.resumeState = "resumed";
+      changed = true;
+    }
+    if (next.workspaceKind === undefined) {
+      next.workspaceKind = readString(next.cwd) ? "project" : null;
+      changed = true;
+    }
+    if (next.workspaceBrowserRoot === undefined) {
+      next.workspaceBrowserRoot = null;
+      changed = true;
+    }
+    if (next.projectlessOutputDirectory === undefined) {
+      next.projectlessOutputDirectory = null;
+      changed = true;
+    }
+    if (!isPlainObject(next.turnsPagination)) {
+      next.turnsPagination = defaultTurnsPagination();
+      changed = true;
+    }
   }
   if (!readString(record.hostId) && !readString(record.host_id)) {
     next.hostId = "local";
@@ -875,6 +1213,10 @@ function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
     );
     if (normalizedRuntimeStatus !== record.threadRuntimeStatus) {
       next.threadRuntimeStatus = normalizedRuntimeStatus;
+      changed = true;
+    }
+    if (isAppServerThread && record.status === undefined) {
+      next.status = normalizedRuntimeStatus;
       changed = true;
     }
   }
@@ -1121,10 +1463,12 @@ export class OfficialIpcBridge {
   private listeners = new Set<(value: OfficialIpcNotification) => void>();
   private requestHandlers = new Map<string, OfficialRequestHandler>();
   private streamStates = new Map<string, OfficialThreadStreamState>();
+  private broadcastSnapshotSignatures = new Map<string, string>();
   private ownedConversationIds = new Set<string>();
   private localOnlyOwnedConversationIds = new Set<string>();
   private followerRequestHistory: FollowerRequestRecord[] = [];
   private ownershipHandoffHistory: OwnershipHandoffRecord[] = [];
+  private ownerRebroadcastHistory: OwnerRebroadcastRecord[] = [];
   private rawFrameLogging = false;
   private rawFrameHistory: RawFrameRecord[] = [];
   private cacheVersion = 0;
@@ -1169,6 +1513,7 @@ export class OfficialIpcBridge {
       this.socket = null;
       this.clientId = null;
       this.incoming = Buffer.alloc(0);
+      this.broadcastSnapshotSignatures.clear();
       for (const [requestId, pending] of this.pendingRequests) {
         clearTimeout(pending.timeout);
         pending.reject(
@@ -1194,6 +1539,7 @@ export class OfficialIpcBridge {
     this.listeners.clear();
     this.requestHandlers.clear();
     this.streamStates.clear();
+    this.broadcastSnapshotSignatures.clear();
     this.ownedConversationIds.clear();
     this.localOnlyOwnedConversationIds.clear();
   }
@@ -1219,6 +1565,7 @@ export class OfficialIpcBridge {
       registeredRequestHandlers: this.getRegisteredRequestHandlers(),
       recentFollowerRequests: this.followerRequestHistory.slice(-20),
       recentOwnershipHandoffs: this.ownershipHandoffHistory.slice(-20),
+      recentOwnerRebroadcasts: this.ownerRebroadcastHistory.slice(-20),
       rawFrameLogging: this.rawFrameLogging,
       recentRawFrames: this.rawFrameHistory.slice(-40),
       lastError: this.lastError,
@@ -1264,13 +1611,19 @@ export class OfficialIpcBridge {
       return false;
     const existing = this.streamStates.get(normalizedConversationId);
     this.cacheVersion = Math.max(this.cacheVersion, state.cacheVersion);
+    const restoredState: OfficialThreadStreamState = {
+      ...state,
+      conversationState: sanitizeConversationStateForOfficialBroadcast(
+        state.conversationState,
+      ),
+    };
     this.releaseOwnedConversationIfExternal({
       conversationId: normalizedConversationId,
       previousOwnerClientId: existing?.ownerClientId ?? null,
-      nextOwnerClientId: state.ownerClientId,
-      sourceClientId: state.sourceClientId,
+      nextOwnerClientId: restoredState.ownerClientId,
+      sourceClientId: restoredState.sourceClientId,
     });
-    this.streamStates.set(normalizedConversationId, cloneJson(state));
+    this.streamStates.set(normalizedConversationId, cloneJson(restoredState));
     return true;
   }
 
@@ -1487,6 +1840,15 @@ export class OfficialIpcBridge {
       return false;
     const officialConversationState =
       sanitizeConversationStateForOfficialBroadcast(conversationState);
+    const snapshotSignature = stableJsonSignature(officialConversationState);
+    if (
+      snapshotSignature &&
+      this.ownedConversationIds.has(normalizedThreadId) &&
+      this.broadcastSnapshotSignatures.get(normalizedThreadId) ===
+        snapshotSignature
+    ) {
+      return true;
+    }
     this.ownedConversationIds.add(normalizedThreadId);
     this.storeThreadStreamState({
       threadId: normalizedThreadId,
@@ -1497,6 +1859,14 @@ export class OfficialIpcBridge {
       conversationState: officialConversationState,
       changeType: "snapshot",
     });
+    if (snapshotSignature) {
+      this.broadcastSnapshotSignatures.set(
+        normalizedThreadId,
+        snapshotSignature,
+      );
+    } else {
+      this.broadcastSnapshotSignatures.delete(normalizedThreadId);
+    }
     this.sendBroadcast("thread-stream-state-changed", {
       hostId: "local",
       conversationId: normalizedThreadId,
@@ -1506,6 +1876,74 @@ export class OfficialIpcBridge {
       },
     });
     return true;
+  }
+
+  broadcastThreadUnarchived(threadId: string): boolean {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId || !this.clientId) return false;
+    this.sendBroadcast("thread-unarchived", {
+      hostId: "local",
+      conversationId: normalizedThreadId,
+    });
+    return true;
+  }
+
+  rebroadcastOwnedConversationSnapshots(reason?: string): number {
+    if (!this.clientId) return 0;
+    const rebroadcastedConversationIds: string[] = [];
+    for (const conversationId of Array.from(this.ownedConversationIds)) {
+      if (this.localOnlyOwnedConversationIds.has(conversationId)) continue;
+      const existing = this.streamStates.get(conversationId);
+      if (!existing) continue;
+      const conversationState = sanitizeConversationStateForOfficialBroadcast(
+        existing.conversationState,
+      );
+      const previousOwnerClientId = existing.ownerClientId;
+      this.storeThreadStreamState({
+        threadId: existing.threadId || conversationId,
+        conversationId,
+        hostId: existing.hostId || "local",
+        ownerClientId: this.clientId,
+        sourceClientId: this.clientId,
+        conversationState,
+        changeType: "snapshot",
+      });
+      const snapshotSignature = stableJsonSignature(conversationState);
+      if (snapshotSignature) {
+        this.broadcastSnapshotSignatures.set(
+          conversationId,
+          snapshotSignature,
+        );
+      } else {
+        this.broadcastSnapshotSignatures.delete(conversationId);
+      }
+      if (previousOwnerClientId !== this.clientId) {
+        this.recordOwnershipHandoff({
+          conversationId,
+          previousOwnerClientId,
+          nextOwnerClientId: this.clientId,
+          sourceClientId: this.clientId,
+          reason,
+        });
+      }
+      this.sendBroadcast("thread-stream-state-changed", {
+        hostId: existing.hostId || "local",
+        conversationId,
+        change: {
+          type: "snapshot",
+          conversationState,
+        },
+      });
+      rebroadcastedConversationIds.push(conversationId);
+    }
+    if (rebroadcastedConversationIds.length > 0) {
+      this.recordOwnerRebroadcast({
+        clientId: this.clientId,
+        conversationIds: rebroadcastedConversationIds,
+        reason,
+      });
+    }
+    return rebroadcastedConversationIds.length;
   }
 
   hydrateThreadStreamState(input: {
@@ -1534,7 +1972,9 @@ export class OfficialIpcBridge {
       hostId: input.hostId || existing?.hostId || "local",
       ownerClientId,
       sourceClientId,
-      conversationState: input.conversationState,
+      conversationState: sanitizeConversationStateForOfficialBroadcast(
+        input.conversationState,
+      ),
       changeType: "snapshot",
     });
     if (
@@ -1652,7 +2092,13 @@ export class OfficialIpcBridge {
       const result = asRecord(response.result);
       const clientId =
         readString(result?.clientId) || readString(response.handledByClientId);
-      if (clientId) this.clientId = clientId;
+      if (clientId) {
+        const previousClientId = this.clientId;
+        this.clientId = clientId;
+        if (previousClientId !== clientId) {
+          this.rebroadcastOwnedConversationSnapshots("ipc-initialized");
+        }
+      }
     } catch (error) {
       this.lastError =
         error instanceof Error
@@ -1886,7 +2332,8 @@ export class OfficialIpcBridge {
       hostId,
       ownerClientId,
       sourceClientId,
-      conversationState,
+      conversationState:
+        sanitizeConversationStateForOfficialBroadcast(conversationState),
       changeType: changeType === "patches" ? "patches" : "snapshot",
     });
     if (
@@ -1965,12 +2412,14 @@ export class OfficialIpcBridge {
     changeType: "snapshot" | "patches";
   }): void {
     const cacheVersion = ++this.cacheVersion;
+    const conversationState = input.conversationState;
     const state: OfficialThreadStreamState = {
       ...input,
+      conversationState,
       cacheVersion,
       updatedAtIso: new Date().toISOString(),
-      isInProgress: readIsInProgress(input.conversationState),
-      activeTurnId: readActiveTurnId(input.conversationState),
+      isInProgress: readIsInProgress(conversationState),
+      activeTurnId: readActiveTurnId(conversationState),
     };
     this.streamStates.set(input.conversationId, state);
     this.emitNotification({
@@ -2032,23 +2481,54 @@ export class OfficialIpcBridge {
     }
   }
 
+  private recordOwnerRebroadcast(input: {
+    clientId: string | null;
+    conversationIds: string[];
+    reason?: string;
+  }): void {
+    this.ownerRebroadcastHistory.push({
+      atIso: new Date().toISOString(),
+      clientId: input.clientId,
+      conversationIds: input.conversationIds,
+      count: input.conversationIds.length,
+      reason: input.reason,
+    });
+    if (this.ownerRebroadcastHistory.length > 20) {
+      this.ownerRebroadcastHistory.splice(
+        0,
+        this.ownerRebroadcastHistory.length - 20,
+      );
+    }
+  }
+
   private async handleClientDiscoveryRequest(
     frame: OfficialIpcFrame,
   ): Promise<void> {
     const requestId = readString(frame.requestId);
     if (!requestId) return;
-    const method = readString(frame.method);
-    const params = frame.params ?? null;
+    const request = asRecord(frame.request) ?? frame;
+    const method = readString(request.method);
+    const params = request.params ?? null;
+    const version =
+      typeof request.version === "number"
+        ? request.version
+        : typeof frame.version === "number"
+          ? frame.version
+          : undefined;
     const canHandle = await this.canHandleRequest(
       method,
       params,
-      typeof frame.version === "number" ? frame.version : undefined,
+      version,
     );
     this.sendFrame({
       type: "client-discovery-response",
       requestId,
       clientId: this.clientId,
       canHandle,
+      response: {
+        canHandle,
+        clientId: this.clientId,
+      },
     });
   }
 

@@ -1,6 +1,7 @@
 import type {
   ThreadCompactStartParams,
   ThreadReadParams,
+  ThreadResumeParams,
   TurnInterruptParams,
   TurnStartParams,
   TurnSteerParams,
@@ -101,6 +102,11 @@ class FakeAppServer implements LocalOwnerAppServer {
     params: ThreadSettingsUpdateParams,
   ): Promise<unknown> {
     this.calls.push({ method: "thread/settings/update", params });
+    return {};
+  }
+
+  async threadResume(params: ThreadResumeParams): Promise<unknown> {
+    this.calls.push({ method: "thread/resume", params });
     return {};
   }
 
@@ -267,7 +273,7 @@ describe("local owner sync coordinator", () => {
     }
   });
 
-  it("stores Web-owned runtime settings from follower owner-state handlers", async () => {
+  it("updates Web-owned runtime settings through official app-server", async () => {
     const { officialIpc, appServer, dispose } = installFakes();
     officialIpc.ownedThreads.add("thread-1");
     try {
@@ -340,12 +346,6 @@ describe("local owner sync coordinator", () => {
           params: {
             threadId: "thread-1",
             input: [{ type: "text", text: "use runtime settings" }],
-            model: "gpt-runtime",
-            effort: "high",
-            collaborationMode: {
-              mode: "plan",
-              settings: { developer_instructions: null },
-            },
           },
         },
       ]);
@@ -354,71 +354,7 @@ describe("local owner sync coordinator", () => {
     }
   });
 
-  it("clears cached runtime settings after local ownership is lost", async () => {
-    const { officialIpc, appServer, dispose } = installFakes();
-    officialIpc.ownedThreads.add("thread-1");
-    try {
-      const modelHandler = officialIpc.handlers.get(
-        "thread-follower-set-model-and-reasoning",
-      );
-      const collaborationHandler = officialIpc.handlers.get(
-        "thread-follower-set-collaboration-mode",
-      );
-      const startHandler = officialIpc.handlers.get(
-        "thread-follower-start-turn",
-      );
-
-      await modelHandler?.handle({
-        conversationId: "thread-1",
-        model: "gpt-stale",
-        reasoningEffort: "high",
-      });
-      await collaborationHandler?.handle({
-        conversationId: "thread-1",
-        collaborationMode: { mode: "plan" },
-      });
-
-      officialIpc.ownedThreads.delete("thread-1");
-      expect(
-        await startHandler?.canHandle?.({ conversationId: "thread-1" }),
-      ).toBe(false);
-      await expect(
-        startHandler?.handle({
-          conversationId: "thread-1",
-          turnStartParams: { input: [] },
-        }),
-      ).rejects.toThrow("no-local-owner");
-
-      officialIpc.ownedThreads.add("thread-1");
-      appServer.calls = [];
-      await expect(
-        startHandler?.handle({
-          conversationId: "thread-1",
-          turnStartParams: {
-            input: [{ type: "text", text: "fresh owner" }],
-          },
-        }),
-      ).resolves.toEqual({ started: true });
-
-      expect(appServer.calls).toEqual([
-        {
-          method: "thread/resume",
-          params: { threadId: "thread-1" },
-        },
-        {
-          method: "turn/start",
-          params: {
-            threadId: "thread-1",
-            input: [{ type: "text", text: "fresh owner" }],
-          },
-        },
-      ]);
-    } finally {
-      dispose();
-    }
-  });
-
-  it("keeps explicit turn-start runtime options ahead of cached owner settings", async () => {
+  it("preserves explicit turn-start runtime options", async () => {
     const { officialIpc, appServer, dispose } = installFakes();
     officialIpc.ownedThreads.add("thread-1");
     try {

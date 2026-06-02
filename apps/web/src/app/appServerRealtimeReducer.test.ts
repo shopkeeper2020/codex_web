@@ -89,6 +89,57 @@ describe("app-server realtime reducer", () => {
     ]);
   });
 
+  it("normalizes live tool items before polling refreshes thread detail", () => {
+    const first = applyAppServerRealtimeNotification(
+      createDetail(),
+      "item/started",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "mcpToolOutput",
+          id: "tool-a",
+          name: "weather.lookup",
+          output: "南京 29C",
+        },
+      },
+    );
+    const second = applyAppServerRealtimeNotification(
+      first,
+      "item/completed",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "webSearch",
+          id: "search-a",
+          query: "南京天气",
+          results: [{ text: "未来一周有雨" }],
+          status: "completed",
+        },
+      },
+    );
+
+    expect(second?.turns[0]?.items).toEqual([
+      {
+        type: "toolOutput",
+        id: "tool-a",
+        title: "weather.lookup",
+        text: "南京 29C",
+        status: "active",
+        rawType: "mcpToolOutput",
+      },
+      {
+        type: "toolOutput",
+        id: "search-a",
+        title: "Web search: 南京天气",
+        text: "未来一周有雨",
+        status: "completed",
+        rawType: "webSearch",
+      },
+    ]);
+  });
+
   it("ignores notifications for other threads", () => {
     const detail = createDetail("thread-a");
 

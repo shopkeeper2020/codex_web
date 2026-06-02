@@ -29,18 +29,20 @@ function readTextContent(value: unknown): string {
   );
 }
 
-function compactStatus(value: unknown): string {
+function readStatusString(value: unknown): string {
   const direct = readString(value);
-  if (direct) return direct.toLowerCase().replace(/[\s_-]+/g, "");
+  if (direct) return direct;
   const record = asRecord(value);
   return (
     readString(record?.type) ||
     readString(record?.status) ||
     readString(record?.state) ||
     readString(record?.kind)
-  )
-    .toLowerCase()
-    .replace(/[\s_-]+/g, "");
+  );
+}
+
+function compactStatus(value: unknown): string {
+  return readStatusString(value).toLowerCase().replace(/[\s_-]+/g, "");
 }
 
 function isActiveStatus(value: unknown): boolean {
@@ -157,7 +159,55 @@ function normalizeItem(value: unknown, fallbackId: string): MessageItem {
       status: readString(record?.status) || null,
     };
   }
+  if (type === "websearch" || type.includes("websearch")) {
+    const query =
+      readString(record?.query) ||
+      readString(record?.searchQuery) ||
+      readString(record?.search_query);
+    return {
+      type: "toolOutput",
+      id,
+      title: query ? `Web search: ${query}` : "Web search",
+      text: readTextContent(
+        record?.output ??
+          record?.results ??
+          record?.content ??
+          record?.text ??
+          record?.result,
+      ),
+      status: readStatusString(record?.status) || null,
+      rawType: rawType || "webSearch",
+    };
+  }
+  if (type.includes("tool") || type.includes("mcp") || type.includes("function")) {
+    return {
+      type: "toolOutput",
+      id,
+      title: readString(record?.title) || readString(record?.name) || rawType || "Tool output",
+      text: readTextContent(
+        record?.output ?? record?.content ?? record?.text ?? record?.result,
+      ),
+      status: readStatusString(record?.status) || null,
+      rawType: rawType || "unknown",
+    };
+  }
   return { type: "unknown", id, rawType: rawType || "unknown", raw: value };
+}
+
+function markItemStarted(item: MessageItem): MessageItem {
+  if (
+    (item.type === "toolOutput" ||
+      item.type === "fileChange" ||
+      item.type === "plan" ||
+      item.type === "reasoning") &&
+    !item.status
+  ) {
+    return { ...item, status: "active" };
+  }
+  if (item.type === "command" && item.status === "unknown") {
+    return { ...item, status: "active" };
+  }
+  return item;
 }
 
 function activeTurnId(detail: ThreadDetail): string {
@@ -327,7 +377,11 @@ export function applyAppServerRealtimeNotification(
   }
 
   if (method === "item/started" || method === "item/completed") {
-    const item = normalizeItem(record?.item, "item-live");
+    const normalizedItem = normalizeItem(record?.item, "item-live");
+    const item =
+      method === "item/started"
+        ? markItemStarted(normalizedItem)
+        : normalizedItem;
     const status = method === "item/started" ? "active" : "unknown";
     return updateTurn(
       { ...detail, thread: { ...detail.thread, inProgress: true } },

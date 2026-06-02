@@ -233,7 +233,7 @@ queued follow-ups 会影响 active turn 后续动作；read state 会影响列�
 - `permissionProfile/list`：读取官方权限 profile catalog。
 - `item/permissions/requestApproval`：`request_permissions` 工具的官方 server request；客户端响应 `permissions` 子集，可选 `scope: "session"`。
 
-Web-owned thread 收到 Desktop/扩展的 model/reasoning/collaboration follower request 时，优先调用 `thread/settings/update`；本地 runtime settings Map 只作为旧 app-server 兜底。审批系统必须覆盖 permissions request，不能只处理 command/file approval。
+Web-owned thread 收到 Desktop/扩展的 model/reasoning/collaboration follower request 时，调用 `thread/settings/update`，以 app-server 的 loaded thread settings 作为唯一 next-turn 状态源。审批系统必须覆盖 permissions request，不能只处理 command/file approval。
 
 ## 官方交互模型
 

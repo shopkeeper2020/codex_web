@@ -1181,6 +1181,7 @@ async function buildTurnStartParams(input: {
     params.restoreMessage = buildRestoreMessage({
       id: clientUserMessageId,
       text: input.text,
+      cwd,
       imageAttachments: imageInputs.map((entry) => entry.restoreAttachment),
     });
   }
@@ -1260,8 +1261,6 @@ function buildPendingTurnParams(
     "permissions",
     "runtimeWorkspaceRoots",
     "environments",
-    "additionalContext",
-    "responsesapiClientMetadata",
   ]) {
     const value = (params as unknown as Record<string, unknown>)[key];
     if (value !== undefined) result[key] = value;
@@ -1306,7 +1305,7 @@ function buildPendingLocalTurnSnapshot(input: {
       {
         type: "userMessage",
         id: userMessageId,
-        clientId: null,
+        clientId: userMessageId,
         content,
       },
     ],
@@ -1326,33 +1325,26 @@ function buildPendingLocalTurnSnapshot(input: {
     readString(base.name) ||
     readString(base.title) ||
     detailThread?.title ||
+    readString(base.preview) ||
+    readString(content[0]?.text) ||
     null;
   return {
     ...base,
     id: threadId,
     sessionId: readString(base.sessionId) || threadId,
-    forkedFromId: base.forkedFromId ?? null,
-    parentThreadId: base.parentThreadId ?? null,
     preview:
       readString(base.preview) ||
       readString(base.name) ||
       readString(base.title) ||
       detailThread?.title ||
       readString(content[0]?.text),
-    ephemeral: base.ephemeral === true,
-    modelProvider: readString(base.modelProvider) || "openai",
     createdAt: readUnixSeconds(base.createdAt ?? base.created_at, nowSeconds),
     updatedAt: nowSeconds,
     status: { type: "active", activeFlags: [] },
     threadRuntimeStatus: { type: "active", activeFlags: [] },
-    path: base.path ?? null,
     cwd,
-    cliVersion: readString(base.cliVersion),
-    source: readString(base.source) || "appServer",
     threadSource: readString(base.threadSource) || "user",
-    agentNickname: base.agentNickname ?? null,
-    agentRole: base.agentRole ?? null,
-    gitInfo: base.gitInfo ?? null,
+    title: readString(base.title) || name,
     name,
     turns: [...existingTurns, pendingTurn],
   };
@@ -1390,15 +1382,13 @@ function buildIdleLocalThreadSnapshot(input: {
     readString(base.title) ||
     detailThread?.title ||
     "";
+  const title = readString(base.title) || name || preview || null;
+  const normalizedName = name || title;
   return {
     ...base,
     id: threadId,
     sessionId: readString(base.sessionId) || threadId,
-    forkedFromId: base.forkedFromId ?? null,
-    parentThreadId: base.parentThreadId ?? null,
     preview,
-    ephemeral: base.ephemeral === true,
-    modelProvider: readString(base.modelProvider) || "openai",
     createdAt: readUnixSeconds(base.createdAt ?? base.created_at, nowSeconds),
     updatedAt: readUnixSeconds(base.updatedAt ?? base.updated_at, nowSeconds),
     status: { ...(asRecord(base.status) ?? {}), type: "idle" },
@@ -1406,15 +1396,10 @@ function buildIdleLocalThreadSnapshot(input: {
       ...(asRecord(base.threadRuntimeStatus) ?? asRecord(base.status) ?? {}),
       type: "idle",
     },
-    path: base.path ?? null,
     cwd,
-    cliVersion: readString(base.cliVersion),
-    source: readString(base.source) || "appServer",
     threadSource: readString(base.threadSource) || "user",
-    agentNickname: base.agentNickname ?? null,
-    agentRole: base.agentRole ?? null,
-    gitInfo: base.gitInfo ?? null,
-    name,
+    title,
+    name: normalizedName,
     turns: Array.isArray(base.turns) ? base.turns : [],
   };
 }
@@ -3920,6 +3905,15 @@ export async function createServer(
       diagnostics.record("info", "thread-create", "idle-snapshot-broadcast", {
         threadId: detail.thread.id,
       });
+      const refreshBroadcasted = officialIpc.broadcastThreadUnarchived(
+        detail.thread.id,
+      );
+      diagnostics.record(
+        refreshBroadcasted ? "info" : "warn",
+        "thread-create",
+        "recent-refresh-broadcast",
+        { threadId: detail.thread.id, broadcasted: refreshBroadcasted },
+      );
       const response = threadCreateResponseSchema.safeParse({
         data: { thread: detail.thread, raw: result },
       });

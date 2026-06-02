@@ -119,7 +119,7 @@ const FOLLOWER_METHOD_CAPABILITY_DEFINITIONS: FollowerMethodCapabilityDefinition
       appServerRpcMapping: "thread/settings/update",
       supportLevel: "implemented",
       safeToImplement: true,
-      note: "Implemented for Web-owned conversations via official thread/settings/update, with local runtime owner state retained as a fallback for older app-server versions.",
+      note: "Implemented for Web-owned conversations via official thread/settings/update.",
     },
     {
       method: "thread-follower-set-collaboration-mode",
@@ -131,7 +131,7 @@ const FOLLOWER_METHOD_CAPABILITY_DEFINITIONS: FollowerMethodCapabilityDefinition
       appServerRpcMapping: "thread/settings/update",
       supportLevel: "implemented",
       safeToImplement: true,
-      note: "Implemented for Web-owned conversations via official thread/settings/update, with local runtime owner state retained as a fallback for older app-server versions.",
+      note: "Implemented for Web-owned conversations via official thread/settings/update.",
     },
     {
       method: "thread-follower-edit-last-user-turn",

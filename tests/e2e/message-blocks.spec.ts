@@ -88,7 +88,11 @@ test.describe("complex message blocks", () => {
     await expect(
       page.getByRole("complementary", { name: "右侧栏" }),
     ).toBeVisible();
-    await expect(page.getByText("docs/implementation_status.md")).toBeVisible();
+    const rightSidebar = page.getByRole("complementary", { name: "右侧栏" });
+    await expect(
+      rightSidebar.getByRole("tab", { name: "implementation_status.md" }),
+    ).toBeVisible();
+    await expect(rightSidebar.getByText("filePreviewSentinel")).toBeVisible();
     const lineReference = chat.getByRole("button", {
       name: "implementation_status.md:12",
       exact: true,
@@ -98,7 +102,9 @@ test.describe("complex message blocks", () => {
     await page
       .getByRole("menuitem", { name: "在右侧“文件”标签页打开" })
       .click();
-    await expect(page.getByText("docs/implementation_status.md:12")).toBeVisible();
+    await expect(
+      rightSidebar.getByRole("tab", { name: "implementation_status.md:12" }),
+    ).toBeVisible();
     const plainPathReference = chat.getByRole("button", {
       name: "docs/ui_fidelity.md",
     });

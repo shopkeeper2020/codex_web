@@ -77,6 +77,7 @@ type Harness = {
   officialIpc: OfficialIpcBridge;
   appServer: FakeAppServer;
   root: string;
+  recentRefreshBroadcasts: string[];
 };
 
 const harnesses: Harness[] = [];
@@ -100,12 +101,27 @@ async function createHarness(
       }
     ).broadcastConversationSnapshot = () => false;
   }
+  const recentRefreshBroadcasts: string[] = [];
+  (
+    officialIpc as unknown as {
+      broadcastThreadUnarchived: (threadId: string) => boolean;
+    }
+  ).broadcastThreadUnarchived = (threadId: string) => {
+    recentRefreshBroadcasts.push(threadId);
+    return true;
+  };
   const appServer = new FakeAppServer();
   const context = await createServer(root, {
     officialIpc,
     appServer: appServer as unknown as CodexAppServerProcess,
   });
-  const harness = { context, officialIpc, appServer, root };
+  const harness = {
+    context,
+    officialIpc,
+    appServer,
+    root,
+    recentRefreshBroadcasts,
+  };
   harnesses.push(harness);
   return harness;
 }
@@ -143,7 +159,8 @@ describe("thread create route", () => {
   });
 
   it("broadcasts an idle Web-owned stream snapshot for newly created threads", async () => {
-    const { context, officialIpc, appServer } = await createHarness();
+    const { context, officialIpc, appServer, recentRefreshBroadcasts } =
+      await createHarness();
 
     const response = await context.app.inject({
       method: "POST",
@@ -181,6 +198,20 @@ describe("thread create route", () => {
         id: "thread-web-created",
         status: { type: "idle" },
         threadRuntimeStatus: { type: "idle" },
+        requests: [],
+        title: "Web created thread",
+        name: "Web created thread",
+        hasUnreadTurn: false,
+        resumeState: "resumed",
+        workspaceKind: "project",
+        workspaceBrowserRoot: null,
+        projectlessOutputDirectory: null,
+        turnsPagination: {
+          olderCursor: null,
+          oldestLoadedTurnId: null,
+          isLoadingOlder: false,
+          hasLoadedOldest: true,
+        },
         turns: [],
       },
     });
@@ -190,6 +221,7 @@ describe("thread create route", () => {
       ownedConversationCount: 1,
       localOnlyOwnedConversationCount: 0,
     });
+    expect(recentRefreshBroadcasts).toEqual(["thread-web-created"]);
   });
 
   it("rejects thread creation if the idle stream snapshot cannot be broadcast", async () => {

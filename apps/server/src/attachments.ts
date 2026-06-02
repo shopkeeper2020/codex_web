@@ -107,8 +107,10 @@ export async function toTurnStartImageInput(
       path: attachment.path,
     },
     restoreAttachment: {
+      id: attachment.id,
       src: dataUrl,
       filename: attachment.filename,
+      localPath: attachment.path,
       path: attachment.path,
       mimeType,
       uploadStatus: 'idle',

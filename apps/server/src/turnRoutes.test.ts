@@ -8,6 +8,7 @@ import type {
   CodexAppServerProcess,
   TurnInterruptParams,
   ThreadCompactStartParams,
+  ThreadResumeParams,
   TurnStartParams,
   TurnSteerParams,
 } from "./appServerProcess.js";
@@ -236,6 +237,11 @@ class FakeAppServer {
 
   async rpc(method: string, params?: unknown): Promise<unknown> {
     this.calls.push({ method, params });
+    return { ok: true };
+  }
+
+  async threadResume(params: ThreadResumeParams): Promise<unknown> {
+    this.calls.push({ method: "thread/resume", params });
     return { ok: true };
   }
 
@@ -477,6 +483,7 @@ describe("turn HTTP routes", () => {
       payload: {
         threadId: "thread-a",
         text: "",
+        cwd: context.config.projectRoot,
         attachmentIds: ["att-image"],
       },
     });
@@ -500,10 +507,14 @@ describe("turn HTTP routes", () => {
             }),
           ],
           restoreMessage: expect.objectContaining({
+            cwd: context.config.projectRoot,
             context: expect.objectContaining({
+              workspaceRoots: [context.config.projectRoot],
               imageAttachments: [
                 expect.objectContaining({
+                  id: "att-image",
                   filename: "image.png",
+                  localPath: attachmentPath,
                   src: "data:image/png;base64,aW1hZ2UtYm9keQ==",
                 }),
               ],
@@ -546,6 +557,7 @@ describe("turn HTTP routes", () => {
         threadId: "thread-a",
         expectedTurnId: "turn-active",
         text: "guide",
+        cwd: context.config.projectRoot,
         attachmentIds: ["att-steer-image"],
       },
     });
@@ -571,10 +583,14 @@ describe("turn HTTP routes", () => {
             }),
           ],
           restoreMessage: expect.objectContaining({
+            cwd: context.config.projectRoot,
             context: expect.objectContaining({
+              workspaceRoots: [context.config.projectRoot],
               imageAttachments: [
                 expect.objectContaining({
+                  id: "att-steer-image",
                   filename: "steer-image.png",
+                  localPath: attachmentPath,
                   src: "data:image/png;base64,c3RlZXItaW1hZ2U=",
                 }),
               ],
@@ -926,6 +942,8 @@ describe("turn HTTP routes", () => {
         id: "thread-a",
         status: { type: "active", activeFlags: [] },
         threadRuntimeStatus: { type: "active", activeFlags: [] },
+        title: "Thread A",
+        name: "Thread A",
         turns: expect.arrayContaining([
           expect.objectContaining({
             id: expect.stringMatching(/^pending-/),
@@ -936,7 +954,7 @@ describe("turn HTTP routes", () => {
               {
                 type: "userMessage",
                 id: expect.any(String),
-                clientId: null,
+                clientId: expect.any(String),
                 content: [
                   { type: "text", text: "hello", text_elements: [] },
                 ],
@@ -946,6 +964,11 @@ describe("turn HTTP routes", () => {
         ]),
       },
     });
+    const snapshotState = officialIpc.snapshots[0]?.state as {
+      turns?: Array<{ items?: Array<{ id?: unknown; clientId?: unknown }> }>;
+    };
+    const pendingUserMessage = snapshotState.turns?.at(-1)?.items?.[0];
+    expect(pendingUserMessage?.clientId).toBe(pendingUserMessage?.id);
   });
 
   it("records sanitized runtime selections for start requests", async () => {

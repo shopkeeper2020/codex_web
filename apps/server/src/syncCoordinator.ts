@@ -2,6 +2,7 @@ import { readOfficialConversationId } from "@codex-web/protocol";
 import type {
   ThreadCompactStartParams,
   ThreadReadParams,
+  ThreadResumeParams,
   ThreadTurnsListParams,
   ThreadSettingsUpdateParams,
   TurnInterruptParams,
@@ -40,9 +41,8 @@ export type LocalOwnerAppServer = {
   threadRead(params: ThreadReadParams): Promise<unknown>;
   threadTurnsList?: (params: ThreadTurnsListParams) => Promise<unknown>;
   threadCompactStart(params: ThreadCompactStartParams): Promise<unknown>;
-  threadSettingsUpdate?: (
-    params: ThreadSettingsUpdateParams,
-  ) => Promise<unknown>;
+  threadSettingsUpdate(params: ThreadSettingsUpdateParams): Promise<unknown>;
+  threadResume(params: ThreadResumeParams): Promise<unknown>;
   turnStart(params: TurnStartParams): Promise<unknown>;
   turnSteer(params: TurnSteerParams): Promise<unknown>;
   turnInterrupt(params: TurnInterruptParams): Promise<unknown>;
@@ -64,12 +64,6 @@ type LocalOwnerEventBus = {
       approval?: { threadId?: string | null };
     }) => void,
   ): () => void;
-};
-
-type LocalOwnerRuntimeSettings = {
-  model?: string;
-  effort?: string;
-  collaborationMode?: Record<string, unknown>;
 };
 
 export const LOCAL_OWNER_SNAPSHOT_DEBOUNCE_MS = 120;
@@ -241,47 +235,15 @@ function readReasoningEffort(record: Record<string, unknown> | null): string {
   );
 }
 
-function applyRuntimeSettings(
-  turnStartParams: Record<string, unknown>,
-  runtimeSettings: LocalOwnerRuntimeSettings | undefined,
-): Record<string, unknown> {
-  if (!runtimeSettings) return turnStartParams;
-  const next = { ...turnStartParams };
-  if (runtimeSettings.model && !readString(next.model)) {
-    next.model = runtimeSettings.model;
-  }
-  if (runtimeSettings.effort && !readString(next.effort)) {
-    next.effort = runtimeSettings.effort;
-  }
-  if (runtimeSettings.collaborationMode && !asRecord(next.collaborationMode)) {
-    next.collaborationMode = runtimeSettings.collaborationMode;
-  }
-  return next;
-}
-
 async function updateThreadSettings(input: {
   appServer: LocalOwnerAppServer;
-  diagnostics: SyncDiagnostics;
   threadId: string;
   settings: Omit<ThreadSettingsUpdateParams, "threadId">;
 }): Promise<void> {
-  if (!input.appServer.threadSettingsUpdate) return;
-  try {
-    await input.appServer.threadSettingsUpdate({
-      threadId: input.threadId,
-      ...input.settings,
-    });
-  } catch (error) {
-    input.diagnostics.record(
-      "warn",
-      "official-ipc",
-      "thread-settings-update-fallback",
-      {
-        threadId: input.threadId,
-        error: errorMessage(error),
-      },
-    );
-  }
+  await input.appServer.threadSettingsUpdate({
+    threadId: input.threadId,
+    ...input.settings,
+  });
 }
 
 export function installLocalOwnerSnapshotSync(input: {
@@ -294,7 +256,6 @@ export function installLocalOwnerSnapshotSync(input: {
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const timerDueAt = new Map<string, number>();
   const inFlight = new Set<string>();
-  const runtimeSettingsByThread = new Map<string, LocalOwnerRuntimeSettings>();
   const debounceMs = input.debounceMs ?? LOCAL_OWNER_SNAPSHOT_DEBOUNCE_MS;
 
   input.officialIpc.registerRequestHandler("thread-follower-start-turn", {
@@ -304,10 +265,7 @@ export function installLocalOwnerSnapshotSync(input: {
       const threadId = readOfficialConversationId(record);
       if (!threadId) throw new Error("Missing conversationId");
       if (!isLocalOwner(threadId)) throw new Error("no-local-owner");
-      const turnStartParams = applyRuntimeSettings(
-        asRecord(record?.turnStartParams) ?? {},
-        runtimeSettingsByThread.get(threadId),
-      );
+      const turnStartParams = asRecord(record?.turnStartParams) ?? {};
       return await startLocalTurn(input.appServer, {
         ...turnStartParams,
         threadId,
@@ -332,15 +290,8 @@ export function installLocalOwnerSnapshotSync(input: {
         if (!model && !effort) {
           throw new Error("Missing model or reasoningEffort");
         }
-        const previous = runtimeSettingsByThread.get(threadId) ?? {};
-        runtimeSettingsByThread.set(threadId, {
-          ...previous,
-          ...(model ? { model } : {}),
-          ...(effort ? { effort } : {}),
-        });
         await updateThreadSettings({
           appServer: input.appServer,
-          diagnostics: input.diagnostics,
           threadId,
           settings: {
             ...(model ? { model } : {}),
@@ -363,14 +314,8 @@ export function installLocalOwnerSnapshotSync(input: {
         if (!isLocalOwner(threadId)) throw new Error("no-local-owner");
         const collaborationMode = asRecord(record?.collaborationMode);
         if (!collaborationMode) throw new Error("Missing collaborationMode");
-        const previous = runtimeSettingsByThread.get(threadId) ?? {};
-        runtimeSettingsByThread.set(threadId, {
-          ...previous,
-          collaborationMode,
-        });
         await updateThreadSettings({
           appServer: input.appServer,
-          diagnostics: input.diagnostics,
           threadId,
           settings: { collaborationMode },
         });
@@ -425,14 +370,8 @@ export function installLocalOwnerSnapshotSync(input: {
     },
   });
 
-  function clearLocalOwnerState(threadId: string): void {
-    runtimeSettingsByThread.delete(threadId);
-  }
-
   function isLocalOwner(threadId: string): boolean {
-    const owned = input.officialIpc.isOwnedConversation(threadId);
-    if (!owned) clearLocalOwnerState(threadId);
-    return owned;
+    return input.officialIpc.isOwnedConversation(threadId);
   }
 
   function canBroadcastLocalOwner(threadId: string): boolean {
@@ -529,6 +468,5 @@ export function installLocalOwnerSnapshotSync(input: {
     timers.clear();
     timerDueAt.clear();
     inFlight.clear();
-    runtimeSettingsByThread.clear();
   };
 }
