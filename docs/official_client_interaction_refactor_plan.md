@@ -58,6 +58,18 @@ codex_web
 - 官方 method version map 比我们当前 MVP 矩阵更完整，除 start/steer/interrupt 外，还包括 approval decision、user input、MCP elicitation、queued follow-ups 等 follower 能力。
 - VS Code extension host 中存在 app-server notification 重要性表：高频内容增量、turn/item 状态、approval/server request、realtime 状态会进入重要路径；原始 Codex event、raw response、旧 process output、部分 settings/closed/compacted 通知不会作为主 UI 驱动。
 - Desktop asar 的主进程/worker 包中存在 `thread-follower-*` request handler 注册、`thread-stream-state-changed` 广播转发、`client-status-changed` 广播，以及 Webview 到 host 的 `*-for-host` 执行函数。
+- 官方 app-server README/source/schema 确认 `turn/start` / `turn/steer` raw RPC 不接受 Web UI 的 `attachments` / `restoreMessage` 包装字段；这些字段只能停留在 official follower / UI 恢复层，直接打 app-server 时必须白名单化为官方字段。
+- 官方 app-server 已实现 `clientUserMessageId`、`localImage`、`thread/settings/update`、`permissionProfile/list` 和 `item/permissions/requestApproval`；Web 不应再为这些能力自建另一套不兼容逻辑。
+
+## app-server 对接硬性流程门禁
+
+任何 app-server / official IPC / raw RPC / follower request 改动，都必须先完成官方资料核对，再进入实现：
+
+- 第一来源是 OpenAI 官方 Codex app-server 文档，用于确认官方入口、能力边界和当前术语。
+- 字段级判断必须再回到官方 `codex-rs/app-server` 源码、README 和 `app-server-protocol` schema/source，不能只参考 Desktop/VS Code 打包产物中的私有包装字段。
+- 已由官方实现的能力必须优先复用，例如 `clientUserMessageId`、`localImage`、`thread/settings/update`、`permissionProfile/list` 和各类 approval request；不要在 Web 侧自建另一套 parallel protocol。
+- 实现前要把证据路径、method/field 结论和 Web 转换策略记录到本方案或 `documentation/protocol/official_client_runtime_evidence.md`。
+- 没有完成上述核对时，不允许把新字段透传到 app-server，也不允许用“看起来 Desktop 这么传”的方式猜 raw RPC。
 
 ## 用户已确认决策
 
@@ -202,6 +214,26 @@ queued follow-ups 会影响 active turn 后续动作；read state 会影响列�
 | `thread-queued-followups-changed` | 1 |
 
 `packages/protocol` 应以这张表作为能力声明源，测试必须覆盖所有 method 是否能被识别、路由、诊断。
+
+### 9. raw app-server RPC 必须按官方 schema 收口
+
+官方 app-server 是执行与持久化后端，但它的 raw RPC 参数边界必须严格遵守：
+
+- `turn/start`：发送 `threadId`、`input`、可选 `clientUserMessageId`、`cwd`、模型/推理/权限/协作模式等官方 settings 字段。
+- `turn/steer`：发送 `threadId`、`expectedTurnId`、`input` 和可选 `clientUserMessageId`；不能携带 thread settings override。
+- `input` 中的本地图片使用官方 `{ type: "localImage", path }`，避免把大段 data URL 作为 app-server 参数传输。
+- `attachments`、`restoreMessage` 是 UI/host 恢复字段，保留给 official follower/renderer，不得直传 raw app-server。
+- `clientUserMessageId` 应由 Web 生成并随 start/steer 传入，供 app-server 在 `userMessage.clientId` 中回显，帮助三端对齐同一条用户消息。
+
+### 10. 官方 settings / permissions 能力优先
+
+官方 app-server 已提供可直接复用的能力：
+
+- `thread/settings/update`：更新 loaded thread 的下一轮模型、推理强度、协作模式等设置，并发 `thread/settings/updated`。
+- `permissionProfile/list`：读取官方权限 profile catalog。
+- `item/permissions/requestApproval`：`request_permissions` 工具的官方 server request；客户端响应 `permissions` 子集，可选 `scope: "session"`。
+
+Web-owned thread 收到 Desktop/扩展的 model/reasoning/collaboration follower request 时，优先调用 `thread/settings/update`；本地 runtime settings Map 只作为旧 app-server 兜底。审批系统必须覆盖 permissions request，不能只处理 command/file approval。
 
 ## 官方交互模型
 

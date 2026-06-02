@@ -15,6 +15,8 @@ const INITIALIZE_REQUEST_TIMEOUT_MS = 60_000;
 export const IPC_METHOD_VERSIONS: Record<string, number> = {
   "thread-stream-state-changed": 6,
   "thread-read-state-changed": 1,
+  "thread-archived": 2,
+  "thread-unarchived": 1,
   "thread-follower-start-turn": 1,
   "thread-follower-compact-thread": 1,
   "thread-follower-steer-turn": 1,
@@ -22,8 +24,175 @@ export const IPC_METHOD_VERSIONS: Record<string, number> = {
   "thread-follower-set-model-and-reasoning": 1,
   "thread-follower-set-collaboration-mode": 1,
   "thread-follower-edit-last-user-turn": 1,
+  "thread-follower-command-approval-decision": 1,
+  "thread-follower-file-approval-decision": 1,
+  "thread-follower-permissions-request-approval-response": 1,
+  "thread-follower-submit-user-input": 1,
+  "thread-follower-submit-mcp-server-elicitation-response": 1,
+  "thread-follower-set-queued-follow-ups-state": 1,
+  "thread-queued-followups-changed": 1,
   initialize: 0,
 };
+
+export const REQUIRED_REALTIME_FOLLOWER_METHODS = [
+  "thread-follower-start-turn",
+  "thread-follower-steer-turn",
+  "thread-follower-interrupt-turn",
+] as const;
+
+export const OFFICIAL_FOLLOWER_METHODS = Object.freeze(
+  Object.keys(IPC_METHOD_VERSIONS)
+    .filter((method) => method.startsWith("thread-follower-"))
+    .sort(),
+);
+
+export type AppServerNotificationImportance =
+  | "important"
+  | "ignored"
+  | "passthrough"
+  | "unknown";
+
+export type AppServerNotificationClassification = {
+  method: string;
+  importance: AppServerNotificationImportance;
+  shouldDriveRealtime: boolean;
+};
+
+export const IMPORTANT_APP_SERVER_NOTIFICATION_METHODS = Object.freeze([
+  "error",
+  "thread/started",
+  "thread/name/updated",
+  "thread/tokenUsage/updated",
+  "turn/started",
+  "hook/started",
+  "turn/completed",
+  "hook/completed",
+  "turn/diff/updated",
+  "turn/plan/updated",
+  "item/started",
+  "item/autoApprovalReview/started",
+  "item/autoApprovalReview/completed",
+  "item/completed",
+  "item/agentMessage/delta",
+  "item/plan/delta",
+  "item/commandExecution/outputDelta",
+  "item/commandExecution/terminalInteraction",
+  "item/fileChange/outputDelta",
+  "item/fileChange/patchUpdated",
+  "serverRequest/resolved",
+  "item/mcpToolCall/progress",
+  "mcpServer/oauthLogin/completed",
+  "account/updated",
+  "account/rateLimits/updated",
+  "app/list/updated",
+  "externalAgentConfig/import/completed",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/textDelta",
+  "deprecationNotice",
+  "configWarning",
+  "windowsSandbox/setupCompleted",
+  "account/login/completed",
+  "model/rerouted",
+  "model/verification",
+  "sessionConfigured",
+  "codex/event/session_configured",
+  "fuzzyFileSearch/sessionUpdated",
+  "fuzzyFileSearch/sessionCompleted",
+  "thread/archived",
+  "thread/goal/cleared",
+  "thread/goal/updated",
+  "thread/unarchived",
+  "skills/changed",
+  "thread/realtime/started",
+  "thread/realtime/itemAdded",
+  "thread/realtime/transcript/delta",
+  "thread/realtime/transcript/done",
+  "thread/realtime/outputAudio/delta",
+  "thread/realtime/sdp",
+  "thread/realtime/error",
+  "thread/realtime/closed",
+  "thread/status/changed",
+  "remoteControl/status/changed",
+  "guardianWarning",
+]);
+
+export const PASSTHROUGH_APP_SERVER_NOTIFICATION_METHODS = Object.freeze([
+  "process/outputDelta",
+  "process/exited",
+  "fs/changed",
+]);
+
+export const IGNORED_APP_SERVER_NOTIFICATION_METHODS = Object.freeze([
+  "rawResponseItem/completed",
+  "command/exec/outputDelta",
+  "mcpServer/startupStatus/updated",
+  "thread/compacted",
+  "windows/worldWritableWarning",
+  "authStatusChange",
+  "loginChatGptComplete",
+  "codex/event/task_started",
+  "codex/event/agent_reasoning",
+  "codex/event/agent_message",
+  "codex/event/task_complete",
+  "codex/event/mcp_tool_call_begin",
+  "codex/event/mcp_tool_call_end",
+  "codex/event/exec_command_begin",
+  "codex/event/exec_command_end",
+  "codex/event/exec_command_output_delta",
+  "codex/event/exec_approval_request",
+  "codex/event/apply_patch_approval_request",
+  "codex/event/background_event",
+  "codex/event/turn_diff",
+  "codex/event/get_history_entry_response",
+  "codex/event/agent_reasoning_delta",
+  "codex/event/agent_reasoning_section_break",
+  "codex/event/agent_message_delta",
+  "codex/event/stream_error",
+  "codex/event/error",
+  "codex/event/turn_aborted",
+  "codex/event/plan_delta",
+  "codex/event/plan_update",
+  "codex/event/patch_apply_begin",
+  "codex/event/patch_apply_end",
+  "codex/event/patch_apply_failed",
+  "codex/event/exec_command_output",
+  "codex/event/exec_command_exited",
+  "codex/event/elicitation_request",
+  "codex/event/dynamic_tool_call_request",
+  "codex/event/request_user_input",
+  "codex/event/terminal_interaction",
+  "codex/event/token_count",
+  "codex/event/deprecation_notice",
+  "thread/closed",
+  "thread/settings/updated",
+  "warning",
+]);
+
+const IMPORTANT_APP_SERVER_NOTIFICATION_METHOD_SET = new Set(
+  IMPORTANT_APP_SERVER_NOTIFICATION_METHODS,
+);
+const PASSTHROUGH_APP_SERVER_NOTIFICATION_METHOD_SET = new Set(
+  PASSTHROUGH_APP_SERVER_NOTIFICATION_METHODS,
+);
+const IGNORED_APP_SERVER_NOTIFICATION_METHOD_SET = new Set(
+  IGNORED_APP_SERVER_NOTIFICATION_METHODS,
+);
+
+export function classifyAppServerNotification(
+  method: string,
+): AppServerNotificationClassification {
+  if (IMPORTANT_APP_SERVER_NOTIFICATION_METHOD_SET.has(method)) {
+    return { method, importance: "important", shouldDriveRealtime: true };
+  }
+  if (PASSTHROUGH_APP_SERVER_NOTIFICATION_METHOD_SET.has(method)) {
+    return { method, importance: "passthrough", shouldDriveRealtime: false };
+  }
+  if (IGNORED_APP_SERVER_NOTIFICATION_METHOD_SET.has(method)) {
+    return { method, importance: "ignored", shouldDriveRealtime: false };
+  }
+  return { method, importance: "unknown", shouldDriveRealtime: true };
+}
 
 export type OfficialIpcFrame = Record<string, unknown>;
 
@@ -220,11 +389,188 @@ function sanitizeOfficialBroadcastValue(
   return changed ? next : value;
 }
 
+function timestampMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeAppServerThreadStatus(value: unknown): unknown {
+  const record = asRecord(value);
+  if (isActiveStatus(value)) {
+    const next: Record<string, unknown> = record ? { ...record } : {};
+    next.type = "active";
+    if (!Array.isArray(next.activeFlags)) {
+      next.activeFlags = [];
+    }
+    return record &&
+      record.type === next.type &&
+      Array.isArray(record.activeFlags)
+      ? value
+      : next;
+  }
+
+  const status = readStatusString(value);
+  if (!status) return value;
+  if (!record) return { type: status };
+  if (readString(record.type)) return value;
+  return { ...record, type: status };
+}
+
+function looksLikeAppServerThread(record: Record<string, unknown>): boolean {
+  const id = readString(record.id) || readString(record.sessionId);
+  return Boolean(
+    id &&
+      Array.isArray(record.turns) &&
+      record.status !== undefined &&
+      (record.sessionId !== undefined ||
+        record.createdAt !== undefined ||
+        record.updatedAt !== undefined ||
+        record.cwd !== undefined),
+  );
+}
+
+function looksLikeAppServerTurn(record: Record<string, unknown>): boolean {
+  return Boolean(
+    (readString(record.id) || readString(record.turnId)) &&
+      (record.startedAt !== undefined ||
+        record.completedAt !== undefined ||
+        record.itemsView !== undefined),
+  );
+}
+
+function normalizeOfficialBroadcastTurn(
+  value: unknown,
+  context: { appServerThread?: boolean; cwd?: unknown } = {},
+): unknown {
+  const record = asRecord(value);
+  if (!record) return value;
+  const isAppServerTurn =
+    context.appServerThread || looksLikeAppServerTurn(record);
+  let changed = false;
+  const next: Record<string, unknown> = { ...record };
+  const turnId = readString(record.turnId) || readString(record.turn_id);
+  const id = readString(record.id);
+  if (!turnId && id) {
+    next.turnId = id;
+    changed = true;
+  }
+  if (!id && turnId) {
+    next.id = turnId;
+    changed = true;
+  }
+  if (next.turnStartedAtMs === undefined) {
+    const startedAtMs = timestampMs(record.startedAt ?? record.started_at);
+    if (startedAtMs !== null) {
+      next.turnStartedAtMs = startedAtMs;
+      changed = true;
+    }
+  }
+  if (next.turnCompletedAtMs === undefined) {
+    const completedAtMs = timestampMs(record.completedAt ?? record.completed_at);
+    if (completedAtMs !== null) {
+      next.turnCompletedAtMs = completedAtMs;
+      changed = true;
+    }
+  }
+  if (isAppServerTurn && next.params === undefined) {
+    const params: Record<string, unknown> = {};
+    if (context.cwd !== undefined) params.cwd = context.cwd;
+    next.params = params;
+    changed = true;
+  }
+  if (isAppServerTurn && next.diff === undefined) {
+    next.diff = [];
+    changed = true;
+  }
+  if (isAppServerTurn && next.commandExecutionStartedAtMsById === undefined) {
+    next.commandExecutionStartedAtMsById = {};
+    changed = true;
+  }
+  if (isAppServerTurn && next.hookRuns === undefined) {
+    next.hookRuns = [];
+    changed = true;
+  }
+  if (Array.isArray(record.items)) {
+    const items = record.items
+      .map(sanitizeOfficialBroadcastValue)
+      .filter((entry) => entry !== OMIT_BROADCAST_VALUE);
+    if (items.length !== record.items.length) changed = true;
+    next.items = items;
+  }
+  return changed ? next : value;
+}
+
+function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
+  const record = asRecord(value);
+  if (!record) return value;
+  const isAppServerThread = looksLikeAppServerThread(record);
+  let changed = false;
+  const next: Record<string, unknown> = { ...record };
+  if (!readString(record.hostId) && !readString(record.host_id)) {
+    next.hostId = "local";
+    changed = true;
+  }
+  if (isAppServerThread && !readString(record.threadSource)) {
+    next.threadSource = "user";
+    changed = true;
+  }
+  if (record.status !== undefined) {
+    const normalizedStatus = normalizeAppServerThreadStatus(record.status);
+    if (normalizedStatus !== record.status) {
+      next.status = normalizedStatus;
+      changed = true;
+    }
+    if (record.threadRuntimeStatus === undefined) {
+      next.threadRuntimeStatus = normalizedStatus;
+      changed = true;
+    }
+  }
+  if (record.threadRuntimeStatus !== undefined) {
+    const normalizedRuntimeStatus = normalizeAppServerThreadStatus(
+      record.threadRuntimeStatus,
+    );
+    if (normalizedRuntimeStatus !== record.threadRuntimeStatus) {
+      next.threadRuntimeStatus = normalizedRuntimeStatus;
+      changed = true;
+    }
+  }
+  if (
+    isAppServerThread &&
+    next.threadRuntimeStatus === undefined &&
+    record.status !== undefined
+  ) {
+    next.threadRuntimeStatus = normalizeAppServerThreadStatus(record.status);
+    changed = true;
+  }
+  const rawTurns = record.turns;
+  if (Array.isArray(rawTurns)) {
+    const turns = rawTurns.map((turn) =>
+      normalizeOfficialBroadcastTurn(turn, {
+        appServerThread: isAppServerThread,
+        cwd: record.cwd,
+      }),
+    );
+    if (turns.some((turn, index) => turn !== rawTurns[index])) {
+      changed = true;
+    }
+    next.turns = turns;
+  }
+  return changed ? next : value;
+}
+
 function sanitizeConversationStateForOfficialBroadcast(
   conversationState: unknown,
 ): unknown {
   const sanitized = sanitizeOfficialBroadcastValue(conversationState);
-  return sanitized === OMIT_BROADCAST_VALUE ? null : sanitized;
+  return sanitized === OMIT_BROADCAST_VALUE
+    ? null
+    : normalizeOfficialBroadcastConversationState(sanitized);
 }
 
 function patchPath(value: unknown): Array<string | number> {
@@ -382,6 +728,7 @@ function readIsInProgress(conversationState: unknown): boolean {
   if (!state) return false;
   if (state.inProgress === true) return true;
   if (isActiveStatus(state.status) || isActiveStatus(state.state)) return true;
+  if (isActiveStatus(state.threadRuntimeStatus)) return true;
 
   const runtimeStatus = asRecord(state.threadRuntimeStatus);
   return (
@@ -592,6 +939,29 @@ export class OfficialIpcBridge {
     if (this.isExternallyOwnedConversation(normalizedThreadId)) return false;
     this.ownedConversationIds.add(normalizedThreadId);
     this.localOnlyOwnedConversationIds.add(normalizedThreadId);
+    return true;
+  }
+
+  isLocalOnlyOwnedConversation(threadId: string): boolean {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) return false;
+    return this.localOnlyOwnedConversationIds.has(normalizedThreadId);
+  }
+
+  promoteLocalOnlyConversation(threadId: string, reason?: string): boolean {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId || !this.clientId) return false;
+    if (!this.ownedConversationIds.has(normalizedThreadId)) return false;
+    if (!this.localOnlyOwnedConversationIds.delete(normalizedThreadId)) {
+      return false;
+    }
+    this.recordOwnershipHandoff({
+      conversationId: normalizedThreadId,
+      previousOwnerClientId: null,
+      nextOwnerClientId: this.clientId,
+      sourceClientId: this.clientId,
+      reason,
+    });
     return true;
   }
 
@@ -1125,6 +1495,17 @@ export class OfficialIpcBridge {
     ) {
       return;
     }
+    if (
+      this.shouldIgnoreOwnedActiveExternalChange({
+        conversationId,
+        existing,
+        conversationState,
+        nextOwnerClientId: ownerClientId,
+        sourceClientId,
+      })
+    ) {
+      return;
+    }
     this.releaseOwnedConversationIfExternal({
       conversationId,
       previousOwnerClientId: existing?.ownerClientId ?? null,
@@ -1170,6 +1551,25 @@ export class OfficialIpcBridge {
       );
     }
     return false;
+  }
+
+  private shouldIgnoreOwnedActiveExternalChange(input: {
+    conversationId: string;
+    existing: OfficialThreadStreamState | undefined;
+    conversationState: unknown;
+    nextOwnerClientId: string | null;
+    sourceClientId: string | null;
+  }): boolean {
+    if (!this.ownedConversationIds.has(input.conversationId)) return false;
+    if (!input.existing?.isInProgress) return false;
+    const externalSource = Boolean(
+      input.sourceClientId && input.sourceClientId !== this.clientId,
+    );
+    const externalOwner = Boolean(
+      input.nextOwnerClientId && input.nextOwnerClientId !== this.clientId,
+    );
+    if (!externalSource && !externalOwner) return false;
+    return !snapshotSettlesActiveTurn(input.existing, input.conversationState);
   }
 
   private shouldIgnoreLocalOnlyExternalChange(input: {

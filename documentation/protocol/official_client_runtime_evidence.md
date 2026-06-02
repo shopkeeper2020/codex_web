@@ -7,6 +7,13 @@
 
 ## 官方资源路径
 
+官方 app-server 文档/源码：
+
+- Codex manual helper：`C:\Users\user\AppData\Local\Temp\openai-docs-cache\codex-manual.md`
+- OpenAI Codex app-server README：`C:\Users\user\AppData\Local\Temp\openai-codex\codex-rs\app-server\README.md`
+- OpenAI Codex app-server source：`C:\Users\user\AppData\Local\Temp\openai-codex\codex-rs\app-server`
+- OpenAI app-server protocol source/schema：`C:\Users\user\AppData\Local\Temp\openai-codex\codex-rs\app-server-protocol`
+
 Desktop：
 
 - `C:\Program Files\WindowsApps\OpenAI.Codex_26.527.7698.0_x64__2p2nqsd0c76g0\app\resources\app.asar`
@@ -29,6 +36,32 @@ VS Code 扩展：
   - `webview\assets\app-server-manager-hooks-DYidc9xW.js`
   - `webview\assets\local-conversation-thread-wr-Xbb7I.js`
   - `webview\assets\thread-actions-DVf650oD.js`
+
+## 官方 app-server 证据摘要
+
+### raw turn 参数边界
+
+OpenAI Codex app-server README 和 `app-server-protocol` schema 确认：
+
+- `turn/start` 的核心输入是 `threadId`、`input` 和可选 `clientUserMessageId`。
+- `input` 支持官方 discriminated union：`text`、`image`、`localImage`、`skill`、`mention` 等。
+- 图片本地文件应优先使用 `{ type: "localImage", path }`，避免把大段 data URL 当作 raw app-server 参数传输。
+- `turn/steer` 需要 `threadId`、`expectedTurnId`、`input`，可选 `clientUserMessageId`；它不接受线程设置 override。
+- `clientUserMessageId` 会回显到对应 `userMessage.clientId`，可作为跨端对齐用户消息的官方锚点。
+
+结论：`attachments`、`restoreMessage` 是官方客户端 UI/IPC 恢复层字段，不属于 raw app-server `turn/start` / `turn/steer` 参数。Web 后端直接调用 app-server 时必须白名单化，只发送官方字段；转发给官方 follower 时可保留 Desktop/VS Code Webview 需要的恢复消息。
+
+### thread settings 与权限能力
+
+官方 README 和 source 确认：
+
+- `thread/settings/update` 已是官方 experimental 方法，用于在不新增 turn、不添加 transcript item 的情况下更新 loaded thread 的下一轮设置；设置变更后会发 `thread/settings/updated`。
+- `turn/start` settings override 也会更新 thread 的后续默认设置。
+- `permissions` profile selection 是官方推荐的新权限选择方式；`sandboxPolicy` 仍兼容，但不能和 `permissions` 同时发送。
+- `permissionProfile/list` 可列出内置或项目级 permission profile，例如 `:read-only`、`:workspace`、`:danger-full-access`。
+- 内置 `request_permissions` 工具会发 `item/permissions/requestApproval` server request；客户端响应必须返回 `result.permissions`，可选 `scope: "session"`。
+
+结论：Web-owned 线程收到官方 follower 的模型/推理/协作模式变更时，应优先调用 `thread/settings/update`，本地 Map 只能作为旧版本兜底。审批系统必须覆盖 `item/permissions/requestApproval`，不能只处理命令和文件审批。
 
 ## Desktop 证据摘要
 

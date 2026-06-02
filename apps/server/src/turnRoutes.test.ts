@@ -26,6 +26,7 @@ class FakeOfficialIpc {
   readonly followerSteerCalls: Array<{ threadId: string; params: unknown }> =
     [];
   readonly followerCompactCalls: Array<{ threadId: string }> = [];
+  readonly ownedThreads = new Set<string>();
   readonly localOnlyThreads = new Set<string>();
   readonly discardedThreads = new Set<string>();
 
@@ -50,7 +51,11 @@ class FakeOfficialIpc {
   }
 
   isOwnedConversation(threadId = "thread-a"): boolean {
-    return Boolean(this.options.webOwned || this.localOnlyThreads.has(threadId));
+    return Boolean(
+      this.options.webOwned ||
+        this.ownedThreads.has(threadId) ||
+        this.localOnlyThreads.has(threadId),
+    );
   }
 
   isExternallyOwnedConversation(threadId = "thread-a"): boolean {
@@ -68,6 +73,7 @@ class FakeOfficialIpc {
   claimLocalOnlyConversation(threadId: string): boolean {
     if (!this.canOwnConversations() || this.isExternallyOwnedConversation())
       return false;
+    this.ownedThreads.add(threadId);
     this.localOnlyThreads.add(threadId);
     return true;
   }
@@ -80,6 +86,13 @@ class FakeOfficialIpc {
 
   canBroadcastOwnedConversation(threadId: string): boolean {
     return !this.localOnlyThreads.has(threadId);
+  }
+
+  promoteLocalOnlyConversation(threadId: string): boolean {
+    if (!this.localOnlyThreads.has(threadId)) return false;
+    this.localOnlyThreads.delete(threadId);
+    this.ownedThreads.add(threadId);
+    return true;
   }
 
   getThreadStreamState(threadId: string): Record<string, unknown> | null {
@@ -458,8 +471,8 @@ describe("turn HTTP routes", () => {
               text: "<image>",
             }),
             expect.objectContaining({
-              type: "image",
-              url: "data:image/png;base64,aW1hZ2UtYm9keQ==",
+              type: "localImage",
+              path: attachmentPath,
             }),
           ],
           attachments: [
@@ -533,8 +546,8 @@ describe("turn HTTP routes", () => {
               text: "<image>",
             }),
             expect.objectContaining({
-              type: "image",
-              url: "data:image/png;base64,c3RlZXItaW1hZ2U=",
+              type: "localImage",
+              path: attachmentPath,
             }),
           ],
           attachments: [
@@ -601,6 +614,7 @@ describe("turn HTTP routes", () => {
         threadId: "thread-a",
         params: {
           threadId: "thread-a",
+          clientUserMessageId: expect.any(String),
           input: [
             { type: "text", text: "hello", text_elements: [] },
             { type: "skill", name: "docs", path: "C:\\skill\\SKILL.md" },
@@ -692,6 +706,7 @@ describe("turn HTTP routes", () => {
         threadId: "thread-a",
         params: {
           threadId: "thread-a",
+          clientUserMessageId: expect.any(String),
           input: [{ type: "text", text: "hello", text_elements: [] }],
           approvalPolicy: "never",
           approvalsReviewer: "user",
@@ -763,6 +778,7 @@ describe("turn HTTP routes", () => {
     });
     expect(officialIpc.discardedThreads.has("thread-a")).toBe(true);
     expect(officialIpc.isOwnedConversation("thread-a")).toBe(true);
+    expect(officialIpc.canBroadcastOwnedConversation("thread-a")).toBe(true);
     expect(appServer.calls.map((call) => call.method)).toEqual([
       "thread/resume",
       "turn/start",
@@ -799,13 +815,14 @@ describe("turn HTTP routes", () => {
       data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
     });
     expect(officialIpc.discardedThreads.has("thread-a")).toBe(true);
+    expect(officialIpc.canBroadcastOwnedConversation("thread-a")).toBe(true);
     expect(appServer.calls.map((call) => call.method)).toEqual([
       "thread/resume",
       "turn/start",
     ]);
   });
 
-  it("converts stale active steer into a new local turn after app-server confirms idle", async () => {
+  it("does not convert stale active steer into a new local turn", async () => {
     const { context, officialIpc, appServer } = await createHarness({
       errorMessage: "official-ipc-request-failed:thread-follower-steer-turn",
       hasOfficialState: true,
@@ -823,31 +840,18 @@ describe("turn HTTP routes", () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({
-      data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
+      error: expect.stringContaining("official-owner-unavailable"),
     });
-    expect(officialIpc.discardedThreads.has("thread-a")).toBe(true);
-    expect(officialIpc.isOwnedConversation("thread-a")).toBe(true);
-    expect(appServer.calls.map((call) => call.method)).toEqual([
-      "thread/resume",
-      "turn/start",
-    ]);
-    expect(appServer.calls[1]?.params).toMatchObject({
-      threadId: "thread-a",
-      input: [
-        expect.objectContaining({
-          type: "text",
-          text: "continue as a new turn",
-        }),
-      ],
-      sandboxPolicy: { type: "dangerFullAccess" },
-    });
+    expect(officialIpc.discardedThreads.has("thread-a")).toBe(false);
+    expect(officialIpc.isOwnedConversation("thread-a")).toBe(false);
+    expect(appServer.calls).toEqual([]);
     expect(context.diagnostics.list()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           source: "turn-steer",
-          message: "stale-active-start-fallback",
+          message: "official-follower-fallback-denied",
           data: expect.objectContaining({
             threadId: "thread-a",
             expectedTurnId: "turn-stale",
@@ -875,6 +879,7 @@ describe("turn HTTP routes", () => {
       data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
     });
     expect(officialIpc.isOwnedConversation("thread-a")).toBe(true);
+    expect(officialIpc.canBroadcastOwnedConversation("thread-a")).toBe(true);
     expect(appServer.calls.map((call) => call.method)).toEqual([
       "thread/resume",
       "turn/start",

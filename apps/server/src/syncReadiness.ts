@@ -1,9 +1,8 @@
 import type { ProtocolCompatibilitySnapshot } from "./protocolCompatibility.js";
+import { REQUIRED_REALTIME_FOLLOWER_METHODS } from "@codex-web/protocol";
 
 export const REQUIRED_FOLLOWER_HANDLERS = [
-  "thread-follower-start-turn",
-  "thread-follower-steer-turn",
-  "thread-follower-interrupt-turn",
+  ...REQUIRED_REALTIME_FOLLOWER_METHODS,
 ];
 
 type SyncReadinessOfficialIpc = {

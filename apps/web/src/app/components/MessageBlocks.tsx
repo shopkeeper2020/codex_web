@@ -13,6 +13,7 @@ import {
   Minimize2,
   PanelRightOpen,
   Paperclip,
+  ShieldCheck,
   TerminalSquare,
   X,
 } from 'lucide-react'
@@ -1981,6 +1982,13 @@ export function ApprovalCard({
 }): ReactElement {
   const amendmentCount = approval.proposedExecpolicyAmendment?.length ?? 0
   const changedFileCount = approval.changedFiles?.length ?? 0
+  const permissionCount = approval.permissions ? Object.keys(approval.permissions).length : 0
+  const fallbackReason =
+    approval.kind === 'fileChange'
+      ? 'Agent 请求应用文件变更。'
+      : approval.kind === 'permissions'
+        ? 'Agent 请求额外权限。'
+        : 'Agent 请求执行命令。'
   const [diffExpanded, setDiffExpanded] = useState(false)
   const [deciding, setDeciding] = useState<ApprovalDecision | null>(null)
 
@@ -1998,11 +2006,17 @@ export function ApprovalCard({
     <article className={styles.approvalCard}>
       <div className={styles.approvalHeader}>
         <span className={styles.approvalIcon}>
-          {approval.kind === 'fileChange' ? <FileCode2 size={16} /> : <TerminalSquare size={16} />}
+          {approval.kind === 'fileChange' ? (
+            <FileCode2 size={16} />
+          ) : approval.kind === 'permissions' ? (
+            <ShieldCheck size={16} />
+          ) : (
+            <TerminalSquare size={16} />
+          )}
         </span>
         <div>
           <h3>{approval.title}</h3>
-          <p>{approval.reason ?? (approval.kind === 'fileChange' ? 'Agent 请求应用文件变更。' : 'Agent 请求执行命令。')}</p>
+          <p>{approval.reason ?? fallbackReason}</p>
         </div>
       </div>
       <div className={styles.approvalBody}>
@@ -2012,7 +2026,13 @@ export function ApprovalCard({
         {approval.filePath ? <span>file: {approval.filePath}</span> : null}
         {changedFileCount > 0 ? <span>{changedFileCount} 个变更文件</span> : null}
         {amendmentCount > 0 ? <span>{amendmentCount} 条 session 级授权建议</span> : null}
+        {permissionCount > 0 ? <span>{permissionCount} 类权限</span> : null}
       </div>
+      {approval.permissions ? (
+        <div className={styles.approvalFiles}>
+          <code>{JSON.stringify(approval.permissions)}</code>
+        </div>
+      ) : null}
       {approval.changedFiles?.length ? (
         <div className={styles.approvalFiles}>
           {approval.changedFiles.slice(0, 6).map((file) => <span key={file}>{file}</span>)}

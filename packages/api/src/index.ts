@@ -860,7 +860,7 @@ export const approvalDecisionSchema = z.enum([
 
 export const pendingApprovalSchema = z.object({
   id: z.string(),
-  kind: z.enum(["command", "fileChange"]),
+  kind: z.enum(["command", "fileChange", "permissions"]),
   method: z.string(),
   threadId: z.string(),
   turnId: z.string(),
@@ -875,6 +875,7 @@ export const pendingApprovalSchema = z.object({
   diff: z.string().nullable(),
   changedFiles: z.array(z.string()).nullable(),
   proposedExecpolicyAmendment: z.array(z.string()).nullable(),
+  permissions: z.record(z.string(), z.unknown()).nullable(),
   createdAtIso: z.string(),
   status: z.literal("pending"),
 });
@@ -907,6 +908,19 @@ const officialThreadRealtimePayloadSchema = z
     conversationId: z.string().optional(),
     cacheVersion: z.union([z.number(), z.string()]).optional(),
     sourceClientId: z.string().nullable().optional(),
+  })
+  .catchall(z.unknown());
+
+const domainThreadDetailUpdatedRealtimeEventSchema = z
+  .object({
+    ...realtimeBaseFields,
+    type: z.literal("domain.threadDetailUpdated"),
+    threadId: z.string(),
+    detail: threadDetailSchema,
+    source: z.string(),
+    cacheVersion: z.union([z.number(), z.string()]).optional(),
+    isInProgress: z.boolean().optional(),
+    activeTurnId: z.string().optional(),
   })
   .catchall(z.unknown());
 
@@ -946,6 +960,10 @@ export const realtimeEventSchema = z.discriminatedUnion("type", [
       method: z.string(),
       params: z.unknown(),
       atIso: z.string(),
+      importance: z
+        .enum(["important", "ignored", "passthrough", "unknown"])
+        .optional(),
+      shouldDriveRealtime: z.boolean().optional(),
     })
     .catchall(z.unknown()),
   z
@@ -955,6 +973,7 @@ export const realtimeEventSchema = z.discriminatedUnion("type", [
       payload: officialThreadRealtimePayloadSchema,
     })
     .catchall(z.unknown()),
+  domainThreadDetailUpdatedRealtimeEventSchema,
   z
     .object({
       ...realtimeBaseFields,

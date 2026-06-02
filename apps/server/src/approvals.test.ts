@@ -65,6 +65,38 @@ describe("ApprovalCoordinator", () => {
     await expect(responsePromise).resolves.toEqual({ decision: "decline" });
   });
 
+  it("turns permissions approvals into official granted-permissions responses", async () => {
+    const approvals = new ApprovalCoordinator(new EventBus());
+    const requestedPermissions = {
+      fileSystem: { write: ["C:\\workspace\\codex_web"] },
+      networkAccess: true,
+    };
+    const responsePromise = approvals.request(
+      "item/permissions/requestApproval",
+      {
+        itemId: "item-perm",
+        threadId: "thread-perm",
+        turnId: "turn-perm",
+        cwd: "C:\\workspace\\codex_web",
+        reason: "Need workspace write access",
+        permissions: requestedPermissions,
+      },
+    );
+
+    const pending = approvals.list()[0];
+    expect(pending).toMatchObject({
+      kind: "permissions",
+      threadId: "thread-perm",
+      permissions: requestedPermissions,
+    });
+
+    approvals.decide(pending?.id ?? "", "acceptForSession");
+    await expect(responsePromise).resolves.toEqual({
+      scope: "session",
+      permissions: requestedPermissions,
+    });
+  });
+
   it("publishes requested and resolved events with API-safe approval payloads", async () => {
     const bus = new EventBus();
     const events: ServerEvent[] = [];

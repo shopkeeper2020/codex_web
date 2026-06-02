@@ -98,6 +98,7 @@ import {
   OFFICIAL_THREAD_STREAM_CHANGED_METHOD,
   OFFICIAL_THREAD_UNARCHIVED_METHOD,
   OfficialIpcBridge,
+  classifyAppServerNotification,
   type OfficialIpcNotification,
   type OfficialThreadStreamState,
 } from "@codex-web/protocol";
@@ -120,6 +121,7 @@ import { buildSafeDiagnosticsExport } from "./diagnosticsExport.js";
 import { DatabaseStore } from "./db/index.js";
 import { EventBus } from "./events.js";
 import { archiveThreadWithRecovery, startLocalTurn } from "./threadActions.js";
+import { toOfficialTurnSteerParams } from "./appServerParams.js";
 import { cleanupUnassociatedAttachments } from "./attachmentCleanup.js";
 import {
   persistMultipartAttachment,
@@ -157,8 +159,17 @@ import {
   NativeTranscriptionError,
   transcribeNativeAudio,
 } from "./nativeTranscription.js";
+import { LocalLiveThreadStore } from "./localLiveThreadStore.js";
 
 const THREAD_GOAL_READ_TIMEOUT_MS = 1200;
+const APP_SERVER_LIVE_DELTA_METHODS = new Set([
+  "item/agentMessage/delta",
+  "item/plan/delta",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/textDelta",
+]);
 const SIDE_CONVERSATION_BOUNDARY_TEXT = `Side conversation boundary.
 
 Everything before this boundary is inherited history from the parent thread. It is reference context only. It is not your current task.
@@ -1146,8 +1157,10 @@ async function buildTurnStartParams(input: {
     input.text.trim() || (imageInputs.length === 0 && skillInputs.length === 0)
       ? [{ type: "text", text: input.text, text_elements: [] }]
       : [];
+  const clientUserMessageId = randomUUID();
   const params: TurnStartParams = {
     threadId: input.threadId,
+    clientUserMessageId,
     input: [
       ...textInputs,
       ...imageInputs.flatMap((entry) => [
@@ -1167,6 +1180,7 @@ async function buildTurnStartParams(input: {
     params.attachments = attachments.map(toTurnStartAttachment);
   if (imageInputs.length > 0) {
     params.restoreMessage = buildRestoreMessage({
+      id: clientUserMessageId,
       text: input.text,
       imageAttachments: imageInputs.map((entry) => entry.restoreAttachment),
     });
@@ -1196,9 +1210,11 @@ async function buildTurnSteerParams(input: {
     input.text.trim() || (imageInputs.length === 0 && skillInputs.length === 0)
       ? [{ type: "text", text: input.text, text_elements: [] }]
       : [];
+  const clientUserMessageId = randomUUID();
   const params: TurnSteerParams = {
     threadId: input.threadId,
     expectedTurnId: input.expectedTurnId,
+    clientUserMessageId,
     input: [
       ...textInputs,
       ...imageInputs.flatMap((entry) => [
@@ -1208,6 +1224,7 @@ async function buildTurnSteerParams(input: {
       ...skillInputs,
     ],
     restoreMessage: buildSteerRestoreMessage({
+      id: clientUserMessageId,
       text: input.text,
       cwd: input.cwd,
       imageAttachments: imageInputs.map((entry) => entry.restoreAttachment),
@@ -1219,6 +1236,7 @@ async function buildTurnSteerParams(input: {
 }
 
 function buildSteerRestoreMessage(input: {
+  id?: string;
   text: string;
   cwd?: unknown;
   imageAttachments?: Record<string, unknown>[];
@@ -1227,13 +1245,14 @@ function buildSteerRestoreMessage(input: {
 }
 
 function buildRestoreMessage(input: {
+  id?: string;
   text: string;
   cwd?: unknown;
   imageAttachments?: Record<string, unknown>[];
 }): Record<string, unknown> {
   const cwd = readString(input.cwd);
   return {
-    id: randomUUID(),
+    id: input.id ?? randomUUID(),
     text: input.text,
     context: {
       addedFiles: [],
@@ -1255,14 +1274,7 @@ function buildRestoreMessage(input: {
 }
 
 function buildLocalTurnSteerParams(params: TurnSteerParams): TurnSteerParams {
-  const next: TurnSteerParams = {
-    threadId: params.threadId,
-    expectedTurnId: params.expectedTurnId,
-    input: params.input,
-  };
-  if (params.restoreMessage) next.restoreMessage = params.restoreMessage;
-  if (params.attachments) next.attachments = params.attachments;
-  return next;
+  return toOfficialTurnSteerParams(params);
 }
 
 export type ServerContext = {
@@ -1434,18 +1446,6 @@ export async function createServer(
     }
   };
 
-  const schedulePostTurnSnapshot = (threadId: string): void => {
-    for (const delayMs of [750, 2500, 8000]) {
-      const timer = setTimeout(() => {
-        void broadcastOwnedAppServerSnapshot(
-          threadId,
-          `post-local-turn-${delayMs}`,
-        );
-      }, delayMs);
-      timer.unref?.();
-    }
-  };
-
   const claimIdleAppServerConversation = (
     threadId: string,
     detail: ThreadDetail | null,
@@ -1503,6 +1503,81 @@ export async function createServer(
     return claimed;
   };
 
+  const promoteLocalOwnerConversation = (
+    threadId: string,
+    reason: string,
+  ): boolean => {
+    if (!officialIpc.isOwnedConversation(threadId)) return false;
+    if (officialIpc.canBroadcastOwnedConversation(threadId)) return true;
+    const promoted = officialIpc.promoteLocalOnlyConversation(threadId, reason);
+    diagnostics.record(
+      promoted ? "info" : "warn",
+      "official-ipc",
+      promoted
+        ? "local-owner-promoted"
+        : "local-owner-promotion-skipped",
+      { threadId, reason },
+    );
+    return promoted;
+  };
+
+  const buildOfficialRealtimeThreadDetailEvent = (threadId: string) => {
+    const state = officialIpc.getThreadStreamState(threadId);
+    if (!state) return null;
+    const detail = hydratePinnedDetail(
+      hydrateSideConversations(
+        threadId,
+        normalizeOfficialConversationState({
+          threadId,
+          ownerClientId: state.ownerClientId,
+          cacheVersion: state.cacheVersion,
+          updatedAtIso: state.updatedAtIso,
+          isInProgress: state.isInProgress,
+          activeTurnId: state.activeTurnId,
+          conversationState: state.conversationState,
+        }),
+      ),
+      new Set(database.listPinnedThreadIds()),
+    );
+    if (!detail) return null;
+    return {
+      type: "domain.threadDetailUpdated" as const,
+      threadId: detail.thread.id || threadId,
+      detail,
+      source: state.isInProgress ? "official-ipc-live" : "official-ipc",
+      cacheVersion: state.cacheVersion,
+      isInProgress: state.isInProgress,
+      activeTurnId: state.activeTurnId,
+    };
+  };
+
+  const localLiveThreads = new LocalLiveThreadStore({
+    isLocalOwner: (threadId) => officialIpc.isOwnedConversation(threadId),
+    readOwner: (threadId) => ownerFromOfficialState(officialIpc, threadId),
+    readInitialDetail: (threadId) => {
+      const state = officialIpc.getThreadStreamState(threadId);
+      if (state) {
+        const detail = hydratePinnedDetail(
+          hydrateSideConversations(
+            threadId,
+            normalizeOfficialConversationState({
+              threadId,
+              ownerClientId: state.ownerClientId,
+              cacheVersion: state.cacheVersion,
+              updatedAtIso: state.updatedAtIso,
+              isInProgress: state.isInProgress,
+              activeTurnId: state.activeTurnId,
+              conversationState: state.conversationState,
+            }),
+          ),
+          new Set(database.listPinnedThreadIds()),
+        );
+        if (detail) return detail;
+      }
+      return database.readThreadDetail(threadId);
+    },
+  });
+
   const claimIdleAppServerConversationByRead = async (
     threadId: string,
     reason: string,
@@ -1548,17 +1623,19 @@ export async function createServer(
 
   officialIpc.onNotification((notification: OfficialIpcNotification) => {
     if (notification.method === OFFICIAL_THREAD_STREAM_CHANGED_METHOD) {
-      bus.publish({
-        type: "official.threadStreamStateChanged",
-        payload: notification.params,
-      });
       const params = asRecord(notification.params);
       const changeType = readString(params?.changeType);
       const threadId =
         readString(params?.threadId) || readString(params?.conversationId);
       if (threadId) {
+        const detailEvent = buildOfficialRealtimeThreadDetailEvent(threadId);
+        if (detailEvent) bus.publish(detailEvent);
         persistOfficialStreamState(threadId);
       }
+      bus.publish({
+        type: "official.threadStreamStateChanged",
+        payload: notification.params,
+      });
       if (
         changeType === "patches-without-snapshot" &&
         threadId &&
@@ -1627,12 +1704,34 @@ export async function createServer(
   officialIpc.start();
 
   appServer.onNotification((notification) => {
+    const classification = classifyAppServerNotification(notification.method);
     bus.publish({
       type: "appServer.notification",
       method: notification.method,
       params: notification.params,
       atIso: notification.atIso,
+      importance: classification.importance,
+      shouldDriveRealtime: classification.shouldDriveRealtime,
     });
+    const liveUpdate = localLiveThreads.handle(notification);
+    if (
+      liveUpdate &&
+      !APP_SERVER_LIVE_DELTA_METHODS.has(notification.method)
+    ) {
+      bus.publish({
+        type: "domain.threadDetailUpdated",
+        threadId: liveUpdate.threadId,
+        detail: liveUpdate.detail,
+        source: liveUpdate.source,
+        cacheVersion: liveUpdate.cacheVersion,
+        isInProgress: liveUpdate.isInProgress,
+        activeTurnId: liveUpdate.activeTurnId,
+      });
+      void broadcastOwnedAppServerSnapshot(
+        liveUpdate.threadId,
+        notification.method,
+      );
+    }
   });
   appServer.registerServerRequestHandler(
     "item/commandExecution/requestApproval",
@@ -1644,6 +1743,10 @@ export async function createServer(
   appServer.registerServerRequestHandler("item/fileChange/requestApproval", {
     handle: (params) =>
       approvals.request("item/fileChange/requestApproval", params),
+  });
+  appServer.registerServerRequestHandler("item/permissions/requestApproval", {
+    handle: (params) =>
+      approvals.request("item/permissions/requestApproval", params),
   });
   const disposeLocalOwnerSnapshotSync = installLocalOwnerSnapshotSync({
     appServer,
@@ -2978,11 +3081,16 @@ export async function createServer(
       );
       const hasUsableOfficialDetail =
         detail && detail.turns.length > 0 && !detailHasEmptyActiveTurn(detail);
-      if (hasUsableOfficialDetail && !state.isInProgress) {
-        database.upsertThreadDetail(threadId, detail, "official-ipc");
+      if (hasUsableOfficialDetail) {
+        const responseSource = state.isInProgress
+          ? "official-ipc-live"
+          : "official-ipc";
+        if (!state.isInProgress) {
+          database.upsertThreadDetail(threadId, detail, "official-ipc");
+        }
         const response = threadDetailResponseSchema.safeParse({
           data: detail,
-          source: "official-ipc",
+          source: responseSource,
         });
         if (!response.success) {
           const error = formatZodError(response.error);
@@ -2990,7 +3098,7 @@ export async function createServer(
             "error",
             "api",
             "domain-thread-detail-response-validation-failed",
-            { threadId, source: "official-ipc", error },
+            { threadId, source: responseSource, error },
           );
           await reply
             .code(500)
@@ -3326,9 +3434,15 @@ export async function createServer(
     }
 
     try {
+      if (!promoteLocalOwnerConversation(threadId, "turn-start")) {
+        await reply
+          .code(503)
+          .send({ error: "official-ipc-owner-not-broadcastable" });
+        return;
+      }
       const result = await startLocalTurn(appServer, params);
       associateSentAttachments();
-      schedulePostTurnSnapshot(threadId);
+      void broadcastOwnedAppServerSnapshot(threadId, "local-turn-start");
       await reply.send({ data: { mode: "app-server", result } });
     } catch (error) {
       await reply.code(502).send({
@@ -3440,45 +3554,6 @@ export async function createServer(
         errorMessage: message,
         officialIpc,
       });
-      if (
-        !fallback.allow &&
-        (fallback.reason === "official-owner-required" ||
-          fallback.reason === "official-owner-unavailable") &&
-        (await claimIdleAppServerConversationByRead(
-          threadId,
-          "turn-steer-stale-active-fallback",
-        ))
-      ) {
-        diagnostics.record("warn", "turn-steer", "stale-active-start-fallback", {
-          threadId,
-          expectedTurnId,
-          error: message,
-          reason: fallback.reason,
-        });
-        try {
-          const startParams = await buildTurnStartParams({
-            threadId,
-            text,
-            cwd: body?.cwd,
-            attachments: storedAttachments,
-            skills: body?.skills,
-            permissionMode: body?.permissionMode,
-          });
-          const result = await startLocalTurn(appServer, startParams);
-          associateSentAttachments();
-          schedulePostTurnSnapshot(threadId);
-          await reply.send({ data: { mode: "app-server", result } });
-          return;
-        } catch (startError) {
-          await reply.code(502).send({
-            error:
-              startError instanceof Error
-                ? startError.message
-                : "Failed to start turn",
-          });
-          return;
-        }
-      }
       if (!fallback.allow) {
         diagnostics.record(
           "warn",
@@ -3535,7 +3610,6 @@ export async function createServer(
       }
       const result = await appServer.threadStart({
         cwd,
-        workspaceRoots: [cwd],
         threadSource: "user",
       });
       const threadRecord =

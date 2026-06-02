@@ -42,6 +42,10 @@ import {
 import type { SendOptions } from "../components/Composer";
 import { userFacingErrorMessage } from "../errorMessages";
 import {
+  applyAppServerRealtimeNotification,
+  readAppServerNotificationThreadId,
+} from "../appServerRealtimeReducer";
+import {
   acceptRealtimeThreadEvent,
   readRealtimeThreadId,
   updateRealtimeServerInstance,
@@ -73,7 +77,7 @@ const WEBSOCKET_ERROR_REALTIME_EVENT: RealtimeEvent = {
 };
 const ACTIVE_THREAD_POLL_INTERVAL_MS = 1_500;
 const REALTIME_REFRESH_DEBOUNCE_MS = 2_000;
-const STREAM_REALTIME_REFRESH_DEBOUNCE_MS = 250;
+const STREAM_REALTIME_REFRESH_DEBOUNCE_MS = 120;
 const ERROR_AUTO_DISMISS_MS = 7_000;
 const APP_SERVER_FAST_DETAIL_METHODS = new Set([
   "turn/started",
@@ -81,13 +85,39 @@ const APP_SERVER_FAST_DETAIL_METHODS = new Set([
   "item/started",
   "item/completed",
   "item/agentMessage/delta",
+  "item/plan/delta",
   "item/commandExecution/outputDelta",
+  "item/commandExecution/terminalInteraction",
+  "item/fileChange/outputDelta",
+  "item/fileChange/patchUpdated",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/textDelta",
+  "thread/status/changed",
+  "turn/plan/updated",
+  "turn/diff/updated",
+  "serverRequest/resolved",
 ]);
 const APP_SERVER_DETAIL_ONLY_METHODS = new Set([
   "item/started",
   "item/completed",
   "item/agentMessage/delta",
+  "item/plan/delta",
   "item/commandExecution/outputDelta",
+  "item/commandExecution/terminalInteraction",
+  "item/fileChange/outputDelta",
+  "item/fileChange/patchUpdated",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/textDelta",
+]);
+const APP_SERVER_HIGH_FREQUENCY_METHODS = new Set([
+  "item/agentMessage/delta",
+  "item/plan/delta",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/textDelta",
 ]);
 
 function hasSendContent(
@@ -263,6 +293,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   const [realtimeEvents, setRealtimeEvents] = useState<RealtimeEvent[]>([]);
   const realtimeVersionsRef = useRef(new Map<string, number>());
   const realtimeServerInstanceRef = useRef("");
+  const lastRealtimeDetailAtRef = useRef(0);
   const threadListHydratedRef = useRef(false);
   const selectedThreadIdRef = useRef(selectedThreadId);
   const threadDetailRef = useRef<ThreadDetail | null>(threadDetail);
@@ -406,6 +437,31 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     [enabled],
   );
 
+  const applyRealtimeThreadDetail = useCallback(
+    (threadId: string, detail: ThreadDetail): boolean => {
+      if (!threadId || detail.thread.id !== threadId) return false;
+      setThreadList((current) => ({
+        ...current,
+        threads: current.threads.map((thread) =>
+          thread.id === threadId ? { ...thread, ...detail.thread } : thread,
+        ),
+      }));
+      if (selectedThreadIdRef.current !== threadId) return false;
+      if (hasActiveDocumentSelection()) return false;
+      const request = beginThreadDetailRequest(
+        detailRequestStateRef.current,
+        threadId,
+      );
+      detailRequestStateRef.current = request.state;
+      lastRealtimeDetailAtRef.current = Date.now();
+      threadDetailRef.current = detail;
+      setThreadDetail(detail);
+      setDetailLoading(false);
+      return true;
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
@@ -520,10 +576,10 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       inFlight = true;
       pollCount += 1;
       try {
-        const tasks: Promise<unknown>[] = [
-          refreshThreadDetail(currentThreadId, { silent: true }),
-          refreshApprovals(),
-        ];
+        const tasks: Promise<unknown>[] = [refreshApprovals()];
+        if (Date.now() - lastRealtimeDetailAtRef.current > 5_000) {
+          tasks.push(refreshThreadDetail(currentThreadId, { silent: true }));
+        }
         if (pollCount % 4 === 1) tasks.push(refreshThreads());
         await Promise.all(tasks);
       } catch {
@@ -561,6 +617,11 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     let pendingRealtimeApprovalsRefresh = false;
     let pendingRealtimeDetailRefresh = false;
     let socket: WebSocket | null = null;
+    let appServerRealtimeFrame: number | null = null;
+    const pendingAppServerRealtimeNotifications: Array<{
+      method: string;
+      params: unknown;
+    }> = [];
 
     const scheduleReconnect = () => {
       if (disposed) return;
@@ -581,6 +642,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       delayMs?: number;
     }) => {
       if (disposed) return;
+      if (!includeThreads && !includeApprovals && !includeDetail) return;
       if (includeThreads) pendingRealtimeThreadsRefresh = true;
       if (includeApprovals) pendingRealtimeApprovalsRefresh = true;
       if (includeDetail) pendingRealtimeDetailRefresh = true;
@@ -614,7 +676,65 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           );
         }
         void Promise.all(tasks);
-      }, REALTIME_REFRESH_DEBOUNCE_MS);
+      }, Math.max(0, delayMs));
+    };
+
+    const flushAppServerRealtimeNotifications = () => {
+      appServerRealtimeFrame = null;
+      if (disposed || pendingAppServerRealtimeNotifications.length === 0)
+        return;
+      if (hasActiveDocumentSelection()) return;
+      const selectedThreadId = selectedThreadIdRef.current;
+      if (!selectedThreadId) return;
+      const pending = pendingAppServerRealtimeNotifications.splice(0);
+      let nextDetail = threadDetailRef.current;
+      for (const notification of pending) {
+        if (
+          readAppServerNotificationThreadId(notification.params) !==
+          selectedThreadId
+        ) {
+          continue;
+        }
+        const reduced = applyAppServerRealtimeNotification(
+          nextDetail,
+          notification.method,
+          notification.params,
+        );
+        if (reduced) nextDetail = reduced;
+      }
+      const currentDetail = threadDetailRef.current;
+      if (!nextDetail || nextDetail === currentDetail) return;
+      lastRealtimeDetailAtRef.current = Date.now();
+      threadDetailRef.current = nextDetail;
+      setThreadDetail(nextDetail);
+      setThreadList((current) => ({
+        ...current,
+        threads: current.threads.map((thread) =>
+          thread.id === nextDetail.thread.id
+            ? { ...thread, ...nextDetail.thread }
+            : thread,
+        ),
+      }));
+      setDetailLoading(false);
+    };
+
+    const queueAppServerRealtimeNotification = (
+      method: string,
+      params: unknown,
+    ): boolean => {
+      if (
+        readAppServerNotificationThreadId(params) !==
+        selectedThreadIdRef.current
+      ) {
+        return false;
+      }
+      pendingAppServerRealtimeNotifications.push({ method, params });
+      if (appServerRealtimeFrame === null) {
+        appServerRealtimeFrame = window.requestAnimationFrame(
+          flushAppServerRealtimeNotifications,
+        );
+      }
+      return threadDetailRef.current?.thread.id === selectedThreadIdRef.current;
     };
 
     const handleMessage = (messageEvent: MessageEvent) => {
@@ -624,7 +744,14 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         );
         if (!parsed.success) throw parsed.error;
         const payload = parsed.data;
-        setRealtimeEvents((current) => [payload, ...current].slice(0, 12));
+        if (
+          !(
+            payload.type === "appServer.notification" &&
+            APP_SERVER_HIGH_FREQUENCY_METHODS.has(payload.method)
+          )
+        ) {
+          setRealtimeEvents((current) => [payload, ...current].slice(0, 12));
+        }
         if (payload.type === "connected") {
           realtimeServerInstanceRef.current = updateRealtimeServerInstance(
             realtimeVersionsRef.current,
@@ -636,6 +763,31 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
             includeApprovals: true,
             includeDetail: true,
           });
+        }
+        if (payload.type === "domain.threadDetailUpdated") {
+          const detailDecision = acceptRealtimeThreadEvent(
+            realtimeVersionsRef.current,
+            payload,
+          );
+          if (!detailDecision.accepted) return;
+          const changedThreadId = payload.threadId;
+          const applied = applyRealtimeThreadDetail(
+            changedThreadId,
+            payload.detail,
+          );
+          if (!applied && changedThreadId === selectedThreadIdRef.current) {
+            scheduleRealtimeRefresh({
+              includeDetail: true,
+              delayMs: STREAM_REALTIME_REFRESH_DEBOUNCE_MS,
+            });
+          }
+          scheduleRealtimeRefresh({
+            includeThreads: !payload.detail.thread.inProgress,
+            delayMs: payload.detail.thread.inProgress
+              ? STREAM_REALTIME_REFRESH_DEBOUNCE_MS
+              : REALTIME_REFRESH_DEBOUNCE_MS,
+          });
+          return;
         }
         if (
           payload.type === "official.threadStreamStateChanged" ||
@@ -650,6 +802,12 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
               ? acceptRealtimeThreadEvent(realtimeVersionsRef.current, payload)
               : null;
           if (officialDecision && !officialDecision.accepted) return;
+          if (
+            payload.type === "appServer.notification" &&
+            payload.shouldDriveRealtime === false
+          ) {
+            return;
+          }
           const changedThreadId =
             officialDecision?.threadId || readRealtimeThreadId(payload);
           const currentThreadId = selectedThreadIdRef.current;
@@ -664,6 +822,13 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
             streamPayload?.isInProgress === true;
           const appServerMethod =
             payload.type === "appServer.notification" ? payload.method : "";
+          const appServerRealtimeQueued =
+            payload.type === "appServer.notification"
+              ? queueAppServerRealtimeNotification(
+                  payload.method,
+                  payload.params,
+                )
+              : false;
           const isAppServerFastDetail =
             appServerMethod.length > 0 &&
             APP_SERVER_FAST_DETAIL_METHODS.has(appServerMethod);
@@ -672,6 +837,12 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           const isAppServerDetailOnly =
             appServerMethod.length > 0 &&
             APP_SERVER_DETAIL_ONLY_METHODS.has(appServerMethod);
+          const appServerCanWaitForDomainPush =
+            payload.type === "appServer.notification" &&
+            (isAppServerDetailOnly || isAppServerFastDetail) &&
+            (appServerRealtimeQueued ||
+              !changedThreadId ||
+              changedThreadId !== currentThreadId);
           scheduleRealtimeRefresh({
             includeThreads:
               payload.type === "appServer.notification"
@@ -682,7 +853,8 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
               payload.type === "approval.requested" ||
               payload.type === "approval.resolved",
             includeDetail:
-              !changedThreadId || changedThreadId === currentThreadId,
+              !appServerCanWaitForDomainPush &&
+              (!changedThreadId || changedThreadId === currentThreadId),
             delayMs: isFastDetailRefresh
               ? STREAM_REALTIME_REFRESH_DEBOUNCE_MS
               : REALTIME_REFRESH_DEBOUNCE_MS,
@@ -725,9 +897,20 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         window.clearTimeout(realtimeRefreshTimer);
         realtimeRefreshDueAt = 0;
       }
+      if (appServerRealtimeFrame !== null) {
+        window.cancelAnimationFrame(appServerRealtimeFrame);
+        appServerRealtimeFrame = null;
+      }
+      pendingAppServerRealtimeNotifications.length = 0;
       socket?.close();
     };
-  }, [enabled, refreshApprovals, refreshThreadDetail, refreshThreads]);
+  }, [
+    applyRealtimeThreadDetail,
+    enabled,
+    refreshApprovals,
+    refreshThreadDetail,
+    refreshThreads,
+  ]);
 
   const selectThread = useCallback((threadId: string) => {
     setSelectedThreadId(threadId);

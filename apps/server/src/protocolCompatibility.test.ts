@@ -21,6 +21,16 @@ const connectedIpc = {
   lastError: null,
 };
 
+const expectedUnregisteredFollowerMethods = [
+  "thread-follower-command-approval-decision",
+  "thread-follower-edit-last-user-turn",
+  "thread-follower-file-approval-decision",
+  "thread-follower-permissions-request-approval-response",
+  "thread-follower-set-queued-follow-ups-state",
+  "thread-follower-submit-mcp-server-elicitation-response",
+  "thread-follower-submit-user-input",
+];
+
 const initializedAppServer = {
   running: true,
   pid: 1234,
@@ -41,7 +51,7 @@ describe("protocol compatibility snapshot", () => {
       version: "0.1.0",
       ipcMethodVersions: IPC_METHOD_VERSIONS,
       registeredRequestHandlers: connectedIpc.registeredRequestHandlers,
-      unregisteredFollowerMethods: ["thread-follower-edit-last-user-turn"],
+      unregisteredFollowerMethods: expectedUnregisteredFollowerMethods,
     });
     expect(snapshot.adapter.followerMethodCapabilities).toEqual(
       expect.arrayContaining([
@@ -64,20 +74,33 @@ describe("protocol compatibility snapshot", () => {
           localHandlerRegistered: true,
           supportLevel: "implemented",
           safeToImplement: true,
-          appServerRpcMapping: null,
+          appServerRpcMapping: "thread/settings/update",
         }),
         expect.objectContaining({
           method: "thread-follower-set-collaboration-mode",
           localHandlerRegistered: true,
           supportLevel: "implemented",
           safeToImplement: true,
-          appServerRpcMapping: null,
+          appServerRpcMapping: "thread/settings/update",
         }),
         expect.objectContaining({
           method: "thread-follower-edit-last-user-turn",
           supportLevel: "risky",
           safeToImplement: false,
           appServerRpcMapping: "thread/rollback + turn/start",
+        }),
+        expect.objectContaining({
+          method: "thread-follower-command-approval-decision",
+          supportLevel: "candidate",
+          safeToImplement: true,
+          appServerRpcMapping:
+            "item/commandExecution/requestApproval response",
+        }),
+        expect.objectContaining({
+          method: "thread-follower-submit-user-input",
+          supportLevel: "candidate",
+          safeToImplement: true,
+          appServerRpcMapping: "item/tool/requestUserInput response",
         }),
       ]),
     );

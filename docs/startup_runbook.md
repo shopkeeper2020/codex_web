@@ -427,6 +427,30 @@ Invoke-RestMethod -Uri http://127.0.0.1:18930/api/diagnostics/export | ConvertTo
 - 不包含附件文件内容。
 - `app.logPath` 会指向普通日志文件路径，便于排查时定位。
 
+## app-server 接口变更前置检查
+
+对接或修改 Codex app-server、official IPC、follower method、raw RPC 参数、request/notification shape 前，必须先完成官方依据核对：
+
+1. 先阅读 OpenAI 官方 Codex app-server 文档，确认当前官方推荐入口、能力边界和术语。
+2. 再核对官方开源仓库中的 `codex-rs/app-server` README/source，以及 `codex-rs/app-server-protocol` schema/source，确认具体 method、字段和 notification shape。
+3. 把证据路径、结论和对 Web 实现的影响写入 `documentation/protocol/official_client_runtime_evidence.md`、`docs/official_client_interaction_refactor_plan.md` 或对应排障文档。
+4. 如果官方文档/source/schema 未确认某个字段，不要把 Desktop/VS Code Webview 私有包装字段直接传给 app-server raw RPC；应先在 backend/domain 层转换或明确拒绝。
+
+可复用的本地核对入口：
+
+```powershell
+node C:\Users\user\.codex\skills\.system\openai-docs\scripts\fetch-codex-manual.mjs
+```
+
+官方源码缓存或克隆存在时，优先检查：
+
+```text
+codex-rs/app-server/README.md
+codex-rs/app-server/src/
+codex-rs/app-server-protocol/schema/
+codex-rs/app-server-protocol/src/
+```
+
 ## app-server 状态检查
 
 后端启动后会主动 warm up 官方 `codex app-server`。状态检查：
@@ -531,7 +555,7 @@ Invoke-RestMethod -Uri $uri | ConvertTo-Json -Depth 10
 - `引导当前`：调用 `/api/domain/turn-steer`，后端优先通过官方 IPC `thread-follower-steer-turn` 转发给当前 owner。
 - `排队下一条`：仍调用 `/api/domain/turn-start`，由官方 owner 或 Web app-server 决定是否排队/启动。
 
-`turn-steer` 必须带 `expectedTurnId`，后端会用当前 Web domain detail 中的 active turn id 作为预条件。引导当前 turn 支持后端已管理的 `attachmentIds`；小图片会以内联 image input/restoreMessage 传给官方 owner，普通文件仍保留受控附件引用，发送成功后关联到当前 thread。
+`turn-steer` 必须带 `expectedTurnId`，后端会用当前 Web domain detail 中的 active turn id 作为预条件。引导当前 turn 支持后端已管理的 `attachmentIds`；图片会以官方 `localImage` input 传入 app-server，并保留 `restoreMessage` 供官方 owner/UI 恢复预览，普通文件仍保留受控附件引用，发送成功后关联到当前 thread。
 
 如果官方 owner 不可用、IPC 未连接或当前会话没有明确 Web-owned 标记，Web 通常会拒绝本地 app-server fallback，返回 409/503，并在 diagnostics 里记录 `official-follower-fallback-denied`。这是为了优先避免三端分叉。
 
@@ -550,6 +574,7 @@ Web 后端会接住 app-server 发来的审批请求：
 ```text
 item/commandExecution/requestApproval
 item/fileChange/requestApproval
+item/permissions/requestApproval
 ```
 
 前端会在当前会话中渲染审批卡片，可执行：
@@ -563,6 +588,7 @@ item/fileChange/requestApproval
 
 - 命令、cwd、grant root 和 proposed execpolicy amendment。
 - 文件变更的目标文件、变更文件列表、diff/patch。
+- 权限请求的 requested permissions；批准会返回官方 `permissions` 子集，本轮批准会附带 `scope: "session"`。
 - diff 支持复制和展开/折叠；提交决策时按钮会进入处理中状态，避免重复点击。
 
 调试接口：
@@ -629,7 +655,7 @@ GET /api/attachments/<attachment-id>/content
 
 内容接口和清理接口都只允许操作 `data/attachments/` 下的持久化文件。发送消息前，后端会拒绝不存在的 attachment id 和已经绑定到其他 thread 的附件；发送成功后，原本孤立的附件会关联到当前 thread。清理接口只会删除 `thread_id`、`turn_id` 和 `official_reference_id` 都为空的孤立附件；已关联附件默认永久保留，便于后续在 Desktop/扩展/Web 中复看。Composer 会对图片附件显示缩略图，普通附件显示可打开链接。
 
-注意：附件发送到官方 app-server 的参数已经贯通，`turn-start` 和 `turn-steer` 都只接受后端已管理和校验归属的 `attachmentIds`；小图片会补充为官方可见的 image input。官方对普通文件的最终持久引用格式仍需要在后续真实 turn 里继续验证。
+注意：附件发送到官方 app-server 的参数已经贯通，`turn-start` 和 `turn-steer` 都只接受后端已管理和校验归属的 `attachmentIds`；图片会补充为官方可见的 `localImage` input。官方对普通文件的最终持久引用格式仍需要在后续真实 turn 里继续验证。
 
 如果 `lastError` 指向 WindowsApps 中的 `codex.exe` 权限问题，优先阅读：
 

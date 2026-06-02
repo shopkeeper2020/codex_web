@@ -8,6 +8,7 @@ import {
   OFFICIAL_THREAD_UNARCHIVED_METHOD,
   type OfficialIpcBridge,
   type OfficialIpcNotification,
+  type OfficialThreadStreamState,
 } from "@codex-web/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type ServerContext } from "./app.js";
@@ -24,6 +25,7 @@ class FakeOfficialIpc {
     ownerClientId?: string | null;
     sourceClientId?: string | null;
   }> = [];
+  readonly streamStates = new Map<string, OfficialThreadStreamState>();
 
   setRawFrameLogging(): void {}
 
@@ -52,8 +54,12 @@ class FakeOfficialIpc {
     return false;
   }
 
-  getThreadStreamState(): null {
-    return null;
+  getThreadStreamState(threadId: string): OfficialThreadStreamState | null {
+    return this.streamStates.get(threadId) ?? null;
+  }
+
+  listThreadStreamStates(): OfficialThreadStreamState[] {
+    return Array.from(this.streamStates.values());
   }
 
   hydrateThreadStreamState(input: {
@@ -307,6 +313,78 @@ describe("official IPC realtime events", () => {
     } finally {
       ws.terminate();
     }
+  });
+
+  it("publishes domain thread detail immediately for official stream changes", async () => {
+    const { appServer, context, officialIpc } = await createHarness();
+    const events: PublishedServerEvent[] = [];
+    const unsubscribe = context.bus.subscribe((event) => events.push(event));
+    officialIpc.streamStates.set("thread-live", {
+      threadId: "thread-live",
+      conversationId: "thread-live",
+      hostId: "local",
+      ownerClientId: "desktop-client",
+      sourceClientId: "desktop-client",
+      conversationState: {
+        id: "thread-live",
+        name: "Live official thread",
+        threadRuntimeStatus: { type: "active" },
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [{ type: "agent_message", text: "streaming" }],
+          },
+        ],
+      },
+      changeType: "snapshot",
+      cacheVersion: 42,
+      updatedAtIso: "2026-05-29T00:00:00.000Z",
+      isInProgress: true,
+      activeTurnId: "turn-live",
+    });
+
+    officialIpc.emit(OFFICIAL_THREAD_STREAM_CHANGED_METHOD, {
+      threadId: "thread-live",
+      cacheVersion: 42,
+      isInProgress: true,
+    });
+    unsubscribe();
+
+    expect(appServer.threadReadCalls).toEqual([]);
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "domain.threadDetailUpdated",
+        threadId: "thread-live",
+        source: "official-ipc-live",
+        cacheVersion: 42,
+        detail: expect.objectContaining({
+          thread: expect.objectContaining({
+            id: "thread-live",
+            title: "Live official thread",
+            inProgress: true,
+          }),
+          turns: [
+            expect.objectContaining({
+              id: "turn-live",
+              status: "active",
+            }),
+          ],
+        }),
+      }),
+      expect.objectContaining({
+        type: "official.threadStreamStateChanged",
+        payload: expect.objectContaining({
+          threadId: "thread-live",
+          cacheVersion: 42,
+        }),
+      }),
+    ]);
+    expect(realtimeEventSchema.parse(events[0])).toMatchObject({
+      type: "domain.threadDetailUpdated",
+      threadId: "thread-live",
+      cacheVersion: 42,
+    });
   });
 
   it("hydrates the official stream cache when patches arrive without a snapshot", async () => {

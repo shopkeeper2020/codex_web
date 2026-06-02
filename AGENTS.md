@@ -16,6 +16,8 @@
 - 启动手册：`docs/startup_runbook.md`
 - 仓库结构：`docs/repository_overview.md`
 - 官方 IPC 研究：`documentation/protocol/official_codex_ipc_sync.md`
+- 官方客户端交互改造方案：`docs/official_client_interaction_refactor_plan.md`
+- 官方客户端 runtime 证据：`documentation/protocol/official_client_runtime_evidence.md`
 - 踩坑记录：`docs/pitfalls/README.md`
 
 ## 协作底线
@@ -25,6 +27,7 @@
 - 前端不直接依赖官方 raw protocol shape，必须经过 backend/domain 转换。
 - owner/follower 只作为协议和诊断概念，不暴露给普通用户。
 - 破坏性操作必须走官方可验证路径，不能猜测本地文件结构直接修改。
+- 对接或修改 Codex app-server / official IPC / raw RPC 参数、request/notification shape 前，必须先阅读 OpenAI 官方 Codex app-server 文档，并核对官方 `codex-rs/app-server` 源码和 `app-server-protocol` schema；不得凭记忆、旧实现或 Desktop 私有包装字段猜接口。
 
 ## 默认运行配置
 

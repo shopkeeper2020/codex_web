@@ -1,4 +1,6 @@
 import type { DiagnosticEvent } from "@codex-web/domain";
+import type { ThreadDetail } from "@codex-web/domain";
+import type { AppServerNotificationImportance } from "@codex-web/protocol";
 import type { ApprovalDecision, PendingApproval } from "./approvals.js";
 
 export type ServerEvent =
@@ -8,8 +10,19 @@ export type ServerEvent =
       method: string;
       params: unknown;
       atIso: string;
+      importance?: AppServerNotificationImportance;
+      shouldDriveRealtime?: boolean;
     }
   | { type: "official.threadStreamStateChanged"; payload: unknown }
+  | {
+      type: "domain.threadDetailUpdated";
+      threadId: string;
+      detail: ThreadDetail;
+      source: string;
+      cacheVersion?: number;
+      isInProgress?: boolean;
+      activeTurnId?: string;
+    }
   | { type: "official.threadArchived"; payload: unknown }
   | { type: "official.threadUnarchived"; payload: unknown }
   | { type: "official.statusChanged"; payload: unknown }

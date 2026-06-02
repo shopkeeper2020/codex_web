@@ -21,6 +21,17 @@ describe("realtime state helpers", () => {
     expect(readRealtimeCacheVersion(event)).toBe(4);
   });
 
+  it("reads cache versions from pushed domain thread detail events", () => {
+    const event = {
+      type: "domain.threadDetailUpdated",
+      threadId: "thread-a",
+      cacheVersion: 9,
+    };
+
+    expect(readRealtimeThreadId(event)).toBe("thread-a");
+    expect(readRealtimeCacheVersion(event)).toBe(9);
+  });
+
   it("reads thread ids from app-server notification params and approvals", () => {
     expect(
       readRealtimeThreadId({

@@ -11,6 +11,16 @@ const registeredHandlers = [
   { method: "thread-follower-steer-turn", version: 1 },
 ];
 
+const expectedMissingOptional = [
+  "thread-follower-command-approval-decision",
+  "thread-follower-edit-last-user-turn",
+  "thread-follower-file-approval-decision",
+  "thread-follower-permissions-request-approval-response",
+  "thread-follower-set-queued-follow-ups-state",
+  "thread-follower-submit-mcp-server-elicitation-response",
+  "thread-follower-submit-user-input",
+];
+
 const connectedIpcStatus = {
   supported: true,
   connected: true,
@@ -58,7 +68,7 @@ describe("sync readiness snapshot", () => {
     expect(readiness).toMatchObject({
       followerHandlers: {
         missingRequired: [],
-        missingOptional: ["thread-follower-edit-last-user-turn"],
+        missingOptional: expectedMissingOptional,
       },
       recentFollowerRequests: connectedIpcStatus.recentFollowerRequests,
       recentOwnershipHandoffs: connectedIpcStatus.recentOwnershipHandoffs,

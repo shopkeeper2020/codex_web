@@ -105,6 +105,7 @@ describe("API contract schemas", () => {
     diff: null,
     changedFiles: null,
     proposedExecpolicyAmendment: ["allow"],
+    permissions: null,
     createdAtIso: "2026-05-29T00:00:00.000Z",
     status: "pending" as const,
   };
@@ -333,6 +334,30 @@ describe("API contract schemas", () => {
         payload: { conversationId: "thread-a", sourceClientId: "desktop-a" },
       }).payload,
     ).toMatchObject({ conversationId: "thread-a" });
+
+    expect(
+      realtimeEventSchema.parse({
+        type: "domain.threadDetailUpdated",
+        sequence: 9,
+        threadId: "thread-a",
+        detail: {
+          thread: { ...thread, inProgress: true },
+          turns: [],
+        },
+        source: "official-ipc-live",
+        cacheVersion: 12,
+        isInProgress: true,
+        activeTurnId: "turn-a",
+      }),
+    ).toMatchObject({
+      type: "domain.threadDetailUpdated",
+      threadId: "thread-a",
+      detail: {
+        thread: { id: "thread-a", inProgress: true },
+        goal: null,
+      },
+      cacheVersion: 12,
+    });
 
     expect(
       realtimeEventSchema.parse({

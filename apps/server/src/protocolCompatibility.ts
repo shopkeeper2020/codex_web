@@ -1,4 +1,7 @@
-import { IPC_METHOD_VERSIONS } from "@codex-web/protocol";
+import {
+  IPC_METHOD_VERSIONS,
+  OFFICIAL_FOLLOWER_METHODS,
+} from "@codex-web/protocol";
 
 export type ProtocolCompatibilityState =
   | "compatible"
@@ -112,11 +115,11 @@ const FOLLOWER_METHOD_CAPABILITY_DEFINITIONS: FollowerMethodCapabilityDefinition
       officialForHostCommand:
         "thread-follower-set-model-and-reasoning-for-host",
       ownerBehavior:
-        "owner updates latestModel/latestReasoningEffort in local owner state",
-      appServerRpcMapping: null,
+        "owner updates next-turn model/latestReasoningEffort settings",
+      appServerRpcMapping: "thread/settings/update",
       supportLevel: "implemented",
       safeToImplement: true,
-      note: "Implemented as Web-owned runtime owner state; future follower start-turn requests inherit the stored model and effort when params omit them.",
+      note: "Implemented for Web-owned conversations via official thread/settings/update, with local runtime owner state retained as a fallback for older app-server versions.",
     },
     {
       method: "thread-follower-set-collaboration-mode",
@@ -124,11 +127,11 @@ const FOLLOWER_METHOD_CAPABILITY_DEFINITIONS: FollowerMethodCapabilityDefinition
       officialForHostCommandFound: true,
       officialForHostCommand: "thread-follower-set-collaboration-mode-for-host",
       ownerBehavior:
-        "owner updates latestCollaborationMode in local owner state",
-      appServerRpcMapping: null,
+        "owner updates next-turn collaborationMode settings",
+      appServerRpcMapping: "thread/settings/update",
       supportLevel: "implemented",
       safeToImplement: true,
-      note: "Implemented as Web-owned runtime owner state; future follower start-turn requests inherit the stored collaboration mode when params omit it.",
+      note: "Implemented for Web-owned conversations via official thread/settings/update, with local runtime owner state retained as a fallback for older app-server versions.",
     },
     {
       method: "thread-follower-edit-last-user-turn",
@@ -141,6 +144,82 @@ const FOLLOWER_METHOD_CAPABILITY_DEFINITIONS: FollowerMethodCapabilityDefinition
       supportLevel: "risky",
       safeToImplement: false,
       note: "Rollback does not restore local file changes and requires exact turn params, attachments and approval policy reconstruction.",
+    },
+    {
+      method: "thread-follower-command-approval-decision",
+      requiredForRealtimeSync: false,
+      officialForHostCommandFound: true,
+      officialForHostCommand:
+        "thread-follower-command-approval-decision-for-host",
+      ownerBehavior:
+        "owner applies a command approval decision to the pending server request",
+      appServerRpcMapping: "item/commandExecution/requestApproval response",
+      supportLevel: "candidate",
+      safeToImplement: true,
+      note: "Required for full parity when Web approves or rejects an official-owned command request.",
+    },
+    {
+      method: "thread-follower-file-approval-decision",
+      requiredForRealtimeSync: false,
+      officialForHostCommandFound: true,
+      officialForHostCommand: "thread-follower-file-approval-decision-for-host",
+      ownerBehavior:
+        "owner applies a file-change approval decision to the pending server request",
+      appServerRpcMapping: "item/fileChange/requestApproval response",
+      supportLevel: "candidate",
+      safeToImplement: true,
+      note: "Required for full parity when Web approves or rejects an official-owned file-change request.",
+    },
+    {
+      method: "thread-follower-permissions-request-approval-response",
+      requiredForRealtimeSync: false,
+      officialForHostCommandFound: true,
+      officialForHostCommand:
+        "thread-follower-permissions-request-approval-response-for-host",
+      ownerBehavior:
+        "owner applies a permissions approval response to the pending server request",
+      appServerRpcMapping: "item/permissions/requestApproval response",
+      supportLevel: "candidate",
+      safeToImplement: true,
+      note: "Required for full parity with owner-side permission expansion requests.",
+    },
+    {
+      method: "thread-follower-submit-user-input",
+      requiredForRealtimeSync: false,
+      officialForHostCommandFound: true,
+      officialForHostCommand: "thread-follower-submit-user-input-for-host",
+      ownerBehavior:
+        "owner submits structured user input answers to the pending tool request",
+      appServerRpcMapping: "item/tool/requestUserInput response",
+      supportLevel: "candidate",
+      safeToImplement: true,
+      note: "Required for full parity when an official-owned turn asks Web for user input.",
+    },
+    {
+      method: "thread-follower-submit-mcp-server-elicitation-response",
+      requiredForRealtimeSync: false,
+      officialForHostCommandFound: true,
+      officialForHostCommand:
+        "thread-follower-submit-mcp-server-elicitation-response-for-host",
+      ownerBehavior:
+        "owner submits an MCP elicitation response to the pending tool request",
+      appServerRpcMapping: "item/tool/requestOptionSelection response",
+      supportLevel: "candidate",
+      safeToImplement: true,
+      note: "Required for full parity with MCP elicitation requests during official-owned turns.",
+    },
+    {
+      method: "thread-follower-set-queued-follow-ups-state",
+      requiredForRealtimeSync: false,
+      officialForHostCommandFound: true,
+      officialForHostCommand:
+        "thread-follower-set-queued-follow-ups-state-for-host",
+      ownerBehavior:
+        "owner updates queued follow-up messages for the active conversation",
+      appServerRpcMapping: null,
+      supportLevel: "candidate",
+      safeToImplement: true,
+      note: "Required for full parity with official queued follow-up synchronization.",
     },
   ];
 
@@ -182,8 +261,7 @@ function unregisteredFollowerMethods(
   const registered = new Set(
     registeredHandlers.map((handler) => handler.method),
   );
-  return Object.keys(IPC_METHOD_VERSIONS)
-    .filter((method) => method.startsWith("thread-follower-"))
+  return OFFICIAL_FOLLOWER_METHODS
     .filter((method) => !registered.has(method))
     .sort();
 }

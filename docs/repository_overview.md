@@ -29,6 +29,13 @@ codex_web/
 
 ## 分层原则
 
+app-server/官方协议对接硬门禁：
+
+- 凡新增或修改 Codex app-server、official IPC、follower method、raw RPC 参数、request/notification shape，必须先阅读 OpenAI 官方 Codex app-server 文档，再核对官方 `codex-rs/app-server` 源码和 `app-server-protocol` schema。
+- 官方 Desktop/VS Code 的本地私有字段只能作为现象证据；只有官方文档、app-server 源码或协议 schema 明确支持的字段，才能进入 Web 后端对 app-server 的 raw RPC。
+- 接口改动必须在方案或实现记录中写明证据路径和结论，优先更新 `documentation/protocol/official_client_runtime_evidence.md`、`docs/official_client_interaction_refactor_plan.md` 或相关排障文档。
+- 未完成官方文档/source/schema 核对时，不允许提交 app-server/IPC 对接改动；宁可先保留明确失败，也不要自建一套会导致三端分叉的兼容逻辑。
+
 - `apps/web` 不直接读取官方 raw protocol。
 - `apps/server` 负责连接官方 IPC、app-server 和浏览器。
 - `packages/protocol` 只描述 wire protocol 和传输适配。
@@ -50,7 +57,7 @@ codex_web/
 - Sync readiness 通过 `apps/server/src/syncReadiness.ts` 统一构建 handler 覆盖、thread owner、recent follower 和 owner handoff 诊断；`apps/server/src/app.ts` 只负责 `/api/sync/readiness` 路由挂载。
 - Web-owned thread 的生命周期边界必须由后端协议层维护：Web 新建时先建立 local-only owner，不向官方 Desktop/VS Code 广播空 stream snapshot；只有可公开广播的 Web-owned thread 才把本地 snapshot 转成官方 `thread-stream-state-changed`。外部官方客户端重新广播时释放 Web owner，Web 归档成功后要释放本端 owner 和 cached stream state，失去 Web ownership 后要清理 cached runtime owner-state，避免归档或 handoff 后的残留 owner/settings 继续接管 follower 请求。
 - 官方客户端发出的 `thread-archived` / `thread-unarchived` 广播只作为被动收敛信号：协议层释放相关 cached stream state/ownership，并由后端转成 `official.threadArchived` / `official.threadUnarchived` realtime event，前端据此刷新列表和当前 detail。
-- Web 新建 thread 前必须确认官方 IPC 已初始化出 Web `clientId`；没有 owner 身份时不要调用本地 app-server `thread/start`。`thread/start` 必须带 `threadSource: "user"` 和 `workspaceRoots`，避免官方 Desktop 读到缺 metadata 的本地会话。app-server 已创建但 local-only owner 未建立时，路由必须返回失败、记录诊断且不写入 Web 投影缓存。
+- Web 新建 thread 前必须确认官方 IPC 已初始化出 Web `clientId`；没有 owner 身份时不要调用本地 app-server `thread/start`。`thread/start` raw RPC 必须按官方 app-server 形状携带 `threadSource: "user"`；runtime workspace roots 由 app-server 根据 `cwd` 建立，不要把 Desktop 内部 `start-conversation` 包装层的 `workspaceRoots` 直接混入 raw app-server 参数。app-server 已创建但 local-only owner 未建立时，路由必须返回失败、记录诊断且不写入 Web 投影缓存。
 - 重命名会话使用官方 Desktop 相同的 app-server RPC `thread/name/set`；external-owned thread 改名后只做 official stream cache 的只读 hydrate，不声明 Web owner、不写 `thread_details` cache。archive/unarchive 对明确 external-owned 的 thread 仍返回 `official-owner-action-required:*`，直到实现官方 action/follower 路径。Web-owned rename 后刷新详情时也必须复查 owner，owner 已被官方端接管时不要重广播本地 snapshot。
 - 对 external-owned 的空 official snapshot，`/api/domain/thread-detail` 可以临时读取 app-server 补足展示数据，但不得写入 `thread_details` cache。
 - 本地 app-server 通知和 approval 事件不能自己决定 owner；`apps/server/src/syncCoordinator.ts` 只有在 `officialIpc.isOwnedConversation(threadId)` 明确为真且该 owner 允许广播时才调度本地 snapshot 广播，并在 debounce 执行前、thread/read 后再次复查 owner。

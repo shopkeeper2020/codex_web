@@ -25,6 +25,45 @@ describe('thread actions', () => {
     ])
   })
 
+  it('strips UI-only turn fields before calling the raw app-server', async () => {
+    const calls: Array<{ method: string; params: unknown }> = []
+    const appServer = {
+      async rpc(method: string, params?: unknown): Promise<unknown> {
+        calls.push({ method, params })
+        return { ok: true }
+      },
+      async turnStart(params: TurnStartParams): Promise<unknown> {
+        calls.push({ method: 'turn/start', params })
+        return { turn: { id: 'turn-b' } }
+      },
+    }
+
+    await startLocalTurn(appServer, {
+      threadId: 'thread-b',
+      input: [{ type: 'text', text: 'hello' }],
+      clientUserMessageId: 'client-msg-b',
+      cwd: 'C:\\workspace\\codex_web',
+      attachments: [{ path: 'C:\\workspace\\codex_web\\image.png' }],
+      restoreMessage: { text: 'hello' },
+    })
+
+    expect(calls).toEqual([
+      {
+        method: 'thread/resume',
+        params: { threadId: 'thread-b', cwd: 'C:\\workspace\\codex_web' },
+      },
+      {
+        method: 'turn/start',
+        params: {
+          threadId: 'thread-b',
+          input: [{ type: 'text', text: 'hello' }],
+          clientUserMessageId: 'client-msg-b',
+          cwd: 'C:\\workspace\\codex_web',
+        },
+      },
+    ])
+  })
+
   it('sets a fallback title and retries archive when no rollout is materialized', async () => {
     const calls: Array<{ method: string; params: unknown }> = []
     let archiveCalls = 0

@@ -109,14 +109,13 @@ export async function toTurnStartImageInput(
       text_elements: [],
     },
     input: {
-      type: 'image',
-      url: dataUrl,
-      mimeType,
-      filename: attachment.filename,
+      type: 'localImage',
+      path: attachment.path,
     },
     restoreAttachment: {
       src: dataUrl,
       filename: attachment.filename,
+      path: attachment.path,
       mimeType,
       uploadStatus: 'idle',
     },

@@ -3,11 +3,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
+  IPC_METHOD_VERSIONS,
   OFFICIAL_THREAD_ARCHIVED_METHOD,
   OFFICIAL_THREAD_STREAM_CHANGED_METHOD,
   OFFICIAL_THREAD_UNARCHIVED_METHOD,
   OfficialIpcBridge,
   applyOfficialIpcPatches,
+  classifyAppServerNotification,
   readOfficialConversationId,
   type OfficialIpcFrame,
   type OfficialIpcNotification,
@@ -225,6 +227,50 @@ function sendExternalOwnerSnapshot(
 }
 
 describe("official IPC helpers", () => {
+  it("declares the official follower and broadcast method versions used by Desktop and VS Code", () => {
+    expect(IPC_METHOD_VERSIONS).toMatchObject({
+      "thread-stream-state-changed": 6,
+      "thread-read-state-changed": 1,
+      "thread-archived": 2,
+      "thread-unarchived": 1,
+      "thread-follower-start-turn": 1,
+      "thread-follower-steer-turn": 1,
+      "thread-follower-interrupt-turn": 1,
+      "thread-follower-command-approval-decision": 1,
+      "thread-follower-file-approval-decision": 1,
+      "thread-follower-permissions-request-approval-response": 1,
+      "thread-follower-submit-user-input": 1,
+      "thread-follower-submit-mcp-server-elicitation-response": 1,
+      "thread-follower-set-queued-follow-ups-state": 1,
+      "thread-queued-followups-changed": 1,
+    });
+  });
+
+  it("classifies app-server notifications using the official importance split", () => {
+    expect(classifyAppServerNotification("item/agentMessage/delta")).toEqual({
+      method: "item/agentMessage/delta",
+      importance: "important",
+      shouldDriveRealtime: true,
+    });
+    expect(classifyAppServerNotification("rawResponseItem/completed")).toEqual(
+      {
+        method: "rawResponseItem/completed",
+        importance: "ignored",
+        shouldDriveRealtime: false,
+      },
+    );
+    expect(classifyAppServerNotification("process/outputDelta")).toEqual({
+      method: "process/outputDelta",
+      importance: "passthrough",
+      shouldDriveRealtime: false,
+    });
+    expect(classifyAppServerNotification("future/event")).toEqual({
+      method: "future/event",
+      importance: "unknown",
+      shouldDriveRealtime: true,
+    });
+  });
+
   it("reads common conversation id fields", () => {
     expect(readOfficialConversationId({ conversationId: "a" })).toBe("a");
     expect(readOfficialConversationId({ conversation_id: "b" })).toBe("b");
@@ -451,6 +497,64 @@ describe("official IPC helpers", () => {
     expect(JSON.stringify(snapshot)).toBe(originalSnapshot);
   });
 
+  it("normalizes app-server thread snapshots into Desktop stream shape", () => {
+    const bridge = new OfficialIpcBridge("");
+    (bridge as unknown as { clientId: string | null }).clientId = "web-client";
+    const startedAt = "2026-06-02T00:00:00.000Z";
+    const snapshot = {
+      id: "thread-web-created",
+      sessionId: "thread-web-created",
+      source: "vscode",
+      threadSource: null,
+      cwd: "C:\\workspace\\codex_web",
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:00:01.000Z",
+      status: { type: "active" },
+      turns: [
+        {
+          id: "turn-active",
+          status: "inProgress",
+          startedAt,
+          items: [{ type: "agentMessage", id: "assistant-1", text: "hi" }],
+        },
+      ],
+    };
+    const originalSnapshot = JSON.stringify(snapshot);
+
+    expect(
+      bridge.broadcastConversationSnapshot("thread-web-created", snapshot),
+    ).toBe(true);
+
+    expect(
+      bridge.getThreadStreamState("thread-web-created"),
+    ).toMatchObject({
+      isInProgress: true,
+      activeTurnId: "turn-active",
+      conversationState: {
+        hostId: "local",
+        threadSource: "user",
+        status: { type: "active", activeFlags: [] },
+        threadRuntimeStatus: { type: "active", activeFlags: [] },
+        turns: [
+          {
+            id: "turn-active",
+            turnId: "turn-active",
+            status: "inProgress",
+            turnStartedAtMs: Date.parse(startedAt),
+            params: { cwd: "C:\\workspace\\codex_web" },
+            diff: [],
+            commandExecutionStartedAtMsById: {},
+            hookRuns: [],
+            items: [
+              { type: "agentMessage", id: "assistant-1", text: "hi" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(snapshot)).toBe(originalSnapshot);
+  });
+
   it("claims local-only conversations without publishing stream state", () => {
     const bridge = new OfficialIpcBridge("");
     (bridge as unknown as { clientId: string | null }).clientId = "web-client";
@@ -458,6 +562,7 @@ describe("official IPC helpers", () => {
     expect(bridge.claimLocalOnlyConversation("thread-local")).toBe(true);
 
     expect(bridge.isOwnedConversation("thread-local")).toBe(true);
+    expect(bridge.isLocalOnlyOwnedConversation("thread-local")).toBe(true);
     expect(bridge.canBroadcastOwnedConversation("thread-local")).toBe(false);
     expect(bridge.getThreadStreamState("thread-local")).toBeNull();
     expect(
@@ -475,6 +580,85 @@ describe("official IPC helpers", () => {
     expect(bridge.getStatus()).toMatchObject({
       ownedConversationCount: 0,
       localOnlyOwnedConversationCount: 0,
+    });
+  });
+
+  it("promotes local-only conversations before publishing live stream state", () => {
+    const bridge = new OfficialIpcBridge("");
+    (bridge as unknown as { clientId: string | null }).clientId = "web-client";
+
+    expect(bridge.claimLocalOnlyConversation("thread-local")).toBe(true);
+    expect(bridge.promoteLocalOnlyConversation("thread-local", "turn-start"))
+      .toBe(true);
+
+    expect(bridge.isLocalOnlyOwnedConversation("thread-local")).toBe(false);
+    expect(bridge.canBroadcastOwnedConversation("thread-local")).toBe(true);
+    expect(
+      bridge.broadcastConversationSnapshot("thread-local", {
+        threadRuntimeStatus: { type: "active" },
+        turns: [{ id: "turn-active", status: "active", items: [] }],
+      }),
+    ).toBe(true);
+    expect(bridge.getThreadStreamState("thread-local")).toMatchObject({
+      ownerClientId: "web-client",
+      isInProgress: true,
+      activeTurnId: "turn-active",
+    });
+    expect(bridge.getStatus()).toMatchObject({
+      ownedConversationCount: 1,
+      localOnlyOwnedConversationCount: 0,
+      recentOwnershipHandoffs: [
+        expect.objectContaining({
+          conversationId: "thread-local",
+          nextOwnerClientId: "web-client",
+          reason: "turn-start",
+        }),
+      ],
+    });
+  });
+
+  it("keeps active Web ownership when an external client opens the conversation", () => {
+    const bridge = new OfficialIpcBridge("");
+    const testBridge = bridge as unknown as {
+      clientId: string | null;
+      handleFrame: (frame: Record<string, unknown>) => void;
+    };
+    testBridge.clientId = "web-client";
+
+    expect(
+      bridge.broadcastConversationSnapshot("thread-web-owned", {
+        threadRuntimeStatus: { type: "active" },
+        turns: [{ id: "turn-active", status: "active", items: [] }],
+      }),
+    ).toBe(true);
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-web-owned",
+        change: {
+          type: "snapshot",
+          conversationState: {
+            threadRuntimeStatus: { type: "active" },
+            turns: [{ id: "turn-active", status: "active", items: [] }],
+          },
+        },
+      },
+    });
+
+    expect(bridge.isOwnedConversation("thread-web-owned")).toBe(true);
+    expect(bridge.getThreadStreamState("thread-web-owned")).toMatchObject({
+      ownerClientId: "web-client",
+      sourceClientId: "web-client",
+      isInProgress: true,
+      activeTurnId: "turn-active",
+    });
+    expect(bridge.getStatus()).toMatchObject({
+      ownedConversationCount: 1,
+      recentOwnershipHandoffs: [],
     });
   });
 

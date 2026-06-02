@@ -4,6 +4,7 @@ import type {
   TurnInterruptParams,
   TurnStartParams,
   TurnSteerParams,
+  ThreadSettingsUpdateParams,
 } from "./appServerProcess.js";
 import {
   installLocalOwnerSnapshotSync,
@@ -96,6 +97,13 @@ class FakeAppServer implements LocalOwnerAppServer {
     return { compacted: true };
   }
 
+  async threadSettingsUpdate(
+    params: ThreadSettingsUpdateParams,
+  ): Promise<unknown> {
+    this.calls.push({ method: "thread/settings/update", params });
+    return {};
+  }
+
   async turnStart(params: TurnStartParams): Promise<unknown> {
     this.calls.push({ method: "turn/start", params });
     return { started: true };
@@ -151,6 +159,7 @@ function pendingApproval(threadId: string) {
     diff: null,
     changedFiles: null,
     proposedExecpolicyAmendment: null,
+    permissions: null,
     createdAtIso: "2026-05-29T00:00:00.000Z",
     status: "pending" as const,
   };
@@ -305,6 +314,24 @@ describe("local owner sync coordinator", () => {
 
       expect(appServer.calls).toEqual([
         {
+          method: "thread/settings/update",
+          params: {
+            threadId: "thread-1",
+            model: "gpt-runtime",
+            effort: "high",
+          },
+        },
+        {
+          method: "thread/settings/update",
+          params: {
+            threadId: "thread-1",
+            collaborationMode: {
+              mode: "plan",
+              settings: { developer_instructions: null },
+            },
+          },
+        },
+        {
           method: "thread/resume",
           params: { threadId: "thread-1" },
         },
@@ -441,17 +468,17 @@ describe("local owner sync coordinator", () => {
     }
   });
 
-  it("broadcasts debounced snapshots for local owner app-server stream events", async () => {
+  it("broadcasts debounced snapshots for local owner lifecycle events", async () => {
     vi.useFakeTimers();
     const { officialIpc, appServer, dispose } = installFakes({
       debounceMs: 10,
     });
     officialIpc.ownedThreads.add("thread-1");
     try {
-      appServer.emit("item/agentMessage/delta", {
+      appServer.emit("item/completed", {
         threadId: "thread-1",
       });
-      appServer.emit("item/agentMessage/delta", {
+      appServer.emit("item/completed", {
         threadId: "thread-1",
       });
 
@@ -470,6 +497,25 @@ describe("local owner sync coordinator", () => {
           state: { id: "thread-1", title: "Thread" },
         },
       ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not use token deltas to drive official full snapshots", async () => {
+    vi.useFakeTimers();
+    const { officialIpc, appServer, dispose } = installFakes({
+      debounceMs: 10,
+    });
+    officialIpc.ownedThreads.add("thread-1");
+    try {
+      appServer.emit("item/agentMessage/delta", {
+        threadId: "thread-1",
+      });
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(appServer.calls).toEqual([]);
+      expect(officialIpc.snapshots).toEqual([]);
     } finally {
       dispose();
     }
@@ -500,7 +546,7 @@ describe("local owner sync coordinator", () => {
       },
     };
     try {
-      appServer.emit("item/agentMessage/delta", {
+      appServer.emit("item/completed", {
         threadId: "side-thread-1",
       });
       await vi.advanceTimersByTimeAsync(10);
@@ -616,7 +662,7 @@ describe("local owner sync coordinator", () => {
       debounceMs: 10,
     });
     try {
-      appServer.emit("item/agentMessage/delta", {
+      appServer.emit("item/completed", {
         conversationId: "thread-1",
       });
       await vi.advanceTimersByTimeAsync(10);
@@ -636,7 +682,7 @@ describe("local owner sync coordinator", () => {
     officialIpc.ownedThreads.add("thread-1");
     officialIpc.localOnlyThreads.add("thread-1");
     try {
-      appServer.emit("item/agentMessage/delta", {
+      appServer.emit("item/completed", {
         conversationId: "thread-1",
       });
       await vi.advanceTimersByTimeAsync(10);
@@ -655,7 +701,7 @@ describe("local owner sync coordinator", () => {
     });
     officialIpc.ownedThreads.add("thread-1");
     try {
-      appServer.emit("item/agentMessage/delta", {
+      appServer.emit("item/completed", {
         conversationId: "thread-1",
       });
       officialIpc.ownedThreads.delete("thread-1");
@@ -680,7 +726,7 @@ describe("local owner sync coordinator", () => {
       return { thread: { id: "thread-1", title: "Thread" } };
     });
     try {
-      appServer.emit("item/agentMessage/delta", {
+      appServer.emit("item/completed", {
         conversationId: "thread-1",
       });
       await vi.advanceTimersByTimeAsync(10);

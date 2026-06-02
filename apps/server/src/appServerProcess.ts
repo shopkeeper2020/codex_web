@@ -31,7 +31,12 @@ export type ThreadListParams = {
   archived?: boolean;
   limit?: number;
   sortKey?: "updated_at" | string;
+  sortDirection?: "asc" | "desc" | string;
   modelProviders?: string[];
+  sourceKinds?: string[];
+  cwd?: string;
+  searchTerm?: string;
+  useStateDbOnly?: boolean;
   cursor?: string | null;
 };
 
@@ -48,8 +53,19 @@ export type ThreadTurnsListParams = {
 
 export type ThreadStartParams = {
   cwd: string;
-  workspaceRoots?: string[];
+  runtimeWorkspaceRoots?: string[];
   threadSource?: string;
+  permissions?: string;
+  environments?: Array<Record<string, unknown>>;
+};
+
+export type ThreadResumeParams = {
+  threadId: string;
+  cwd?: string | null;
+  permissions?: string;
+  runtimeWorkspaceRoots?: string[];
+  excludeTurns?: boolean;
+  environments?: Array<Record<string, unknown>>;
 };
 
 export type ThreadForkParams = {
@@ -72,15 +88,25 @@ export type ThreadInjectItemsParams = {
 export type TurnStartParams = {
   threadId: string;
   input: Array<Record<string, unknown>>;
+  clientUserMessageId?: string;
   cwd?: string | null;
   attachments?: Array<Record<string, unknown>>;
   restoreMessage?: Record<string, unknown>;
   model?: string;
+  serviceTier?: string | null;
   effort?: string;
+  summary?: string | null;
+  personality?: string | null;
+  outputSchema?: Record<string, unknown>;
   collaborationMode?: Record<string, unknown>;
   approvalPolicy?: string;
   approvalsReviewer?: string;
   sandboxPolicy?: SandboxPolicy;
+  permissions?: string;
+  runtimeWorkspaceRoots?: string[];
+  environments?: Array<Record<string, unknown>>;
+  additionalContext?: unknown;
+  responsesapiClientMetadata?: Record<string, unknown>;
 };
 
 export type SandboxPolicy =
@@ -98,8 +124,11 @@ export type TurnSteerParams = {
   threadId: string;
   expectedTurnId: string;
   input: Array<Record<string, unknown>>;
+  clientUserMessageId?: string;
   restoreMessage?: Record<string, unknown>;
   attachments?: Array<Record<string, unknown>>;
+  additionalContext?: unknown;
+  responsesapiClientMetadata?: Record<string, unknown>;
 };
 
 export type TurnInterruptParams = {
@@ -136,6 +165,29 @@ export type ThreadGoalSetParams = {
 
 export type ThreadGoalClearParams = {
   threadId: string;
+};
+
+export type ThreadSettingsUpdateParams = {
+  threadId: string;
+  cwd?: string | null;
+  approvalPolicy?: string | null;
+  approvalsReviewer?: string | null;
+  sandboxPolicy?: SandboxPolicy | null;
+  permissions?: string | null;
+  runtimeWorkspaceRoots?: string[] | null;
+  model?: string | null;
+  serviceTier?: string | null;
+  effort?: string | null;
+  summary?: string | null;
+  personality?: string | null;
+  collaborationMode?: Record<string, unknown> | null;
+  environments?: Array<Record<string, unknown>> | null;
+};
+
+export type PermissionProfileListParams = {
+  cwd?: string;
+  cursor?: string | null;
+  limit?: number;
 };
 
 export type SkillsListParams = {
@@ -256,6 +308,13 @@ export class CodexAppServerProcess {
       limit: params.limit ?? 50,
       sortKey: params.sortKey ?? "updated_at",
       modelProviders: params.modelProviders ?? [],
+      ...(params.sortDirection ? { sortDirection: params.sortDirection } : {}),
+      ...(params.sourceKinds ? { sourceKinds: params.sourceKinds } : {}),
+      ...(params.cwd ? { cwd: params.cwd } : {}),
+      ...(params.searchTerm ? { searchTerm: params.searchTerm } : {}),
+      ...(params.useStateDbOnly === undefined
+        ? {}
+        : { useStateDbOnly: params.useStateDbOnly }),
       ...(params.cursor ? { cursor: params.cursor } : {}),
     });
   }
@@ -274,6 +333,10 @@ export class CodexAppServerProcess {
 
   async threadStart(params: ThreadStartParams): Promise<unknown> {
     return await this.rpc("thread/start", params);
+  }
+
+  async threadResume(params: ThreadResumeParams): Promise<unknown> {
+    return await this.rpc("thread/resume", params);
   }
 
   async threadFork(params: ThreadForkParams): Promise<unknown> {
@@ -324,6 +387,12 @@ export class CodexAppServerProcess {
     return await this.rpc("thread/goal/clear", params);
   }
 
+  async threadSettingsUpdate(
+    params: ThreadSettingsUpdateParams,
+  ): Promise<unknown> {
+    return await this.rpc("thread/settings/update", params);
+  }
+
   async modelList(
     params: { includeHidden?: boolean; limit?: number } = {},
   ): Promise<unknown> {
@@ -335,6 +404,16 @@ export class CodexAppServerProcess {
 
   async collaborationModeList(): Promise<unknown> {
     return await this.rpc("collaborationMode/list", {});
+  }
+
+  async permissionProfileList(
+    params: PermissionProfileListParams = {},
+  ): Promise<unknown> {
+    return await this.rpc("permissionProfile/list", {
+      ...(params.cwd ? { cwd: params.cwd } : {}),
+      ...(params.cursor ? { cursor: params.cursor } : {}),
+      ...(params.limit ? { limit: params.limit } : {}),
+    });
   }
 
   async skillsList(params: SkillsListParams = {}): Promise<unknown> {

@@ -3,10 +3,13 @@ import type {
   ThreadCompactStartParams,
   ThreadReadParams,
   ThreadTurnsListParams,
+  ThreadSettingsUpdateParams,
   TurnInterruptParams,
   TurnStartParams,
   TurnSteerParams,
 } from "./appServerProcess.js";
+import { IMPORTANT_APP_SERVER_NOTIFICATION_METHODS } from "@codex-web/protocol";
+import { toOfficialTurnSteerParams } from "./appServerParams.js";
 import { startLocalTurn } from "./threadActions.js";
 
 type RequestHandler = {
@@ -37,6 +40,9 @@ export type LocalOwnerAppServer = {
   threadRead(params: ThreadReadParams): Promise<unknown>;
   threadTurnsList?: (params: ThreadTurnsListParams) => Promise<unknown>;
   threadCompactStart(params: ThreadCompactStartParams): Promise<unknown>;
+  threadSettingsUpdate?: (
+    params: ThreadSettingsUpdateParams,
+  ) => Promise<unknown>;
   turnStart(params: TurnStartParams): Promise<unknown>;
   turnSteer(params: TurnSteerParams): Promise<unknown>;
   turnInterrupt(params: TurnInterruptParams): Promise<unknown>;
@@ -66,15 +72,32 @@ type LocalOwnerRuntimeSettings = {
   collaborationMode?: Record<string, unknown>;
 };
 
-export const LOCAL_OWNER_SNAPSHOT_DEBOUNCE_MS = 650;
-export const LOCAL_OWNER_SNAPSHOT_METHODS = new Set([
+export const LOCAL_OWNER_SNAPSHOT_DEBOUNCE_MS = 120;
+const LOCAL_OWNER_LIVE_DELTA_METHODS = new Set([
+  "item/agentMessage/delta",
+  "item/plan/delta",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/textDelta",
+]);
+export const LOCAL_OWNER_SNAPSHOT_METHODS = new Set(
+  IMPORTANT_APP_SERVER_NOTIFICATION_METHODS.filter(
+    (method) => !LOCAL_OWNER_LIVE_DELTA_METHODS.has(method),
+  ),
+);
+export const LOCAL_OWNER_IMMEDIATE_SNAPSHOT_METHODS = new Set([
   "turn/started",
   "turn/completed",
+  "hook/started",
+  "hook/completed",
+  "thread/status/changed",
   "thread/name/updated",
   "item/started",
   "item/completed",
-  "item/agentMessage/delta",
-  "item/commandExecution/outputDelta",
+  "item/autoApprovalReview/started",
+  "item/autoApprovalReview/completed",
+  "serverRequest/resolved",
 ]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -236,6 +259,31 @@ function applyRuntimeSettings(
   return next;
 }
 
+async function updateThreadSettings(input: {
+  appServer: LocalOwnerAppServer;
+  diagnostics: SyncDiagnostics;
+  threadId: string;
+  settings: Omit<ThreadSettingsUpdateParams, "threadId">;
+}): Promise<void> {
+  if (!input.appServer.threadSettingsUpdate) return;
+  try {
+    await input.appServer.threadSettingsUpdate({
+      threadId: input.threadId,
+      ...input.settings,
+    });
+  } catch (error) {
+    input.diagnostics.record(
+      "warn",
+      "official-ipc",
+      "thread-settings-update-fallback",
+      {
+        threadId: input.threadId,
+        error: errorMessage(error),
+      },
+    );
+  }
+}
+
 export function installLocalOwnerSnapshotSync(input: {
   appServer: LocalOwnerAppServer;
   officialIpc: LocalOwnerOfficialIpc;
@@ -244,6 +292,7 @@ export function installLocalOwnerSnapshotSync(input: {
   debounceMs?: number;
 }): () => void {
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const timerDueAt = new Map<string, number>();
   const inFlight = new Set<string>();
   const runtimeSettingsByThread = new Map<string, LocalOwnerRuntimeSettings>();
   const debounceMs = input.debounceMs ?? LOCAL_OWNER_SNAPSHOT_DEBOUNCE_MS;
@@ -289,6 +338,15 @@ export function installLocalOwnerSnapshotSync(input: {
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
         });
+        await updateThreadSettings({
+          appServer: input.appServer,
+          diagnostics: input.diagnostics,
+          threadId,
+          settings: {
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+          },
+        });
         return { ok: true };
       },
     },
@@ -309,6 +367,12 @@ export function installLocalOwnerSnapshotSync(input: {
         runtimeSettingsByThread.set(threadId, {
           ...previous,
           collaborationMode,
+        });
+        await updateThreadSettings({
+          appServer: input.appServer,
+          diagnostics: input.diagnostics,
+          threadId,
+          settings: { collaborationMode },
         });
         return { ok: true };
       },
@@ -336,13 +400,16 @@ export function installLocalOwnerSnapshotSync(input: {
       if (!threadId) throw new Error("Missing conversationId");
       if (!isLocalOwner(threadId)) throw new Error("no-local-owner");
       const turnSteerParams = asRecord(record?.turnSteerParams) ?? record ?? {};
-      return await input.appServer.turnSteer({
-        threadId,
-        expectedTurnId: readString(turnSteerParams.expectedTurnId),
-        input: Array.isArray(turnSteerParams.input)
-          ? turnSteerParams.input
-          : [],
-      });
+      return await input.appServer.turnSteer(
+        toOfficialTurnSteerParams({
+          ...turnSteerParams,
+          threadId,
+          expectedTurnId: readString(turnSteerParams.expectedTurnId),
+          input: Array.isArray(turnSteerParams.input)
+            ? turnSteerParams.input
+            : [],
+        } as TurnSteerParams),
+      );
     },
   });
 
@@ -411,15 +478,24 @@ export function installLocalOwnerSnapshotSync(input: {
     }
   }
 
-  function schedule(threadId: string): void {
+  function schedule(threadId: string, delayMs = debounceMs): void {
     if (!canBroadcastLocalOwner(threadId)) return;
-    if (timers.has(threadId)) return;
+    const delay = Math.max(0, delayMs);
+    const dueAt = Date.now() + delay;
+    const existingTimer = timers.get(threadId);
+    if (existingTimer) {
+      const existingDueAt = timerDueAt.get(threadId) ?? Number.POSITIVE_INFINITY;
+      if (existingDueAt <= dueAt) return;
+      clearTimeout(existingTimer);
+    }
     const timer = setTimeout(() => {
       timers.delete(threadId);
+      timerDueAt.delete(threadId);
       void broadcastSnapshot(threadId);
-    }, debounceMs);
+    }, delay);
     timer.unref?.();
     timers.set(threadId, timer);
+    timerDueAt.set(threadId, dueAt);
   }
 
   const unsubscribe = input.appServer.onNotification((notification) => {
@@ -427,7 +503,12 @@ export function installLocalOwnerSnapshotSync(input: {
     const threadId = readThreadIdFromParams(notification.params);
     if (!threadId) return;
     if (!canBroadcastLocalOwner(threadId)) return;
-    schedule(threadId);
+    schedule(
+      threadId,
+      LOCAL_OWNER_IMMEDIATE_SNAPSHOT_METHODS.has(notification.method)
+        ? 0
+        : debounceMs,
+    );
   });
   const unsubscribeEvents = input.events?.subscribe((event) => {
     if (
@@ -438,7 +519,7 @@ export function installLocalOwnerSnapshotSync(input: {
     const threadId = readString(event.approval?.threadId);
     if (!threadId) return;
     if (!canBroadcastLocalOwner(threadId)) return;
-    schedule(threadId);
+    schedule(threadId, 0);
   });
 
   return () => {
@@ -446,6 +527,7 @@ export function installLocalOwnerSnapshotSync(input: {
     unsubscribeEvents?.();
     for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
+    timerDueAt.clear();
     inFlight.clear();
     runtimeSettingsByThread.clear();
   };

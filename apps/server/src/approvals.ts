@@ -5,7 +5,7 @@ export type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'canc
 
 export type PendingApproval = {
   id: string
-  kind: 'command' | 'fileChange'
+  kind: 'command' | 'fileChange' | 'permissions'
   method: string
   threadId: string
   turnId: string
@@ -20,6 +20,7 @@ export type PendingApproval = {
   diff: string | null
   changedFiles: string[] | null
   proposedExecpolicyAmendment: string[] | null
+  permissions: Record<string, unknown> | null
   createdAtIso: string
   status: 'pending'
 }
@@ -43,6 +44,29 @@ function readString(value: unknown): string {
 function readStringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null
   return value.map((entry) => readString(entry)).filter(Boolean)
+}
+
+function readKind(method: string): PendingApproval['kind'] {
+  if (method === 'item/fileChange/requestApproval') return 'fileChange'
+  if (method === 'item/permissions/requestApproval') return 'permissions'
+  return 'command'
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return asRecord(value)
+}
+
+function summarizePermissions(permissions: Record<string, unknown> | null): string {
+  if (!permissions) return 'Agent 请求额外权限。'
+  const fileSystem = asRecord(permissions.fileSystem) ?? asRecord(permissions.filesystem)
+  const write = readStringArray(fileSystem?.write)
+  const read = readStringArray(fileSystem?.read)
+  const lines = [
+    write && write.length > 0 ? `允许写入: ${write.join(', ')}` : '',
+    read && read.length > 0 ? `允许读取: ${read.join(', ')}` : '',
+    permissions.networkAccess === true || permissions.network === true ? '允许网络访问' : '',
+  ].filter(Boolean)
+  return lines.length > 0 ? lines.join('\n') : 'Agent 请求额外权限。'
 }
 
 export class ApprovalCoordinator {
@@ -81,11 +105,12 @@ export class ApprovalCoordinator {
 
   private buildApproval(method: string, params: unknown): PendingApproval {
     const record = asRecord(params) ?? {}
-    const kind = method === 'item/fileChange/requestApproval' ? 'fileChange' : 'command'
+    const kind = readKind(method)
     const command = readString(record.command) || null
     const cwd = readString(record.cwd) || null
     const reason = readString(record.reason) || null
     const grantRoot = readString(record.grantRoot) || null
+    const permissions = readRecord(record.permissions)
     const filePath = readString(record.filePath) || readString(record.file_path) || readString(record.path) || null
     const diff = readString(record.diff) || readString(record.patch) || null
     const changedFiles =
@@ -95,14 +120,18 @@ export class ApprovalCoordinator {
     const proposedExecpolicyAmendment = readStringArray(record.proposedExecpolicyAmendment)
     const title = kind === 'fileChange'
       ? '批准文件变更'
-      : '批准命令执行'
+      : kind === 'permissions'
+        ? '批准权限请求'
+        : '批准命令执行'
     const body = kind === 'fileChange'
       ? [
           filePath ? `文件: ${filePath}` : '',
           grantRoot ? `允许写入: ${grantRoot}` : 'Agent 请求应用文件变更。',
           reason,
         ].filter(Boolean).join('\n')
-      : [command ?? 'Agent 请求执行命令。', cwd ? `cwd: ${cwd}` : '', reason].filter(Boolean).join('\n')
+      : kind === 'permissions'
+        ? [summarizePermissions(permissions), cwd ? `cwd: ${cwd}` : '', reason].filter(Boolean).join('\n')
+        : [command ?? 'Agent 请求执行命令。', cwd ? `cwd: ${cwd}` : '', reason].filter(Boolean).join('\n')
 
     return {
       id: randomUUID(),
@@ -121,12 +150,22 @@ export class ApprovalCoordinator {
       diff,
       changedFiles,
       proposedExecpolicyAmendment,
+      permissions,
       createdAtIso: new Date().toISOString(),
       status: 'pending',
     }
   }
 
   private buildResponse(approval: PendingApproval, decision: ApprovalDecision): unknown {
+    if (approval.kind === 'permissions') {
+      if (decision !== 'accept' && decision !== 'acceptForSession') {
+        return { permissions: {} }
+      }
+      return {
+        permissions: approval.permissions ?? {},
+        ...(decision === 'acceptForSession' ? { scope: 'session' } : {}),
+      }
+    }
     if (
       approval.kind === 'command' &&
       decision === 'acceptForSession' &&

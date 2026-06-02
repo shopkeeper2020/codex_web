@@ -1,7 +1,9 @@
 import type { ThreadArchiveParams, ThreadReadParams, ThreadRenameParams, TurnStartParams } from './appServerProcess.js'
+import { toOfficialTurnStartParams } from './appServerParams.js'
 
 type LocalTurnStarter = {
   rpc: (method: string, params?: unknown) => Promise<unknown>
+  threadResume?: (params: { threadId: string; cwd?: string | null }) => Promise<unknown>
   turnStart: (params: TurnStartParams) => Promise<unknown>
 }
 
@@ -22,15 +24,18 @@ function readString(value: unknown): string {
 }
 
 export async function startLocalTurn(appServer: LocalTurnStarter, params: TurnStartParams): Promise<unknown> {
+  const officialParams = toOfficialTurnStartParams(params)
   try {
-    await appServer.rpc('thread/resume', {
-      threadId: params.threadId,
-      ...(params.cwd ? { cwd: params.cwd, path: null } : {}),
-    })
+    const resumeParams = {
+      threadId: officialParams.threadId,
+      ...(officialParams.cwd ? { cwd: officialParams.cwd } : {}),
+    }
+    if (appServer.threadResume) await appServer.threadResume(resumeParams)
+    else await appServer.rpc('thread/resume', resumeParams)
   } catch {
     // Older app-server versions may not require or expose resume; turn/start remains the source of truth.
   }
-  return await appServer.turnStart(params)
+  return await appServer.turnStart(officialParams)
 }
 
 export function readThreadArchiveFallbackName(value: unknown): string {

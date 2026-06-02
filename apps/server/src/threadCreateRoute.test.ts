@@ -25,7 +25,7 @@ class FakeAppServer {
 
   async threadStart(params: {
     cwd: string | null;
-    workspaceRoots?: string[];
+    runtimeWorkspaceRoots?: string[];
     threadSource?: string;
   }): Promise<unknown> {
     this.calls.push({ method: "thread/start", params });
@@ -163,7 +163,6 @@ describe("thread create route", () => {
         method: "thread/start",
         params: {
           cwd: "C:\\workspace\\codex_web",
-          workspaceRoots: ["C:\\workspace\\codex_web"],
           threadSource: "user",
         },
       },
@@ -200,7 +199,6 @@ describe("thread create route", () => {
         method: "thread/start",
         params: {
           cwd: "C:\\workspace\\codex_web",
-          workspaceRoots: ["C:\\workspace\\codex_web"],
           threadSource: "user",
         },
       },

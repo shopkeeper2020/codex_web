@@ -595,7 +595,7 @@ describe("thread detail route", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      source: "app-server-readonly",
+      source: "official-ipc-live",
       data: {
         turns: [
           {
@@ -613,6 +613,7 @@ describe("thread detail route", () => {
         ],
       },
     });
+    expect(appServer.calls).toEqual([]);
     expect(officialIpc.getThreadStreamState("thread-live-items")).toMatchObject({
       conversationState: {
         turns: [
@@ -628,8 +629,9 @@ describe("thread detail route", () => {
     });
   });
 
-  it("preserves complete app-server assistant text while keeping live stream items", async () => {
+  it("does not wait for app-server text when active official live items are usable", async () => {
     const officialIpc = createBridge();
+    const liveText = "Help release notes 里 Codex 相关最近一条是 5 月";
     officialIpc.restoreThreadStreamState({
       threadId: "thread-live-text",
       conversationId: "thread-live-text",
@@ -648,7 +650,7 @@ describe("thread detail route", () => {
               {
                 type: "agentMessage",
                 id: "msg-live-text",
-                text: "Help release notes 里 Codex 相关最近一条是 5 月",
+                text: liveText,
               },
               {
                 type: "commandExecution",
@@ -668,8 +670,6 @@ describe("thread detail route", () => {
       activeTurnId: "turn-live",
     });
     const { context, appServer } = await createHarness(officialIpc);
-    const completeText =
-      "Help release notes 里 Codex 相关最近一条是 5 月 29 日。现在我会把这些更新映射到我们 Web 端的协议、UI、后端启动链路，看哪些是真需求、哪些只是上游 CLI 内部能力。";
     appServer.threadReadResult = {
       thread: {
         id: "thread-live-text",
@@ -685,7 +685,8 @@ describe("thread detail route", () => {
               {
                 type: "agentMessage",
                 id: "msg-live-text",
-                text: completeText,
+                text:
+                  "Help release notes 里 Codex 相关最近一条是 5 月 29 日。现在我会把这些更新映射到我们 Web 端的协议、UI、后端启动链路，看哪些是真需求、哪些只是上游 CLI 内部能力。",
               },
             ],
           },
@@ -700,14 +701,14 @@ describe("thread detail route", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      source: "app-server-readonly",
+      source: "official-ipc-live",
       data: {
         turns: [
           {
             id: "turn-live",
             status: "active",
             items: [
-              { type: "assistant", id: "msg-live-text", text: completeText },
+              { type: "assistant", id: "msg-live-text", text: liveText },
               {
                 type: "command",
                 id: "call-live-command",
@@ -718,6 +719,7 @@ describe("thread detail route", () => {
         ],
       },
     });
+    expect(appServer.calls).toEqual([]);
     expect(
       officialIpc.getThreadStreamState("thread-live-text"),
     ).toMatchObject({
@@ -726,7 +728,7 @@ describe("thread detail route", () => {
           {
             id: "turn-live",
             items: [
-              { id: "msg-live-text", text: completeText },
+              { id: "msg-live-text", text: liveText },
               {
                 id: "call-live-command",
                 command: "rg adapter apps/server/src",
@@ -754,7 +756,7 @@ describe("thread detail route", () => {
           {
             id: "turn-stale-active",
             status: "active",
-            items: [{ type: "reasoning", text: "thinking" }],
+            items: [],
           },
         ],
       },

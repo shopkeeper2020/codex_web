@@ -5,6 +5,7 @@ export type MinimalRealtimeEvent = {
   approval?: unknown;
   threadId?: unknown;
   conversationId?: unknown;
+  cacheVersion?: unknown;
   atIso?: string;
   serverInstanceId?: string;
   serverStartedAtIso?: string;
@@ -61,7 +62,7 @@ export function readRealtimeCacheVersion(
   event: MinimalRealtimeEvent,
 ): number | null {
   const payload = asRecord(event.payload);
-  return readFiniteNumber(payload?.cacheVersion);
+  return readFiniteNumber(payload?.cacheVersion) ?? readFiniteNumber(event.cacheVersion);
 }
 
 export function readRealtimeServerInstance(
