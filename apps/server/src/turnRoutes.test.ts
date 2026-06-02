@@ -936,6 +936,7 @@ describe("turn HTTP routes", () => {
               {
                 type: "userMessage",
                 id: expect.any(String),
+                clientId: null,
                 content: [
                   { type: "text", text: "hello", text_elements: [] },
                 ],

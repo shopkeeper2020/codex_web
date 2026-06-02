@@ -1278,12 +1278,11 @@ SQLite should store data that benefits from indexing, querying, migration, and c
 - Web settings
 - UI state
 - project favorites
-- thread list projection indexes
 - attachment metadata
 - protocol compatibility metadata
 - diagnostic event metadata
 
-SQLite should not be treated as the only source of truth for official Codex conversations. It should primarily hold Web-owned settings and local projection/index data derived from official IPC/app-server/session sources.
+SQLite should not be treated as a source of truth for official Codex conversations. Data that app-server or official IPC can re-read, including thread lists, thread details, and full `conversationState` snapshots, should stay out of SQLite; keep only Web-owned state and small metadata that official clients do not provide.
 
 Attachment files should live in the configured data directory and be referenced by SQLite metadata.
 

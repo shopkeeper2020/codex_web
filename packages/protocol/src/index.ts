@@ -423,6 +423,185 @@ function normalizeTurnItemsView(value: unknown): "notLoaded" | "summary" | "full
     : "full";
 }
 
+function normalizeOfficialBroadcastUserInput(value: unknown): unknown {
+  const record = asRecord(value);
+  if (!record) return value;
+  const type = readString(record.type);
+  if (type === "text") {
+    const text = typeof record.text === "string" ? record.text : "";
+    const textElements = Array.isArray(record.text_elements)
+      ? record.text_elements
+      : [];
+    return record.text === text && record.text_elements === textElements
+      ? value
+      : { ...record, text, text_elements: textElements };
+  }
+  if (type === "image") {
+    const url = typeof record.url === "string" ? record.url : "";
+    return record.url === url ? value : { ...record, url };
+  }
+  if (type === "localImage") {
+    const path = typeof record.path === "string" ? record.path : "";
+    return record.path === path ? value : { ...record, path };
+  }
+  if (type === "skill" || type === "mention") {
+    const name = typeof record.name === "string" ? record.name : "";
+    const path = typeof record.path === "string" ? record.path : "";
+    return record.name === name && record.path === path
+      ? value
+      : { ...record, name, path };
+  }
+  return value;
+}
+
+function normalizeOfficialBroadcastWebSearchAction(value: unknown): unknown {
+  const record = asRecord(value);
+  if (!record) return value;
+  const type = readString(record.type);
+  if (!type) return value;
+  let changed = false;
+  const next: Record<string, unknown> = { ...record };
+  if (type === "search") {
+    if (typeof next.query !== "string" && next.query !== null) {
+      next.query = null;
+      changed = true;
+    }
+    if (!Array.isArray(next.queries) && next.queries !== null) {
+      next.queries = null;
+      changed = true;
+    }
+  } else if (type === "openPage") {
+    if (typeof next.url !== "string" && next.url !== null) {
+      next.url = null;
+      changed = true;
+    }
+  } else if (type === "findInPage") {
+    if (typeof next.url !== "string" && next.url !== null) {
+      next.url = null;
+      changed = true;
+    }
+    if (typeof next.pattern !== "string" && next.pattern !== null) {
+      next.pattern = null;
+      changed = true;
+    }
+  }
+  return changed ? next : value;
+}
+
+function normalizeOfficialBroadcastThreadItem(
+  value: unknown,
+  context: { cwd?: unknown; turnId?: string; index?: number } = {},
+): unknown {
+  const record = asRecord(value);
+  if (!record) return value;
+  const type = readString(record.type);
+  if (!type) return value;
+  let changed = false;
+  const next: Record<string, unknown> = { ...record };
+  if (!readString(next.id)) {
+    const suffix =
+      context.index === undefined ? "" : `-${String(context.index)}`;
+    next.id = context.turnId ? `${context.turnId}-${type}${suffix}` : `${type}${suffix}`;
+    changed = true;
+  }
+
+  if (type === "userMessage") {
+    if (next.clientId === undefined) {
+      next.clientId = null;
+      changed = true;
+    }
+    const rawContent = record.content;
+    if (Array.isArray(rawContent)) {
+      const content = rawContent.map(normalizeOfficialBroadcastUserInput);
+      if (content.some((entry, index) => entry !== rawContent[index])) {
+        next.content = content;
+        changed = true;
+      }
+    } else {
+      const text = typeof record.text === "string" ? record.text : "";
+      next.content = text
+        ? [{ type: "text", text, text_elements: [] }]
+        : [];
+      changed = true;
+    }
+  } else if (type === "agentMessage") {
+    if (typeof next.text !== "string") {
+      next.text = "";
+      changed = true;
+    }
+    if (next.phase === undefined) {
+      next.phase = null;
+      changed = true;
+    }
+    if (next.memoryCitation === undefined) {
+      next.memoryCitation = null;
+      changed = true;
+    }
+  } else if (type === "webSearch") {
+    if (typeof next.query !== "string") {
+      next.query = "";
+      changed = true;
+    }
+    if (next.action === undefined) {
+      next.action = null;
+      changed = true;
+    } else {
+      const action = normalizeOfficialBroadcastWebSearchAction(next.action);
+      if (action !== next.action) {
+        next.action = action;
+        changed = true;
+      }
+    }
+  } else if (type === "commandExecution") {
+    if (typeof next.command !== "string") {
+      next.command = "";
+      changed = true;
+    }
+    if (!readString(next.cwd)) {
+      next.cwd = readString(context.cwd);
+      changed = true;
+    }
+    if (next.processId === undefined) {
+      next.processId = null;
+      changed = true;
+    }
+    if (!readString(next.source)) {
+      next.source = "agent";
+      changed = true;
+    }
+    if (!readString(next.status)) {
+      next.status = "inProgress";
+      changed = true;
+    }
+    if (!Array.isArray(next.commandActions)) {
+      next.commandActions = [];
+      changed = true;
+    }
+    if (next.aggregatedOutput === undefined) {
+      next.aggregatedOutput = null;
+      changed = true;
+    }
+    if (next.exitCode === undefined) {
+      next.exitCode = null;
+      changed = true;
+    }
+    if (next.durationMs === undefined) {
+      next.durationMs = null;
+      changed = true;
+    }
+  } else if (type === "fileChange") {
+    if (!Array.isArray(next.changes)) {
+      next.changes = [];
+      changed = true;
+    }
+    if (!readString(next.status)) {
+      next.status = "inProgress";
+      changed = true;
+    }
+  }
+  return changed ? next : value;
+}
+
 function normalizeAppServerThreadStatus(value: unknown): unknown {
   const record = asRecord(value);
   if (isActiveStatus(value)) {
@@ -546,11 +725,23 @@ function normalizeOfficialBroadcastTurn(
     next.durationMs = null;
     changed = true;
   }
-  if (Array.isArray(record.items)) {
-    const items = record.items
-      .map(sanitizeOfficialBroadcastValue)
+  const rawItems = record.items;
+  if (Array.isArray(rawItems)) {
+    const items = rawItems
+      .map((item, index) => {
+        const sanitized = sanitizeOfficialBroadcastValue(item);
+        if (sanitized === OMIT_BROADCAST_VALUE) return sanitized;
+        return isAppServerTurn
+          ? normalizeOfficialBroadcastThreadItem(sanitized, {
+              cwd: context.cwd,
+              turnId: readString(next.id),
+              index,
+            })
+          : sanitized;
+      })
       .filter((entry) => entry !== OMIT_BROADCAST_VALUE);
-    if (items.length !== record.items.length) changed = true;
+    if (items.length !== rawItems.length) changed = true;
+    if (items.some((entry, index) => entry !== rawItems[index])) changed = true;
     next.items = items;
   }
   return changed ? next : value;
@@ -824,7 +1015,7 @@ export function applyOfficialIpcPatches(
   patches: unknown,
 ): unknown {
   if (!Array.isArray(patches)) return base;
-  let next = cloneJson(base);
+  let next = base;
   for (const patch of patches) {
     next = applySingleOfficialPatch(next, patch);
   }
@@ -1046,10 +1237,20 @@ export class OfficialIpcBridge {
     return state ? cloneJson(state) : null;
   }
 
+  getThreadStreamStateView(threadId: string): OfficialThreadStreamState | null {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) return null;
+    return this.streamStates.get(normalizedThreadId) ?? null;
+  }
+
   listThreadStreamStates(): OfficialThreadStreamState[] {
     return Array.from(this.streamStates.values()).map((state) =>
       cloneJson(state),
     );
+  }
+
+  listThreadStreamStateViews(): readonly OfficialThreadStreamState[] {
+    return Array.from(this.streamStates.values());
   }
 
   restoreThreadStreamState(state: OfficialThreadStreamState): boolean {

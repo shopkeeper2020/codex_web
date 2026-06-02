@@ -519,7 +519,16 @@ describe("official IPC helpers", () => {
           hookRuns: null,
           commandExecutionStartedAtMsById: null,
           itemsView: null,
-          items: [{ type: "agentMessage", id: "assistant-1", text: "hi" }],
+          items: [
+            { type: "userMessage", id: "user-1", text: "hello" },
+            { type: "agentMessage", id: "assistant-1", text: "hi" },
+            {
+              type: "webSearch",
+              id: "search-1",
+              query: "official schema",
+              action: { type: "search", query: "official schema" },
+            },
+          ],
         },
       ],
     };
@@ -564,7 +573,31 @@ describe("official IPC helpers", () => {
             commandExecutionStartedAtMsById: {},
             hookRuns: [],
             items: [
-              { type: "agentMessage", id: "assistant-1", text: "hi" },
+              {
+                type: "userMessage",
+                id: "user-1",
+                clientId: null,
+                content: [
+                  { type: "text", text: "hello", text_elements: [] },
+                ],
+              },
+              {
+                type: "agentMessage",
+                id: "assistant-1",
+                text: "hi",
+                phase: null,
+                memoryCitation: null,
+              },
+              {
+                type: "webSearch",
+                id: "search-1",
+                query: "official schema",
+                action: {
+                  type: "search",
+                  query: "official schema",
+                  queries: null,
+                },
+              },
             ],
           },
         ],

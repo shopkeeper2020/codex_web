@@ -61,8 +61,10 @@ OpenAI Codex app-server README 和 `app-server-protocol` schema 确认：
 - raw `turn/start` 之后 app-server 会发 `turn/started`、item delta、`turn/completed` 等生命周期通知。
 - Desktop/VS Code 的三端实时展示不只依赖 raw app-server 通知，而依赖 owner 通过 `thread-stream-state-changed` IPC 广播完整 `conversationState`。
 - Desktop 现场日志出现 `Received turn/started for unknown conversation`，说明 Web 本地 owner 在启动首轮 turn 前没有先让官方客户端看到完整 conversation state。
+- 2026-06-02 续查发现，仅在首轮 `turn/start` 前广播 active snapshot 仍有空窗：`thread/start` 已经让新会话进入共享 app-server thread list，但 Web 若只 claim local-only owner、不广播 idle snapshot，Desktop 可能先打开一个没有 stream state 的新 conversation。
+- 2026-06-02 再次现场复查 Desktop error boundary 和官方 v2 schema 后确认：广播给官方客户端的 live snapshot 不能只满足“能被 Web 渲染”，还必须补齐 `ThreadItem` 必需字段。首轮 pending `userMessage` 需要 `clientId: null`；真实 app-server snapshot 中的 `agentMessage`、`webSearch` 等 item 在经由 Web IPC owner 转发前也要补齐 `phase/memoryCitation`、`action.queries` 等 schema 默认值，避免 Desktop 侧栏或 live renderer 读取 `undefined.length`。
 
-结论：Web 新建会话的 `thread/start` 参数本身不是 Desktop 崩溃根因；Web-owned 本地 turn 路径必须在调用 raw app-server `turn/start` 前，先广播一个 Desktop 可渲染的 active snapshot。该 snapshot 不可为空，至少需要官方 `Thread` 必需字段、`threadRuntimeStatus: { type: "active", activeFlags: [] }`、一个 `status: "inProgress"` 的 pending `Turn`、`itemsView: "full"`、`error/completedAt/durationMs: null`、pending `userMessage`，以及 Desktop stream 额外读取的 `diff: []`、`hookRuns: []`、`commandExecutionStartedAtMsById: {}`。后续真实 app-server snapshot 再替换 pending turn。
+结论：Web 新建会话的 `thread/start` 参数本身不是 Desktop 崩溃根因；`thread/start` 成功后应立即广播一个 Desktop 可渲染的 idle snapshot，至少包含官方 `Thread` 必需字段、`status/threadRuntimeStatus: { type: "idle" }` 和 `turns: []`。Web-owned 本地 turn 路径还必须在调用 raw app-server `turn/start` 前，先广播一个 Desktop 可渲染的 active snapshot。该 snapshot 不可为空，至少需要官方 `Thread` 必需字段、`threadRuntimeStatus: { type: "active", activeFlags: [] }`、一个 `status: "inProgress"` 的 pending `Turn`、`itemsView: "full"`、`error/completedAt/durationMs: null`、符合 v2 `ThreadItem.userMessage` shape 的 pending `userMessage`（包括 `clientId: null`），以及 Desktop stream 额外读取的 `diff: []`、`hookRuns: []`、`commandExecutionStartedAtMsById: {}`。后续真实 app-server snapshot 再替换 pending turn，但经 Web owner 广播前仍必须做 schema-safe item normalization。
 
 ### thread settings 与权限能力
 

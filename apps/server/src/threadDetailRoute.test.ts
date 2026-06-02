@@ -318,14 +318,14 @@ describe("thread detail route", () => {
         params: { threadId: "thread-app-server", includeTurns: true },
       },
     ]);
-    expect(context.database.status().threadDetailCount).toBe(1);
+    expect(context.database.status().threadDetailCount).toBe(0);
     expect(officialIpc.isOwnedConversation("thread-app-server")).toBe(true);
     expect(
       officialIpc.canBroadcastOwnedConversation("thread-app-server"),
     ).toBe(false);
   });
 
-  it("uses cached created thread detail during transient empty rollout reads", async () => {
+  it("does not use cached app-server detail during transient empty rollout reads", async () => {
     const { context, appServer } = await createHarness();
     context.database.upsertThreadDetail(
       "thread-created",
@@ -356,13 +356,10 @@ describe("thread detail route", () => {
       url: "/api/domain/thread-detail?threadId=thread-created",
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(502);
     expect(response.json()).toMatchObject({
-      source: "app-server-cache-transient",
-      data: {
-        thread: { id: "thread-created", title: "Untitled" },
-        turns: [],
-      },
+      error:
+        "failed to read thread: thread-store internal error: failed to read thread C:\\Users\\lwm\\.codex\\sessions\\2026\\06\\01\\rollout-thread-created.jsonl: rollout at C:\\Users\\lwm\\.codex\\sessions\\2026\\06\\01\\rollout-thread-created.jsonl is empty",
     });
     expect(appServer.calls).toEqual([
       {

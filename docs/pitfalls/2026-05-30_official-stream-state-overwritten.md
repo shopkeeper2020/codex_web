@@ -25,7 +25,7 @@ Web 已连接官方 IPC，`/api/official-ipc/status` 正常，但 Desktop 正在
 - 如果官方 IPC state 仍是 `isInProgress=true`，但 app-server 详情是旧状态，则在回灌前保留/恢复 `status: active`、`threadRuntimeStatus.type: active` 和 `activeTurnId` 对应 turn。
 - `patches-without-snapshot` 恢复时先解包 `{ thread: ... }`，只把真实 thread snapshot 注入官方流缓存。
 - WebSocket `connected` 后立即刷新 thread 列表、当前详情和审批状态，避免重连后页面停在旧状态。
-- 官方 stream cache 落盘到 SQLite 的 `official_stream_states` 表，启动 `18930` 时先恢复到 `OfficialIpcBridge`。
+- 早期曾把官方 stream cache 落盘到 SQLite 的 `official_stream_states` 表并在启动时恢复；2026-06-02 后该做法已废弃，SQLite 不再长期保存完整官方 `conversationState`，live stream cache 只作为内存运行态。
 - 协议层拒绝用明显陈旧的非 active snapshot 覆盖现有 active state，尤其是 `status: notLoaded` 或来自不同 source client 的非 active 快照。
 
 ## 后续避免方式
@@ -33,4 +33,5 @@ Web 已连接官方 IPC，`/api/official-ipc/status` 正常，但 Desktop 正在
 - 所有“只读补水/兜底读取”都不能直接覆盖官方 live state。
 - 对 `thread/read` 返回值统一先做 `asRecord(result)?.thread ?? result` 解包。
 - 增加回归测试覆盖“官方 active + app-server stale”和“patches without snapshot + wrapped thread result”。
-- 重启或热更新 `18930` 后，要检查 `/api/cache/status` 的 `officialStreamStateCount` 和 `/api/sync/readiness?threadId=...` 的 `thread-active-tail`，不能只看 `/health`。
+- 重启或热更新 `18930` 后，要检查 `/api/official-ipc/status` 的连接和 live cache 状态，以及 `/api/sync/readiness?threadId=...` 的 owner/active tail，不能只看 `/health`。
+- 不要再把完整 official stream state 写回 SQLite；需要恢复能力时必须设计小型、短 TTL、限大小的 active metadata。

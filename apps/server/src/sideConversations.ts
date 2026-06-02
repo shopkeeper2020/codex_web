@@ -495,7 +495,7 @@ function buildSideCandidate(
 export function attachOfficialSideConversations(input: {
   detail: ThreadDetail | null;
   threadId: string;
-  streamStates: OfficialThreadStreamState[];
+  streamStates: readonly OfficialThreadStreamState[];
 }): ThreadDetail | null {
   if (!input.detail) return input.detail;
   const mainState =
@@ -506,12 +506,26 @@ export function attachOfficialSideConversations(input: {
     return { ...input.detail, sideConversations: [] };
   }
 
-  const mainCandidates = input.streamStates
-    .map(buildMainCandidate)
-    .filter((candidate): candidate is MainCandidate => Boolean(candidate));
-  const currentMain = mainCandidates.find(
-    (candidate) => candidate.state.threadId === input.threadId,
-  );
+  let mainCandidates: MainCandidate[] | null = null;
+  const readMainCandidates = (): MainCandidate[] => {
+    if (!mainCandidates) {
+      mainCandidates = input.streamStates
+        .map(buildMainCandidate)
+        .filter((candidate): candidate is MainCandidate => Boolean(candidate));
+    }
+    return mainCandidates;
+  };
+
+  let currentMain: MainCandidate | null | undefined;
+  const readCurrentMain = (): MainCandidate | null => {
+    if (currentMain === undefined) {
+      currentMain =
+        readMainCandidates().find(
+          (candidate) => candidate.state.threadId === input.threadId,
+        ) ?? null;
+    }
+    return currentMain;
+  };
 
   const candidates = input.streamStates
     .filter((state) => state.threadId !== input.threadId)
@@ -542,9 +556,10 @@ export function attachOfficialSideConversations(input: {
           : null;
       }
 
-      if (!currentMain) return null;
-      const parent = bestUnlinkedParent(candidate, mainCandidates);
-      return parent?.state.threadId === currentMain.state.threadId
+      const current = readCurrentMain();
+      if (!current) return null;
+      const parent = bestUnlinkedParent(candidate, readMainCandidates());
+      return parent?.state.threadId === current.state.threadId
         ? candidate
         : null;
     })

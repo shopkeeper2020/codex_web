@@ -61,6 +61,7 @@ import {
   turnStartRequestSchema,
   turnSteerRequestSchema,
   workspaceStatusResponseSchema,
+  type AccountStatusResponse,
 } from "@codex-web/api";
 import fastifyCookie from "@fastify/cookie";
 import fastifyMultipart from "@fastify/multipart";
@@ -162,6 +163,7 @@ import {
 import { LocalLiveThreadStore } from "./localLiveThreadStore.js";
 
 const THREAD_GOAL_READ_TIMEOUT_MS = 1200;
+const ACCOUNT_STATUS_CACHE_TTL_MS = 30_000;
 const APP_SERVER_LIVE_DELTA_METHODS = new Set([
   "item/agentMessage/delta",
   "item/plan/delta",
@@ -1304,6 +1306,7 @@ function buildPendingLocalTurnSnapshot(input: {
       {
         type: "userMessage",
         id: userMessageId,
+        clientId: null,
         content,
       },
     ],
@@ -1352,6 +1355,67 @@ function buildPendingLocalTurnSnapshot(input: {
     gitInfo: base.gitInfo ?? null,
     name,
     turns: [...existingTurns, pendingTurn],
+  };
+}
+
+function buildIdleLocalThreadSnapshot(input: {
+  threadId: string;
+  thread: unknown;
+  detail: ThreadDetail | null;
+  fallbackCwd: string;
+  nowMs?: number;
+}): Record<string, unknown> {
+  const nowMs = input.nowMs ?? Date.now();
+  const nowSeconds = nowMs / 1000;
+  const base = asRecord(input.thread) ?? {};
+  const detailThread = input.detail?.thread;
+  const threadId =
+    readString(base.id) ||
+    readString(base.sessionId) ||
+    detailThread?.id ||
+    input.threadId;
+  const cwd =
+    readString(base.cwd) ||
+    detailThread?.projectId ||
+    detailThread?.path ||
+    input.fallbackCwd;
+  const name =
+    readString(base.name) ||
+    readString(base.title) ||
+    detailThread?.title ||
+    null;
+  const preview =
+    readString(base.preview) ||
+    readString(base.name) ||
+    readString(base.title) ||
+    detailThread?.title ||
+    "";
+  return {
+    ...base,
+    id: threadId,
+    sessionId: readString(base.sessionId) || threadId,
+    forkedFromId: base.forkedFromId ?? null,
+    parentThreadId: base.parentThreadId ?? null,
+    preview,
+    ephemeral: base.ephemeral === true,
+    modelProvider: readString(base.modelProvider) || "openai",
+    createdAt: readUnixSeconds(base.createdAt ?? base.created_at, nowSeconds),
+    updatedAt: readUnixSeconds(base.updatedAt ?? base.updated_at, nowSeconds),
+    status: { ...(asRecord(base.status) ?? {}), type: "idle" },
+    threadRuntimeStatus: {
+      ...(asRecord(base.threadRuntimeStatus) ?? asRecord(base.status) ?? {}),
+      type: "idle",
+    },
+    path: base.path ?? null,
+    cwd,
+    cliVersion: readString(base.cliVersion),
+    source: readString(base.source) || "appServer",
+    threadSource: readString(base.threadSource) || "user",
+    agentNickname: base.agentNickname ?? null,
+    agentRole: base.agentRole ?? null,
+    gitInfo: base.gitInfo ?? null,
+    name,
+    turns: Array.isArray(base.turns) ? base.turns : [],
   };
 }
 
@@ -1477,35 +1541,32 @@ export async function createServer(
     },
   });
   officialIpc.setRawFrameLogging(config.diagnostics.rawFrameLogging);
-  const persistedOfficialStates = database.listOfficialStreamStates();
-  let restoredOfficialStateCount = 0;
-  for (const state of persistedOfficialStates) {
-    if (officialIpc.restoreThreadStreamState(state)) {
-      restoredOfficialStateCount += 1;
-    }
-  }
-  if (persistedOfficialStates.length > 0) {
-    diagnostics.record("info", "official-ipc", "stream-cache-restored", {
-      restored: restoredOfficialStateCount,
-      persisted: persistedOfficialStates.length,
+  const clearedDerivedCaches = database.clearDerivedCaches();
+  const clearedDerivedCacheCount =
+    clearedDerivedCaches.projectCount +
+    clearedDerivedCaches.threadCount +
+    clearedDerivedCaches.threadDetailCount +
+    clearedDerivedCaches.officialStreamStateCount;
+  if (clearedDerivedCacheCount > 0) {
+    database.compactStorage();
+    diagnostics.record("info", "cache", "derived-sqlite-cache-cleared", {
+      ...clearedDerivedCaches,
     });
   }
-
-  const persistOfficialStreamState = (threadId: string): void => {
-    const state = officialIpc.getThreadStreamState(threadId);
-    if (!state) return;
-    database.upsertOfficialStreamState(state);
-  };
 
   const hydrateSideConversations = (
     threadId: string,
     detail: ThreadDetail | null,
-  ): ThreadDetail | null =>
-    attachOfficialSideConversations({
+  ): ThreadDetail | null => {
+    const streamStates: readonly OfficialThreadStreamState[] =
+      officialIpc.listThreadStreamStateViews?.() ??
+      officialIpc.listThreadStreamStates();
+    return attachOfficialSideConversations({
       detail,
       threadId,
-      streamStates: officialIpc.listThreadStreamStates(),
+      streamStates,
     });
+  };
 
   const hydrateThreadGoal = async (
     threadId: string,
@@ -1569,6 +1630,104 @@ export async function createServer(
     return await hydrateThreadGoal(threadId, detail);
   };
 
+  let accountStatusCache: {
+    response: AccountStatusResponse;
+    expiresAtMs: number;
+  } | null = null;
+  let accountStatusRefresh: Promise<AccountStatusResponse> | null = null;
+
+  const readFreshAccountStatus =
+    async (): Promise<AccountStatusResponse> => {
+      const warnings: string[] = [];
+      let accountResponse: unknown;
+      let rateLimitsResponse: unknown;
+      let configRequirementsResponse: unknown;
+
+      try {
+        accountResponse = await appServer.accountRead({ refreshToken: false });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "account/read failed";
+        warnings.push(`account/read: ${message}`);
+        diagnostics.record("warn", "app-server", "account-read-failed", {
+          error: message,
+        });
+      }
+
+      try {
+        rateLimitsResponse = await appServer.accountRateLimitsRead();
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "account/rateLimits/read failed";
+        warnings.push(`account/rateLimits/read: ${message}`);
+        diagnostics.record(
+          "warn",
+          "app-server",
+          "account-rate-limits-read-failed",
+          { error: message },
+        );
+      }
+
+      try {
+        configRequirementsResponse = await appServer.configRequirementsRead();
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "configRequirements/read failed";
+        warnings.push(`configRequirements/read: ${message}`);
+        diagnostics.record(
+          "warn",
+          "app-server",
+          "config-requirements-read-failed",
+          { error: message },
+        );
+      }
+
+      const response = accountStatusResponseSchema.safeParse({
+        data: buildPublicAccountStatus({
+          accountResponse,
+          rateLimitsResponse,
+          configRequirementsResponse,
+          warnings,
+        }),
+      });
+      if (!response.success) {
+        const error = formatZodError(response.error);
+        diagnostics.record(
+          "error",
+          "api",
+          "account-status-response-validation-failed",
+          { error },
+        );
+        throw new Error(error);
+      }
+      return response.data;
+    };
+
+  const readCachedAccountStatus =
+    async (): Promise<AccountStatusResponse> => {
+      const now = Date.now();
+      if (accountStatusCache && accountStatusCache.expiresAtMs > now) {
+        return accountStatusCache.response;
+      }
+      if (accountStatusRefresh) return await accountStatusRefresh;
+      accountStatusRefresh = readFreshAccountStatus()
+        .then((response) => {
+          accountStatusCache = {
+            response,
+            expiresAtMs: Date.now() + ACCOUNT_STATUS_CACHE_TTL_MS,
+          };
+          return response;
+        })
+        .finally(() => {
+          accountStatusRefresh = null;
+        });
+      return await accountStatusRefresh;
+    };
+
   const broadcastOwnedAppServerSnapshot = async (
     threadId: string,
     reason: string,
@@ -1593,9 +1752,6 @@ export async function createServer(
           existingState: officialIpc.getThreadStreamState(threadId),
         }),
       );
-      if (broadcasted) {
-        persistOfficialStreamState(threadId);
-      }
       return broadcasted;
     } catch (error) {
       diagnostics.record("warn", "official-ipc", "post-turn-snapshot-failed", {
@@ -1637,7 +1793,7 @@ export async function createServer(
       threadId,
       params,
       baseThread,
-      fallbackDetail: database.readThreadDetail(threadId),
+      fallbackDetail: null,
       fallbackCwd: config.projectRoot,
     });
     const broadcasted = officialIpc.broadcastConversationSnapshot(
@@ -1649,7 +1805,6 @@ export async function createServer(
       }),
     );
     if (broadcasted) {
-      persistOfficialStreamState(threadId);
       diagnostics.record("info", "official-ipc", "pending-turn-snapshot", {
         threadId,
         reason,
@@ -1786,7 +1941,7 @@ export async function createServer(
         );
         if (detail) return detail;
       }
-      return database.readThreadDetail(threadId);
+      return null;
     },
   });
 
@@ -1842,7 +1997,6 @@ export async function createServer(
       if (threadId) {
         const detailEvent = buildOfficialRealtimeThreadDetailEvent(threadId);
         if (detailEvent) bus.publish(detailEvent);
-        persistOfficialStreamState(threadId);
       }
       bus.publish({
         type: "official.threadStreamStateChanged",
@@ -1880,7 +2034,9 @@ export async function createServer(
               { threadId },
             );
             if (hydrated) {
-              persistOfficialStreamState(threadId);
+              diagnostics.record("info", "official-ipc", "readonly-hydrate-memory-only", {
+                threadId,
+              });
             }
           } catch (error) {
             diagnostics.record(
@@ -2288,7 +2444,6 @@ export async function createServer(
       const projects = (nextLocalConfig.projects?.favorites ?? [])
         .map((entry) => projectFromPath(entry, "web-favorite"))
         .filter((project): project is Project => Boolean(project));
-      database.upsertProjects(projects);
       const desktopSync = syncDesktopWorkspaceRoot(path);
       diagnostics.record(
         desktopSync.status === "failed" ? "warn" : "info",
@@ -2709,74 +2864,13 @@ export async function createServer(
   });
 
   app.get("/api/account/status", async (_request, reply) => {
-    const warnings: string[] = [];
-    let accountResponse: unknown;
-    let rateLimitsResponse: unknown;
-    let configRequirementsResponse: unknown;
-
     try {
-      accountResponse = await appServer.accountRead({ refreshToken: false });
+      await reply.send(await readCachedAccountStatus());
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "account/read failed";
-      warnings.push(`account/read: ${message}`);
-      diagnostics.record("warn", "app-server", "account-read-failed", {
-        error: message,
+      await reply.code(500).send({
+        error: error instanceof Error ? error.message : "account/status failed",
       });
     }
-
-    try {
-      rateLimitsResponse = await appServer.accountRateLimitsRead();
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "account/rateLimits/read failed";
-      warnings.push(`account/rateLimits/read: ${message}`);
-      diagnostics.record(
-        "warn",
-        "app-server",
-        "account-rate-limits-read-failed",
-        { error: message },
-      );
-    }
-
-    try {
-      configRequirementsResponse = await appServer.configRequirementsRead();
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "configRequirements/read failed";
-      warnings.push(`configRequirements/read: ${message}`);
-      diagnostics.record(
-        "warn",
-        "app-server",
-        "config-requirements-read-failed",
-        { error: message },
-      );
-    }
-
-    const response = accountStatusResponseSchema.safeParse({
-      data: buildPublicAccountStatus({
-        accountResponse,
-        rateLimitsResponse,
-        configRequirementsResponse,
-        warnings,
-      }),
-    });
-    if (!response.success) {
-      const error = formatZodError(response.error);
-      diagnostics.record(
-        "error",
-        "api",
-        "account-status-response-validation-failed",
-        { error },
-      );
-      await reply.code(500).send({ error });
-      return;
-    }
-    await reply.send(response.data);
   });
 
   app.get("/api/runtime-options", async (_request, reply) => {
@@ -3195,8 +3289,6 @@ export async function createServer(
         ),
         new Set(database.listPinnedThreadIds()),
       );
-      database.upsertProjects(list.projects);
-      database.upsertThreads(list.threads);
       const response = threadListResponseSchema.safeParse({ data: list });
       if (!response.success) {
         const error = formatZodError(response.error);
@@ -3297,9 +3389,6 @@ export async function createServer(
         const responseSource = state.isInProgress
           ? "official-ipc-live"
           : "official-ipc";
-        if (!state.isInProgress) {
-          database.upsertThreadDetail(threadId, detail, "official-ipc");
-        }
         const response = threadDetailResponseSchema.safeParse({
           data: detail,
           source: responseSource,
@@ -3402,11 +3491,6 @@ export async function createServer(
           detail as ThreadDetail,
           "thread-detail-app-server",
         );
-        database.upsertThreadDetail(
-          threadId,
-          detail as ThreadDetail,
-          "app-server",
-        );
       }
       const response = threadDetailResponseSchema.safeParse({
         data: detail,
@@ -3451,49 +3535,6 @@ export async function createServer(
         }
         await reply.send(response.data);
         return;
-      }
-      if (isTransientEmptyRolloutReadError(error)) {
-        const cachedDetail = await hydrateThreadGoal(
-          threadId,
-          hydratePinnedDetail(
-            hydrateSideConversations(
-              threadId,
-              database.readThreadDetail(threadId),
-            ),
-            pinnedThreadIds,
-          ),
-        );
-        if (cachedDetail) {
-          diagnostics.record(
-            "warn",
-            "domain",
-            "app-server-thread-detail-transient-cache-fallback",
-            { threadId, error: errorMessage(error) },
-          );
-          const response = threadDetailResponseSchema.safeParse({
-            data: cachedDetail,
-            source: "app-server-cache-transient",
-          });
-          if (!response.success) {
-            const validationError = formatZodError(response.error);
-            diagnostics.record(
-              "error",
-              "api",
-              "domain-thread-detail-response-validation-failed",
-              {
-                threadId,
-                source: "app-server-cache-transient",
-                error: validationError,
-              },
-            );
-            await reply.code(500).send({
-              error: `Invalid domain thread detail response: ${validationError}`,
-            });
-            return;
-          }
-          await reply.send(response.data);
-          return;
-        }
       }
       await reply.code(502).send({
         error: errorMessage(error) || "Failed to read domain thread",
@@ -3854,8 +3895,17 @@ export async function createServer(
           })
         : null;
       if (!detail) throw new Error("Failed to normalize created thread");
-      const claimed = officialIpc.claimLocalOnlyConversation(detail.thread.id);
-      if (!claimed || !officialIpc.isOwnedConversation(detail.thread.id)) {
+      const idleSnapshot = buildIdleLocalThreadSnapshot({
+        threadId: detail.thread.id,
+        thread: threadRecord,
+        detail,
+        fallbackCwd: cwd,
+      });
+      const broadcasted = officialIpc.broadcastConversationSnapshot(
+        detail.thread.id,
+        idleSnapshot,
+      );
+      if (!broadcasted || !officialIpc.isOwnedConversation(detail.thread.id)) {
         diagnostics.record(
           "warn",
           "thread-create",
@@ -3867,8 +3917,9 @@ export async function createServer(
           .send({ error: "official-ipc-owner-not-established" });
         return;
       }
-      database.upsertThreads([detail.thread]);
-      database.upsertThreadDetail(detail.thread.id, detail, "app-server");
+      diagnostics.record("info", "thread-create", "idle-snapshot-broadcast", {
+        threadId: detail.thread.id,
+      });
       const response = threadCreateResponseSchema.safeParse({
         data: { thread: detail.thread, raw: result },
       });
@@ -4132,7 +4183,6 @@ export async function createServer(
           })
         : null;
       if (detail) {
-        database.upsertThreads([detail.thread]);
         if (externalState) {
           const hydrated = officialIpc.hydrateThreadStreamState({
             threadId,
@@ -4149,9 +4199,7 @@ export async function createServer(
               : "external-owner-app-server-rename-hydrate-skipped",
             { threadId },
           );
-        } else if (!wasExternallyOwnedBeforeRename) {
-          database.upsertThreadDetail(threadId, detail, "app-server");
-        } else {
+        } else if (wasExternallyOwnedBeforeRename) {
           diagnostics.record(
             "warn",
             "thread-rename",
@@ -4211,8 +4259,6 @@ export async function createServer(
         () => null,
       );
       if (detail) {
-        database.upsertThreads([detail.thread]);
-        database.upsertThreadDetail(threadId, detail, "app-server");
         if (officialIpc.isOwnedConversation(threadId)) {
           officialIpc.broadcastConversationSnapshot(threadId, {
             ...detail,
@@ -4266,8 +4312,6 @@ export async function createServer(
         () => null,
       );
       if (detail) {
-        database.upsertThreads([detail.thread]);
-        database.upsertThreadDetail(threadId, detail, "app-server");
         if (officialIpc.isOwnedConversation(threadId)) {
           officialIpc.broadcastConversationSnapshot(threadId, {
             ...detail,
@@ -4425,10 +4469,6 @@ export async function createServer(
             fallbackThreadId: threadId,
           })
         : null;
-      if (detail) {
-        database.upsertThreads([detail.thread]);
-        database.upsertThreadDetail(threadId, detail, "app-server");
-      }
       const response = threadUnarchiveResponseSchema.safeParse({
         data: { ok: true, result, thread: detail?.thread ?? null },
       });
@@ -4531,8 +4571,6 @@ export async function createServer(
           })
         : null;
       if (detail) {
-        database.upsertThreads([detail.thread]);
-        database.upsertThreadDetail(threadId, detail, "app-server");
         if (officialIpc.isOwnedConversation(threadId)) {
           officialIpc.broadcastConversationSnapshot(
             threadId,

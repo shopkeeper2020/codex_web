@@ -82,7 +82,7 @@ type Harness = {
 const harnesses: Harness[] = [];
 
 async function createHarness(
-  input: { clientId?: string | null; claimResult?: boolean } = {},
+  input: { clientId?: string | null; broadcastResult?: boolean } = {},
 ): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "codex-web-thread-create-"));
   const officialIpc = new OfficialIpcBridge("");
@@ -90,12 +90,15 @@ async function createHarness(
     (officialIpc as unknown as { clientId: string }).clientId =
       input.clientId ?? "web-test";
   }
-  if (input.claimResult === false) {
+  if (input.broadcastResult === false) {
     (
       officialIpc as unknown as {
-        claimLocalOnlyConversation: (threadId: string) => boolean;
+        broadcastConversationSnapshot: (
+          threadId: string,
+          conversationState: unknown,
+        ) => boolean;
       }
-    ).claimLocalOnlyConversation = () => false;
+    ).broadcastConversationSnapshot = () => false;
   }
   const appServer = new FakeAppServer();
   const context = await createServer(root, {
@@ -139,7 +142,7 @@ describe("thread create route", () => {
     expect(officialIpc.isOwnedConversation("thread-web-created")).toBe(false);
   });
 
-  it("claims a local-only Web owner for newly created threads", async () => {
+  it("broadcasts an idle Web-owned stream snapshot for newly created threads", async () => {
     const { context, officialIpc, appServer } = await createHarness();
 
     const response = await context.app.inject({
@@ -170,18 +173,28 @@ describe("thread create route", () => {
     expect(officialIpc.isOwnedConversation("thread-web-created")).toBe(true);
     expect(
       officialIpc.getThreadStreamState("thread-web-created"),
-    ).toBeNull();
+    ).toMatchObject({
+      ownerClientId: "web-test",
+      isInProgress: false,
+      activeTurnId: "",
+      conversationState: {
+        id: "thread-web-created",
+        status: { type: "idle" },
+        threadRuntimeStatus: { type: "idle" },
+        turns: [],
+      },
+    });
     expect(
       officialIpc.getStatus(),
     ).toMatchObject({
       ownedConversationCount: 1,
-      localOnlyOwnedConversationCount: 1,
+      localOnlyOwnedConversationCount: 0,
     });
   });
 
-  it("rejects thread creation if the local Web owner cannot be established", async () => {
+  it("rejects thread creation if the idle stream snapshot cannot be broadcast", async () => {
     const { context, officialIpc, appServer } = await createHarness({
-      claimResult: false,
+      broadcastResult: false,
     });
 
     const response = await context.app.inject({

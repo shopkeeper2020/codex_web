@@ -39,3 +39,4 @@ YYYY-MM-DD_short-topic.md
 - `2026-05-30_partial-active-turn-empty-items.md`
 - `2026-05-30_official-stream-state-overwritten.md`
 - `2026-05-30_native-dictation-electron-bridge.md`
+- `2026-06-02_sqlite-shadow-backend.md`

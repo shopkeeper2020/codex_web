@@ -75,6 +75,8 @@ const UNPARSED_REALTIME_EVENT: RealtimeEvent = { type: "unparsed" };
 const WEBSOCKET_ERROR_REALTIME_EVENT: RealtimeEvent = {
   type: "websocket.error",
 };
+const STATUS_POLL_INTERVAL_MS = 3_000;
+const ACCOUNT_STATUS_POLL_INTERVAL_MS = 60_000;
 const ACTIVE_THREAD_POLL_INTERVAL_MS = 1_500;
 const REALTIME_REFRESH_DEBOUNCE_MS = 2_000;
 const STREAM_REALTIME_REFRESH_DEBOUNCE_MS = 120;
@@ -299,6 +301,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   const threadDetailRef = useRef<ThreadDetail | null>(threadDetail);
   const queuedMessagesRef = useRef(queuedMessagesByThread);
   const queueFlushInFlightRef = useRef(new Set<string>());
+  const accountStatusRequestRef = useRef<Promise<void> | null>(null);
   const detailRequestStateRef = useRef<ThreadDetailRequestState>(
     INITIAL_THREAD_DETAIL_REQUEST_STATE,
   );
@@ -328,14 +331,12 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       configResult,
       ipcResult,
       appServerResult,
-      accountStatusResult,
       protocolCompatibilityResult,
     ] = await Promise.allSettled([
       getHealth(),
       getConfig(),
       getOfficialIpcStatus(),
       getAppServerStatus(),
-      getAccountStatus(),
       getProtocolCompatibility(),
     ]);
     if (healthResult.status === "fulfilled") {
@@ -348,10 +349,23 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     if (ipcResult.status === "fulfilled") setIpc(ipcResult.value);
     if (appServerResult.status === "fulfilled")
       setAppServer(appServerResult.value);
-    if (accountStatusResult.status === "fulfilled")
-      setAccountStatus(accountStatusResult.value);
     if (protocolCompatibilityResult.status === "fulfilled")
       setProtocolCompatibility(protocolCompatibilityResult.value);
+  }, [enabled]);
+
+  const refreshAccountStatus = useCallback(async () => {
+    if (!enabled) return;
+    if (accountStatusRequestRef.current)
+      return await accountStatusRequestRef.current;
+    accountStatusRequestRef.current = getAccountStatus()
+      .then((status) => {
+        setAccountStatus(status);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        accountStatusRequestRef.current = null;
+      });
+    return await accountStatusRequestRef.current;
   }, [enabled]);
 
   const refreshThreads = useCallback(async () => {
@@ -480,12 +494,27 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       }
     }
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 3000);
+    const timer = window.setInterval(
+      () => void refresh(),
+      STATUS_POLL_INTERVAL_MS,
+    );
     return () => {
       disposed = true;
       window.clearInterval(timer);
     };
   }, [enabled, refreshApprovals, refreshStatus]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void refreshAccountStatus();
+    const timer = window.setInterval(
+      () => void refreshAccountStatus(),
+      ACCOUNT_STATUS_POLL_INTERVAL_MS,
+    );
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [enabled, refreshAccountStatus]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -930,9 +959,17 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           threadList.projects[0]?.path ??
           null;
         const thread = await createThread({ cwd });
-        await refreshThreads();
         selectThread(thread.id);
-        await refreshThreadDetail(thread.id);
+        const nextDetail = {
+          thread,
+          goal: null,
+          turns: [],
+          subAgents: [],
+          sideConversations: [],
+        };
+        threadDetailRef.current = nextDetail;
+        setThreadDetail(nextDetail);
+        await Promise.all([refreshThreads(), refreshThreadDetail(thread.id)]);
         setError("");
       } catch (unknownError) {
         setError(userFacingErrorMessage(unknownError, "create thread failed"));
@@ -962,6 +999,16 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       setSending(true);
       try {
         const thread = await createThread({ cwd });
+        selectThread(thread.id);
+        const nextDetail = {
+          thread,
+          goal: null,
+          turns: [],
+          subAgents: [],
+          sideConversations: [],
+        };
+        threadDetailRef.current = nextDetail;
+        setThreadDetail(nextDetail);
         await startThreadTurn({
           threadId: thread.id,
           text: text.trim(),
@@ -972,14 +1019,6 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           skills: options.skills,
           collaborationMode: options.collaborationMode,
           permissionMode: options.permissionMode,
-        });
-        selectThread(thread.id);
-        setThreadDetail({
-          thread,
-          goal: null,
-          turns: [],
-          subAgents: [],
-          sideConversations: [],
         });
         setError("");
         window.setTimeout(() => {
@@ -1709,8 +1748,13 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   );
 
   const refreshRuntimeStatus = useCallback(async () => {
-    await Promise.all([refreshStatus(), refreshThreads(), refreshApprovals()]);
-  }, [refreshApprovals, refreshStatus, refreshThreads]);
+    await Promise.all([
+      refreshStatus(),
+      refreshThreads(),
+      refreshApprovals(),
+      refreshAccountStatus(),
+    ]);
+  }, [refreshAccountStatus, refreshApprovals, refreshStatus, refreshThreads]);
 
   return {
     health,

@@ -23,6 +23,13 @@ export type DatabaseStoreStatus = {
   officialStreamStateCount: number;
 };
 
+export type DerivedCacheCleanupResult = {
+  projectCount: number;
+  threadCount: number;
+  threadDetailCount: number;
+  officialStreamStateCount: number;
+};
+
 export class DatabaseStore {
   readonly db: BetterSQLite3Database<typeof schema>;
 
@@ -214,6 +221,29 @@ export class DatabaseStore {
     this.sqlite
       .prepare("DELETE FROM official_stream_states WHERE thread_id = ?")
       .run(normalizedThreadId);
+  }
+
+  clearDerivedCaches(): DerivedCacheCleanupResult {
+    const before = {
+      projectCount: this.readCount("projects"),
+      threadCount: this.readCount("threads"),
+      threadDetailCount: this.readCount("thread_details"),
+      officialStreamStateCount: this.readCount("official_stream_states"),
+    };
+    const transaction = this.sqlite.transaction(() => {
+      this.sqlite.prepare("DELETE FROM official_stream_states").run();
+      this.sqlite.prepare("DELETE FROM thread_details").run();
+      this.sqlite.prepare("DELETE FROM threads").run();
+      this.sqlite.prepare("DELETE FROM projects").run();
+    });
+    transaction();
+    return before;
+  }
+
+  compactStorage(): void {
+    this.sqlite.pragma("wal_checkpoint(TRUNCATE)");
+    this.sqlite.exec("VACUUM");
+    this.sqlite.pragma("wal_checkpoint(TRUNCATE)");
   }
 
   setThreadPinned(threadId: string, pinned: boolean): void {
