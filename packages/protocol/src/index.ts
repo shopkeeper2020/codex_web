@@ -1074,6 +1074,15 @@ export class OfficialIpcBridge {
       readString(params.sourceClientId) ||
       null;
     const ownerClientId = sourceClientId || existing?.ownerClientId || null;
+    if (
+      this.shouldIgnoreLocalOnlyExternalChange({
+        conversationId,
+        nextOwnerClientId: ownerClientId,
+        sourceClientId,
+      })
+    ) {
+      return;
+    }
 
     let conversationState: unknown = null;
     if (changeType === "snapshot") {
@@ -1161,6 +1170,22 @@ export class OfficialIpcBridge {
       );
     }
     return false;
+  }
+
+  private shouldIgnoreLocalOnlyExternalChange(input: {
+    conversationId: string;
+    nextOwnerClientId: string | null;
+    sourceClientId: string | null;
+  }): boolean {
+    if (!this.localOnlyOwnedConversationIds.has(input.conversationId))
+      return false;
+    const externalSource = Boolean(
+      input.sourceClientId && input.sourceClientId !== this.clientId,
+    );
+    const externalOwner = Boolean(
+      input.nextOwnerClientId && input.nextOwnerClientId !== this.clientId,
+    );
+    return externalSource || externalOwner;
   }
 
   private storeThreadStreamState(input: {

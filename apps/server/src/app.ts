@@ -907,6 +907,105 @@ function turnItemsScore(value: unknown): number {
   }
 }
 
+const RICH_TEXT_ITEM_KEYS = new Set([
+  "text",
+  "message",
+  "content",
+  "body",
+  "detail",
+  "output",
+  "aggregatedOutput",
+  "aggregated_output",
+  "stdout",
+  "stdoutText",
+  "stderr",
+  "stderrText",
+  "diff",
+  "patch",
+]);
+
+function readItemRecordId(item: unknown): string {
+  const record = asRecord(item);
+  return (
+    readString(record?.id) ||
+    readString(record?.itemId) ||
+    readString(record?.item_id) ||
+    readString(record?.callId) ||
+    readString(record?.call_id)
+  );
+}
+
+function jsonValueScore(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (value === null || value === undefined) return 0;
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return 1;
+  }
+}
+
+function richerItemTextValue(primaryValue: unknown, liveValue: unknown): unknown {
+  if (primaryValue === undefined) return liveValue;
+  if (liveValue === undefined) return primaryValue;
+  return jsonValueScore(primaryValue) > jsonValueScore(liveValue)
+    ? primaryValue
+    : liveValue;
+}
+
+function mergeItemWithRicherText(
+  primary: unknown,
+  live: unknown,
+  prefer: "primary" | "live",
+): unknown {
+  const primaryRecord = asRecord(primary);
+  const liveRecord = asRecord(live);
+  if (!primaryRecord || !liveRecord) return prefer === "primary" ? primary : live;
+
+  const merged =
+    prefer === "primary"
+      ? { ...liveRecord, ...primaryRecord }
+      : { ...primaryRecord, ...liveRecord };
+
+  for (const key of RICH_TEXT_ITEM_KEYS) {
+    if (!(key in primaryRecord) && !(key in liveRecord)) continue;
+    merged[key] = richerItemTextValue(primaryRecord[key], liveRecord[key]);
+  }
+
+  return merged;
+}
+
+function mergeStableIdItems(
+  baseItems: unknown[],
+  otherItems: unknown[],
+  prefer: "primary" | "live",
+): unknown[] {
+  const otherById = new Map<string, unknown>();
+  for (const item of otherItems) {
+    const id = readItemRecordId(item);
+    if (id) otherById.set(id, item);
+  }
+
+  const usedOtherIds = new Set<string>();
+  const merged = baseItems.map((item) => {
+    const id = readItemRecordId(item);
+    const other = id ? otherById.get(id) : null;
+    if (!id || !other) return item;
+    usedOtherIds.add(id);
+    return prefer === "primary"
+      ? mergeItemWithRicherText(item, other, prefer)
+      : mergeItemWithRicherText(other, item, prefer);
+  });
+
+  for (const item of otherItems) {
+    const id = readItemRecordId(item);
+    if (!id || usedOtherIds.has(id)) continue;
+    merged.push(item);
+  }
+
+  return merged;
+}
+
 function mergeTurnWithRicherItems(primary: unknown, live: unknown): unknown {
   const primaryTurn = asRecord(primary);
   const liveTurn = asRecord(live);
@@ -918,11 +1017,13 @@ function mergeTurnWithRicherItems(primary: unknown, live: unknown): unknown {
     (liveItems.length === primaryItems.length &&
       liveItems.length > 0 &&
       turnItemsScore(liveTurn) > turnItemsScore(primaryTurn));
-  if (!liveIsRicher) return primary;
+  const items = liveIsRicher
+    ? mergeStableIdItems(liveItems, primaryItems, "live")
+    : mergeStableIdItems(primaryItems, liveItems, "primary");
   return {
     ...liveTurn,
     ...primaryTurn,
-    items: liveItems,
+    items,
   };
 }
 

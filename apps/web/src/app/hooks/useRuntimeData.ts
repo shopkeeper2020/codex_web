@@ -43,6 +43,7 @@ import type { SendOptions } from "../components/Composer";
 import { userFacingErrorMessage } from "../errorMessages";
 import {
   acceptRealtimeThreadEvent,
+  readRealtimeThreadId,
   updateRealtimeServerInstance,
 } from "../realtimeState";
 import {
@@ -61,18 +62,6 @@ import {
 } from "../threadDetailRequests";
 import { appendThreadListPage, EMPTY_THREAD_LIST } from "../threadListPages";
 
-function readString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function eventThreadId(event: RealtimeEvent): string {
-  const payload = event.payload;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload))
-    return "";
-  const record = payload as Record<string, unknown>;
-  return readString(record.threadId) || readString(record.conversationId);
-}
-
 function hasActiveDocumentSelection(): boolean {
   const selection = window.getSelection();
   return Boolean(selection && !selection.isCollapsed && selection.toString());
@@ -82,9 +71,24 @@ const UNPARSED_REALTIME_EVENT: RealtimeEvent = { type: "unparsed" };
 const WEBSOCKET_ERROR_REALTIME_EVENT: RealtimeEvent = {
   type: "websocket.error",
 };
-const ACTIVE_THREAD_POLL_INTERVAL_MS = 5_000;
+const ACTIVE_THREAD_POLL_INTERVAL_MS = 1_500;
 const REALTIME_REFRESH_DEBOUNCE_MS = 2_000;
+const STREAM_REALTIME_REFRESH_DEBOUNCE_MS = 250;
 const ERROR_AUTO_DISMISS_MS = 7_000;
+const APP_SERVER_FAST_DETAIL_METHODS = new Set([
+  "turn/started",
+  "turn/completed",
+  "item/started",
+  "item/completed",
+  "item/agentMessage/delta",
+  "item/commandExecution/outputDelta",
+]);
+const APP_SERVER_DETAIL_ONLY_METHODS = new Set([
+  "item/started",
+  "item/completed",
+  "item/agentMessage/delta",
+  "item/commandExecution/outputDelta",
+]);
 
 function hasSendContent(
   text: string,
@@ -552,6 +556,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     let reconnectAttempt = 0;
     let reconnectTimer: number | null = null;
     let realtimeRefreshTimer: number | null = null;
+    let realtimeRefreshDueAt = 0;
     let pendingRealtimeThreadsRefresh = false;
     let pendingRealtimeApprovalsRefresh = false;
     let pendingRealtimeDetailRefresh = false;
@@ -568,18 +573,26 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       includeThreads = false,
       includeApprovals = false,
       includeDetail = false,
+      delayMs = REALTIME_REFRESH_DEBOUNCE_MS,
     }: {
       includeThreads?: boolean;
       includeApprovals?: boolean;
       includeDetail?: boolean;
+      delayMs?: number;
     }) => {
       if (disposed) return;
       if (includeThreads) pendingRealtimeThreadsRefresh = true;
       if (includeApprovals) pendingRealtimeApprovalsRefresh = true;
       if (includeDetail) pendingRealtimeDetailRefresh = true;
-      if (realtimeRefreshTimer !== null) return;
+      const nextDueAt = Date.now() + Math.max(0, delayMs);
+      if (realtimeRefreshTimer !== null) {
+        if (nextDueAt >= realtimeRefreshDueAt) return;
+        window.clearTimeout(realtimeRefreshTimer);
+      }
+      realtimeRefreshDueAt = nextDueAt;
       realtimeRefreshTimer = window.setTimeout(() => {
         realtimeRefreshTimer = null;
+        realtimeRefreshDueAt = 0;
         if (disposed) return;
         const shouldRefreshThreads = pendingRealtimeThreadsRefresh;
         const shouldRefreshApprovals = pendingRealtimeApprovalsRefresh;
@@ -638,7 +651,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
               : null;
           if (officialDecision && !officialDecision.accepted) return;
           const changedThreadId =
-            officialDecision?.threadId || eventThreadId(payload);
+            officialDecision?.threadId || readRealtimeThreadId(payload);
           const currentThreadId = selectedThreadIdRef.current;
           const streamPayload =
             payload.payload &&
@@ -646,19 +659,33 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
             !Array.isArray(payload.payload)
               ? (payload.payload as Record<string, unknown>)
               : null;
-          const inProgressSnapshot =
+          const officialInProgressChange =
             payload.type === "official.threadStreamStateChanged" &&
-            streamPayload?.changeType === "snapshot" &&
-            streamPayload.isInProgress === true;
+            streamPayload?.isInProgress === true;
+          const appServerMethod =
+            payload.type === "appServer.notification" ? payload.method : "";
+          const isAppServerFastDetail =
+            appServerMethod.length > 0 &&
+            APP_SERVER_FAST_DETAIL_METHODS.has(appServerMethod);
+          const isFastDetailRefresh =
+            officialInProgressChange || isAppServerFastDetail;
+          const isAppServerDetailOnly =
+            appServerMethod.length > 0 &&
+            APP_SERVER_DETAIL_ONLY_METHODS.has(appServerMethod);
           scheduleRealtimeRefresh({
             includeThreads:
-              payload.type !== "official.threadStreamStateChanged" ||
-              !inProgressSnapshot,
+              payload.type === "appServer.notification"
+                ? !isAppServerDetailOnly
+                : payload.type !== "official.threadStreamStateChanged" ||
+                  !officialInProgressChange,
             includeApprovals:
               payload.type === "approval.requested" ||
               payload.type === "approval.resolved",
             includeDetail:
               !changedThreadId || changedThreadId === currentThreadId,
+            delayMs: isFastDetailRefresh
+              ? STREAM_REALTIME_REFRESH_DEBOUNCE_MS
+              : REALTIME_REFRESH_DEBOUNCE_MS,
           });
         }
       } catch {
@@ -694,8 +721,10 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     return () => {
       disposed = true;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      if (realtimeRefreshTimer !== null)
+      if (realtimeRefreshTimer !== null) {
         window.clearTimeout(realtimeRefreshTimer);
+        realtimeRefreshDueAt = 0;
+      }
       socket?.close();
     };
   }, [enabled, refreshApprovals, refreshThreadDetail, refreshThreads]);

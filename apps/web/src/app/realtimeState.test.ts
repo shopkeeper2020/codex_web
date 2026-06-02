@@ -21,6 +21,22 @@ describe("realtime state helpers", () => {
     expect(readRealtimeCacheVersion(event)).toBe(4);
   });
 
+  it("reads thread ids from app-server notification params and approvals", () => {
+    expect(
+      readRealtimeThreadId({
+        type: "appServer.notification",
+        params: { thread_id: "thread-from-params" },
+      }),
+    ).toBe("thread-from-params");
+
+    expect(
+      readRealtimeThreadId({
+        type: "approval.requested",
+        approval: { threadId: "thread-from-approval" },
+      }),
+    ).toBe("thread-from-approval");
+  });
+
   it("accepts newer cache versions and rejects stale realtime events", () => {
     const versions = new Map<string, number>();
 

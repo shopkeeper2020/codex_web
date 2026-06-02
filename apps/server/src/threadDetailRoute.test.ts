@@ -628,6 +628,116 @@ describe("thread detail route", () => {
     });
   });
 
+  it("preserves complete app-server assistant text while keeping live stream items", async () => {
+    const officialIpc = createBridge();
+    officialIpc.restoreThreadStreamState({
+      threadId: "thread-live-text",
+      conversationId: "thread-live-text",
+      hostId: "local",
+      ownerClientId: "desktop-client",
+      sourceClientId: "desktop-client",
+      conversationState: {
+        id: "thread-live-text",
+        name: "Live text snapshot",
+        threadRuntimeStatus: { type: "active" },
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [
+              {
+                type: "agentMessage",
+                id: "msg-live-text",
+                text: "Help release notes 里 Codex 相关最近一条是 5 月",
+              },
+              {
+                type: "commandExecution",
+                id: "call-live-command",
+                command: "rg adapter apps/server/src",
+                status: "running",
+                output: "",
+              },
+            ],
+          },
+        ],
+      },
+      changeType: "snapshot",
+      cacheVersion: 12,
+      updatedAtIso: "2026-06-02T00:00:00.000Z",
+      isInProgress: true,
+      activeTurnId: "turn-live",
+    });
+    const { context, appServer } = await createHarness(officialIpc);
+    const completeText =
+      "Help release notes 里 Codex 相关最近一条是 5 月 29 日。现在我会把这些更新映射到我们 Web 端的协议、UI、后端启动链路，看哪些是真需求、哪些只是上游 CLI 内部能力。";
+    appServer.threadReadResult = {
+      thread: {
+        id: "thread-live-text",
+        name: "App-server complete text",
+        cwd: "C:\\workspace\\codex_web",
+        updatedAt: "2026-06-02T00:00:01.000Z",
+        status: "active",
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [
+              {
+                type: "agentMessage",
+                id: "msg-live-text",
+                text: completeText,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-live-text",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "app-server-readonly",
+      data: {
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [
+              { type: "assistant", id: "msg-live-text", text: completeText },
+              {
+                type: "command",
+                id: "call-live-command",
+                command: "rg adapter apps/server/src",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(
+      officialIpc.getThreadStreamState("thread-live-text"),
+    ).toMatchObject({
+      conversationState: {
+        turns: [
+          {
+            id: "turn-live",
+            items: [
+              { id: "msg-live-text", text: completeText },
+              {
+                id: "call-live-command",
+                command: "rg adapter apps/server/src",
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   it("retires a stale external active cache when app-server has a newer completed turn", async () => {
     const officialIpc = createBridge();
     officialIpc.restoreThreadStreamState({

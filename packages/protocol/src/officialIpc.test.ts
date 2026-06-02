@@ -478,6 +478,68 @@ describe("official IPC helpers", () => {
     });
   });
 
+  it("keeps local-only ownership when an official client opens the same conversation", () => {
+    const bridge = new OfficialIpcBridge("");
+    const testBridge = bridge as unknown as {
+      clientId: string | null;
+      handleFrame: (frame: Record<string, unknown>) => void;
+    };
+    const notifications: OfficialIpcNotification[] = [];
+    testBridge.clientId = "web-client";
+    bridge.onNotification((notification) => notifications.push(notification));
+
+    expect(bridge.claimLocalOnlyConversation("thread-local")).toBe(true);
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-local",
+        change: {
+          type: "snapshot",
+          conversationState: {
+            status: "interrupted",
+            turns: [{ id: "turn-opened", status: "interrupted", items: [] }],
+          },
+        },
+      },
+    });
+
+    expect(bridge.isOwnedConversation("thread-local")).toBe(true);
+    expect(bridge.getThreadStreamState("thread-local")).toBeNull();
+    expect(notifications).toEqual([]);
+    expect(bridge.getStatus()).toMatchObject({
+      ownedConversationCount: 1,
+      localOnlyOwnedConversationCount: 1,
+    });
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-local",
+        change: {
+          type: "patches",
+          patches: [
+            {
+              op: "replace",
+              path: ["status"],
+              value: "interrupted",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(bridge.isOwnedConversation("thread-local")).toBe(true);
+    expect(bridge.getThreadStreamState("thread-local")).toBeNull();
+    expect(notifications).toEqual([]);
+  });
+
   it("reads active turn ids from official stream snapshots", () => {
     const bridge = new OfficialIpcBridge("");
     const testBridge = bridge as unknown as {

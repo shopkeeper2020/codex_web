@@ -1,6 +1,10 @@
 export type MinimalRealtimeEvent = {
   type?: string;
   payload?: unknown;
+  params?: unknown;
+  approval?: unknown;
+  threadId?: unknown;
+  conversationId?: unknown;
   atIso?: string;
   serverInstanceId?: string;
   serverStartedAtIso?: string;
@@ -24,6 +28,17 @@ function readString(value: unknown): string {
     : "";
 }
 
+function readThreadIdFromRecord(
+  value: Record<string, unknown> | null,
+): string {
+  if (!value) return "";
+  return (
+    readString(value.threadId) ||
+    readString(value.thread_id) ||
+    readString(value.conversationId)
+  );
+}
+
 function readFiniteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -34,8 +49,12 @@ function readFiniteNumber(value: unknown): number | null {
 }
 
 export function readRealtimeThreadId(event: MinimalRealtimeEvent): string {
-  const payload = asRecord(event.payload);
-  return readString(payload?.threadId) || readString(payload?.conversationId);
+  return (
+    readThreadIdFromRecord(event as Record<string, unknown>) ||
+    readThreadIdFromRecord(asRecord(event.payload)) ||
+    readThreadIdFromRecord(asRecord(event.params)) ||
+    readThreadIdFromRecord(asRecord(event.approval))
+  );
 }
 
 export function readRealtimeCacheVersion(
