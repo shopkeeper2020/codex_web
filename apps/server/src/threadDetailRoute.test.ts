@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OfficialIpcBridge } from "@codex-web/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type ServerContext } from "./app.js";
 import type { CodexAppServerProcess } from "./appServerProcess.js";
 
@@ -153,6 +153,51 @@ function applyExternalPartialActiveSnapshot(
   });
 }
 
+function applyExternalUsableActiveSnapshot(
+  officialIpc: OfficialIpcBridge,
+  input: {
+    cacheVersion?: number;
+    threadId: string;
+    text?: string;
+  },
+): void {
+  (
+    officialIpc as unknown as {
+      handleFrame: (frame: Record<string, unknown>) => void;
+    }
+  ).handleFrame({
+    type: "broadcast",
+    method: "thread-stream-state-changed",
+    sourceClientId: "desktop-client",
+    params: {
+      hostId: "local",
+      conversationId: input.threadId,
+      change: {
+        type: "snapshot",
+        conversationState: {
+          id: input.threadId,
+          name: "Desktop usable active snapshot",
+          threadRuntimeStatus: { type: "active" },
+          updatedAt: "2026-05-29T00:00:00.000Z",
+          turns: [
+            {
+              id: "turn-live",
+              status: "active",
+              items: [
+                {
+                  id: `item-live-${input.cacheVersion ?? 1}`,
+                  type: "agentMessage",
+                  text: input.text ?? "live stream",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  });
+}
+
 function applyExternalSparseItemSnapshot(
   officialIpc: OfficialIpcBridge,
   threadId: string,
@@ -161,11 +206,11 @@ function applyExternalSparseItemSnapshot(
     { type: "userMessage", id: "item-user", content: "hello" },
   ];
   items.length = 4;
-  items.push(
-    null,
-    undefined,
-    { type: "agentMessage", id: "item-agent", text: "world" },
-  );
+  items.push(null, undefined, {
+    type: "agentMessage",
+    id: "item-agent",
+    text: "world",
+  });
   (
     officialIpc as unknown as {
       handleFrame: (frame: Record<string, unknown>) => void;
@@ -213,6 +258,7 @@ async function closeHarness(harness: Harness): Promise<void> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   while (harnesses.length > 0) {
     const harness = harnesses.pop();
     if (harness) await closeHarness(harness);
@@ -320,9 +366,9 @@ describe("thread detail route", () => {
     ]);
     expect(context.database.status().threadDetailCount).toBe(1);
     expect(officialIpc.isOwnedConversation("thread-app-server")).toBe(true);
-    expect(
-      officialIpc.canBroadcastOwnedConversation("thread-app-server"),
-    ).toBe(false);
+    expect(officialIpc.canBroadcastOwnedConversation("thread-app-server")).toBe(
+      false,
+    );
   });
 
   it("uses cached created thread detail during transient empty rollout reads", async () => {
@@ -515,23 +561,23 @@ describe("thread detail route", () => {
         ],
       },
     });
-    expect(officialIpc.getThreadStreamState("thread-stale-active")).toMatchObject(
-      {
-        threadId: "thread-stale-active",
-        ownerClientId: "desktop-client",
-        isInProgress: true,
-        activeTurnId: "turn-active-empty",
-        conversationState: {
-          id: "thread-stale-active",
-          status: "active",
-          threadRuntimeStatus: { type: "active" },
-          turns: [
-            { id: "turn-completed", status: "completed" },
-            { id: "turn-active-empty", status: "active" },
-          ],
-        },
+    expect(
+      officialIpc.getThreadStreamState("thread-stale-active"),
+    ).toMatchObject({
+      threadId: "thread-stale-active",
+      ownerClientId: "desktop-client",
+      isInProgress: true,
+      activeTurnId: "turn-active-empty",
+      conversationState: {
+        id: "thread-stale-active",
+        status: "active",
+        threadRuntimeStatus: { type: "active" },
+        turns: [
+          { id: "turn-completed", status: "completed" },
+          { id: "turn-active-empty", status: "active" },
+        ],
       },
-    );
+    });
     expect(context.database.status().threadDetailCount).toBe(0);
   });
 
@@ -613,19 +659,159 @@ describe("thread detail route", () => {
         ],
       },
     });
-    expect(officialIpc.getThreadStreamState("thread-live-items")).toMatchObject({
-      conversationState: {
+    expect(officialIpc.getThreadStreamState("thread-live-items")).toMatchObject(
+      {
+        conversationState: {
+          turns: [
+            {
+              id: "turn-live",
+              items: [
+                { text: "live intro" },
+                {
+                  type: "commandExecution",
+                  command: "pnpm --filter @codex-web/web typecheck",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    );
+  });
+
+  it("serves fresh usable external active detail without app-server verification", async () => {
+    const officialIpc = createBridge();
+    applyExternalUsableActiveSnapshot(officialIpc, {
+      threadId: "thread-active-throttle",
+      text: "live first",
+    });
+    const { context, appServer } = await createHarness(officialIpc);
+    appServer.threadReadResult = {
+      thread: {
+        id: "thread-active-throttle",
+        name: "App-server active thread",
+        cwd: "C:\\workspace\\codex_web",
+        updatedAt: "2026-05-29T00:00:00.000Z",
+        status: "active",
         turns: [
           {
             id: "turn-live",
-            items: [
-              { text: "live intro" },
-              { type: "commandExecution", command: "pnpm --filter @codex-web/web typecheck" },
-            ],
+            status: "active",
+            items: [{ type: "agentMessage", text: "app-server live" }],
+          },
+        ],
+      },
+    };
+
+    const first = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-active-throttle",
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({
+      source: "official-ipc-active",
+      data: {
+        thread: { id: "thread-active-throttle", inProgress: true },
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [{ type: "assistant", text: "live first" }],
           },
         ],
       },
     });
+    expect(appServer.calls).toEqual([]);
+
+    applyExternalUsableActiveSnapshot(officialIpc, {
+      threadId: "thread-active-throttle",
+      text: "live second",
+    });
+
+    const second = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-active-throttle",
+    });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({
+      source: "official-ipc-active",
+      data: {
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [{ type: "assistant", text: "live second" }],
+          },
+        ],
+      },
+    });
+    expect(appServer.calls).toEqual([]);
+  });
+
+  it("verifies stale usable external active detail through app-server", async () => {
+    const officialIpc = createBridge();
+    officialIpc.restoreThreadStreamState({
+      threadId: "thread-stale-active-verify",
+      conversationId: "thread-stale-active-verify",
+      hostId: "local",
+      ownerClientId: "desktop-client",
+      sourceClientId: "desktop-client",
+      conversationState: {
+        id: "thread-stale-active-verify",
+        name: "Stale active snapshot",
+        threadRuntimeStatus: { type: "active" },
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [{ type: "agentMessage", text: "stale live" }],
+          },
+        ],
+      },
+      changeType: "snapshot",
+      cacheVersion: 1,
+      updatedAtIso: "2026-05-29T00:00:00.000Z",
+      isInProgress: true,
+      activeTurnId: "turn-live",
+    });
+    const { context, appServer } = await createHarness(officialIpc);
+    appServer.threadReadResult = {
+      thread: {
+        id: "thread-stale-active-verify",
+        name: "App-server active thread",
+        cwd: "C:\\workspace\\codex_web",
+        updatedAt: "2026-05-29T00:00:00.000Z",
+        status: "active",
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [{ type: "agentMessage", text: "app-server live" }],
+          },
+        ],
+      },
+    };
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-stale-active-verify",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "app-server-readonly",
+    });
+    expect(appServer.calls).toEqual([
+      {
+        method: "thread/read",
+        params: {
+          threadId: "thread-stale-active-verify",
+          includeTurns: true,
+        },
+      },
+    ]);
   });
 
   it("retires a stale external active cache when app-server has a newer completed turn", async () => {

@@ -84,6 +84,9 @@ const WEBSOCKET_ERROR_REALTIME_EVENT: RealtimeEvent = {
 };
 const ACTIVE_THREAD_POLL_INTERVAL_MS = 5_000;
 const REALTIME_REFRESH_DEBOUNCE_MS = 2_000;
+const REALTIME_DETAIL_REFRESH_DEBOUNCE_MS = 100;
+const THREAD_LIST_REFRESH_DEDUP_MS = 2_500;
+const THREAD_DETAIL_REFRESH_DEDUP_MS = 2_500;
 const ERROR_AUTO_DISMISS_MS = 7_000;
 
 function hasSendContent(
@@ -111,7 +114,13 @@ function detailInProgress(detail: ThreadDetail | null): boolean {
 }
 
 type RefreshThreadDetailOptions = {
+  dedupe?: boolean;
+  queueAfterInFlight?: boolean;
   silent?: boolean;
+};
+
+type RefreshThreadsOptions = {
+  dedupe?: boolean;
 };
 
 type RuntimeData = {
@@ -260,6 +269,13 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   const realtimeVersionsRef = useRef(new Map<string, number>());
   const realtimeServerInstanceRef = useRef("");
   const threadListHydratedRef = useRef(false);
+  const threadListRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const threadListLastRefreshAtMsRef = useRef(0);
+  const threadDetailRefreshInFlightRef = useRef(
+    new Map<string, Promise<void>>(),
+  );
+  const threadDetailQueuedRefreshRef = useRef(new Set<string>());
+  const threadDetailLastRefreshAtMsRef = useRef(new Map<string, number>());
   const selectedThreadIdRef = useRef(selectedThreadId);
   const threadDetailRef = useRef<ThreadDetail | null>(threadDetail);
   const queuedMessagesRef = useRef(queuedMessagesByThread);
@@ -319,28 +335,51 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       setProtocolCompatibility(protocolCompatibilityResult.value);
   }, [enabled]);
 
-  const refreshThreads = useCallback(async () => {
-    if (!enabled) return;
-    const showInitialLoading = !threadListHydratedRef.current;
-    if (showInitialLoading) setThreadListLoading(true);
-    try {
-      const [nextList, nextArchivedList] = await Promise.all([
-        getDomainThreads(60, false),
-        getDomainThreads(20, true),
-      ]);
-      setThreadList(nextList);
-      setArchivedThreadList(nextArchivedList);
-      threadListHydratedRef.current = true;
-      setSelectedThreadId((current) => {
-        const nextThreadId = current || nextList.threads[0]?.id || "";
-        if (!current && nextThreadId && readAppRouteFromLocation() === "chat")
-          replaceRoute(nextThreadId);
-        return nextThreadId;
-      });
-    } finally {
-      if (showInitialLoading) setThreadListLoading(false);
-    }
-  }, [enabled]);
+  const refreshThreads = useCallback(
+    async (options: RefreshThreadsOptions = {}) => {
+      if (!enabled) return;
+      const nowMs = Date.now();
+      if (
+        options.dedupe &&
+        threadListLastRefreshAtMsRef.current > 0 &&
+        nowMs - threadListLastRefreshAtMsRef.current <
+          THREAD_LIST_REFRESH_DEDUP_MS
+      ) {
+        return;
+      }
+      if (threadListRefreshInFlightRef.current) {
+        return await threadListRefreshInFlightRef.current;
+      }
+      const showInitialLoading = !threadListHydratedRef.current;
+      if (showInitialLoading) setThreadListLoading(true);
+      const refreshPromise = (async () => {
+        const [nextList, nextArchivedList] = await Promise.all([
+          getDomainThreads(60, false),
+          getDomainThreads(20, true),
+        ]);
+        setThreadList(nextList);
+        setArchivedThreadList(nextArchivedList);
+        threadListHydratedRef.current = true;
+        threadListLastRefreshAtMsRef.current = Date.now();
+        setSelectedThreadId((current) => {
+          const nextThreadId = current || nextList.threads[0]?.id || "";
+          if (!current && nextThreadId && readAppRouteFromLocation() === "chat")
+            replaceRoute(nextThreadId);
+          return nextThreadId;
+        });
+      })();
+      threadListRefreshInFlightRef.current = refreshPromise;
+      try {
+        await refreshPromise;
+      } finally {
+        if (threadListRefreshInFlightRef.current === refreshPromise) {
+          threadListRefreshInFlightRef.current = null;
+        }
+        if (showInitialLoading) setThreadListLoading(false);
+      }
+    },
+    [enabled],
+  );
 
   const refreshApprovals = useCallback(async () => {
     if (!enabled) return;
@@ -349,54 +388,116 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
 
   const refreshThreadDetail = useCallback(
     async (threadId: string, options: RefreshThreadDetailOptions = {}) => {
-      const request = beginThreadDetailRequest(
-        detailRequestStateRef.current,
-        threadId,
-      );
-      detailRequestStateRef.current = request.state;
-      if (!enabled || !threadId) {
+      if (!enabled || !threadId.trim()) {
         setThreadDetail(null);
         setDetailLoading(false);
         return;
       }
-      const currentDetail = threadDetailRef.current;
-      const shouldShowLoading =
-        !options.silent || currentDetail?.thread.id !== threadId;
-      if (shouldShowLoading) setDetailLoading(true);
-      try {
-        const detail = await getThreadDetail(threadId);
+      const normalizedThreadId = threadId.trim();
+      let forceRefresh = false;
+      for (;;) {
+        const nowMs = Date.now();
+        const lastRefreshAtMs =
+          threadDetailLastRefreshAtMsRef.current.get(normalizedThreadId) ?? 0;
         if (
-          shouldApplyThreadDetailResponse(
-            detailRequestStateRef.current,
-            request.token,
-          )
+          !forceRefresh &&
+          options.dedupe &&
+          lastRefreshAtMs > 0 &&
+          nowMs - lastRefreshAtMs < THREAD_DETAIL_REFRESH_DEDUP_MS
         ) {
-          if (
-            options.silent &&
-            currentDetail?.thread.id === threadId &&
-            hasActiveDocumentSelection()
-          ) {
-            return;
+          return;
+        }
+        const inFlight =
+          threadDetailRefreshInFlightRef.current.get(normalizedThreadId);
+        if (
+          inFlight &&
+          detailRequestStateRef.current.activeThreadId === normalizedThreadId
+        ) {
+          if (options.queueAfterInFlight) {
+            threadDetailQueuedRefreshRef.current.add(normalizedThreadId);
           }
-          setThreadDetail(detail);
+          let inFlightError: unknown = null;
+          let shouldRefreshAfterInFlight = false;
+          try {
+            await inFlight;
+          } catch (unknownError) {
+            inFlightError = unknownError;
+          } finally {
+            shouldRefreshAfterInFlight = Boolean(
+              options.queueAfterInFlight &&
+                threadDetailQueuedRefreshRef.current.delete(normalizedThreadId),
+            );
+          }
+          if (inFlightError) throw inFlightError;
+          if (shouldRefreshAfterInFlight) {
+            if (selectedThreadIdRef.current !== normalizedThreadId) return;
+            forceRefresh = true;
+            continue;
+          }
+          return;
         }
-      } catch (unknownError) {
-        if (
-          shouldApplyThreadDetailResponse(
-            detailRequestStateRef.current,
-            request.token,
+        const request = beginThreadDetailRequest(
+          detailRequestStateRef.current,
+          normalizedThreadId,
+        );
+        detailRequestStateRef.current = request.state;
+        const currentDetail = threadDetailRef.current;
+        const shouldShowLoading =
+          !options.silent || currentDetail?.thread.id !== normalizedThreadId;
+        if (shouldShowLoading) setDetailLoading(true);
+        const refreshPromise = (async () => {
+          const detail = await getThreadDetail(normalizedThreadId);
+          if (
+            shouldApplyThreadDetailResponse(
+              detailRequestStateRef.current,
+              request.token,
+            )
+          ) {
+            if (
+              options.silent &&
+              currentDetail?.thread.id === normalizedThreadId &&
+              hasActiveDocumentSelection()
+            ) {
+              return;
+            }
+            setThreadDetail(detail);
+            threadDetailLastRefreshAtMsRef.current.set(
+              normalizedThreadId,
+              Date.now(),
+            );
+          }
+        })();
+        threadDetailRefreshInFlightRef.current.set(
+          normalizedThreadId,
+          refreshPromise,
+        );
+        try {
+          await refreshPromise;
+        } catch (unknownError) {
+          if (
+            shouldApplyThreadDetailResponse(
+              detailRequestStateRef.current,
+              request.token,
+            )
           )
-        )
-          throw unknownError;
-      } finally {
-        if (
-          shouldApplyThreadDetailResponse(
-            detailRequestStateRef.current,
-            request.token,
-          )
-        ) {
-          setDetailLoading(false);
+            throw unknownError;
+        } finally {
+          if (
+            threadDetailRefreshInFlightRef.current.get(normalizedThreadId) ===
+            refreshPromise
+          ) {
+            threadDetailRefreshInFlightRef.current.delete(normalizedThreadId);
+          }
+          if (
+            shouldApplyThreadDetailResponse(
+              detailRequestStateRef.current,
+              request.token,
+            )
+          ) {
+            setDetailLoading(false);
+          }
         }
+        return;
       }
     },
     [enabled],
@@ -517,10 +618,10 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       pollCount += 1;
       try {
         const tasks: Promise<unknown>[] = [
-          refreshThreadDetail(currentThreadId, { silent: true }),
+          refreshThreadDetail(currentThreadId, { dedupe: true, silent: true }),
           refreshApprovals(),
         ];
-        if (pollCount % 4 === 1) tasks.push(refreshThreads());
+        if (pollCount % 4 === 1) tasks.push(refreshThreads({ dedupe: true }));
         await Promise.all(tasks);
       } catch {
         // Realtime events remain the primary path; this poll is only a quiet fallback.
@@ -552,9 +653,11 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     let reconnectAttempt = 0;
     let reconnectTimer: number | null = null;
     let realtimeRefreshTimer: number | null = null;
+    let realtimeDetailRefreshTimer: number | null = null;
     let pendingRealtimeThreadsRefresh = false;
     let pendingRealtimeApprovalsRefresh = false;
-    let pendingRealtimeDetailRefresh = false;
+    let pendingRealtimeDedupeRefresh = true;
+    let pendingRealtimeDetailDedupeRefresh = true;
     let socket: WebSocket | null = null;
 
     const scheduleReconnect = () => {
@@ -564,42 +667,67 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       reconnectTimer = window.setTimeout(connect, delayMs);
     };
 
+    const scheduleRealtimeDetailRefresh = ({
+      dedupe = false,
+      delayMs = REALTIME_DETAIL_REFRESH_DEBOUNCE_MS,
+    }: {
+      dedupe?: boolean;
+      delayMs?: number;
+    } = {}) => {
+      if (disposed) return;
+      if (!dedupe) pendingRealtimeDetailDedupeRefresh = false;
+      if (realtimeDetailRefreshTimer !== null) return;
+      realtimeDetailRefreshTimer = window.setTimeout(() => {
+        realtimeDetailRefreshTimer = null;
+        if (disposed) return;
+        const shouldDedupeRefresh = pendingRealtimeDetailDedupeRefresh;
+        pendingRealtimeDetailDedupeRefresh = true;
+        const currentThreadId = selectedThreadIdRef.current;
+        if (!currentThreadId) return;
+        void refreshThreadDetail(currentThreadId, {
+          dedupe: shouldDedupeRefresh,
+          queueAfterInFlight: true,
+          silent: true,
+        }).catch(() => undefined);
+      }, delayMs);
+    };
+
     const scheduleRealtimeRefresh = ({
       includeThreads = false,
       includeApprovals = false,
       includeDetail = false,
+      dedupe = false,
     }: {
       includeThreads?: boolean;
       includeApprovals?: boolean;
       includeDetail?: boolean;
+      dedupe?: boolean;
     }) => {
       if (disposed) return;
+      if (includeDetail) scheduleRealtimeDetailRefresh({ dedupe });
+      if (!includeThreads && !includeApprovals) return;
       if (includeThreads) pendingRealtimeThreadsRefresh = true;
       if (includeApprovals) pendingRealtimeApprovalsRefresh = true;
-      if (includeDetail) pendingRealtimeDetailRefresh = true;
+      if (!dedupe) pendingRealtimeDedupeRefresh = false;
       if (realtimeRefreshTimer !== null) return;
       realtimeRefreshTimer = window.setTimeout(() => {
         realtimeRefreshTimer = null;
         if (disposed) return;
         const shouldRefreshThreads = pendingRealtimeThreadsRefresh;
         const shouldRefreshApprovals = pendingRealtimeApprovalsRefresh;
-        const shouldRefreshDetail = pendingRealtimeDetailRefresh;
+        const shouldDedupeRefresh = pendingRealtimeDedupeRefresh;
         pendingRealtimeThreadsRefresh = false;
         pendingRealtimeApprovalsRefresh = false;
-        pendingRealtimeDetailRefresh = false;
-        const currentThreadId = selectedThreadIdRef.current;
+        pendingRealtimeDedupeRefresh = true;
         const tasks: Promise<unknown>[] = [];
         if (shouldRefreshThreads)
-          tasks.push(refreshThreads().catch(() => undefined));
-        if (shouldRefreshApprovals)
-          tasks.push(refreshApprovals().catch(() => undefined));
-        if (shouldRefreshDetail && currentThreadId) {
           tasks.push(
-            refreshThreadDetail(currentThreadId, { silent: true }).catch(
+            refreshThreads({ dedupe: shouldDedupeRefresh }).catch(
               () => undefined,
             ),
           );
-        }
+        if (shouldRefreshApprovals)
+          tasks.push(refreshApprovals().catch(() => undefined));
         void Promise.all(tasks);
       }, REALTIME_REFRESH_DEBOUNCE_MS);
     };
@@ -613,9 +741,10 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         const payload = parsed.data;
         setRealtimeEvents((current) => [payload, ...current].slice(0, 12));
         if (payload.type === "connected") {
+          const previousServerInstance = realtimeServerInstanceRef.current;
           realtimeServerInstanceRef.current = updateRealtimeServerInstance(
             realtimeVersionsRef.current,
-            realtimeServerInstanceRef.current,
+            previousServerInstance,
             payload,
           );
           scheduleRealtimeRefresh({
@@ -696,6 +825,8 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       if (realtimeRefreshTimer !== null)
         window.clearTimeout(realtimeRefreshTimer);
+      if (realtimeDetailRefreshTimer !== null)
+        window.clearTimeout(realtimeDetailRefreshTimer);
       socket?.close();
     };
   }, [enabled, refreshApprovals, refreshThreadDetail, refreshThreads]);
@@ -1230,12 +1361,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         setSending(false);
       }
     },
-    [
-      enabled,
-      removeQueuedMessage,
-      scheduleThreadRefresh,
-      startQueuedMessage,
-    ],
+    [enabled, removeQueuedMessage, scheduleThreadRefresh, startQueuedMessage],
   );
 
   const sendMessage = useCallback(

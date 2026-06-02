@@ -227,7 +227,9 @@ function readStringArray(value: unknown): string[] {
 
 function readNumberTimestampIso(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) {
-    return new Date(value > 10_000_000_000 ? value : value * 1000).toISOString();
+    return new Date(
+      value > 10_000_000_000 ? value : value * 1000,
+    ).toISOString();
   }
   if (typeof value === "string" && value.trim()) {
     const parsed = Date.parse(value);
@@ -673,7 +675,9 @@ function readTimestampMs(value: unknown): number | null {
   return null;
 }
 
-function readConversationUpdatedAtMs(conversationState: unknown): number | null {
+function readConversationUpdatedAtMs(
+  conversationState: unknown,
+): number | null {
   const record = asRecord(conversationState);
   if (!record) return null;
   return (
@@ -683,7 +687,9 @@ function readConversationUpdatedAtMs(conversationState: unknown): number | null 
   );
 }
 
-function streamStateUpdatedAtMs(state: OfficialThreadStreamState): number | null {
+function streamStateUpdatedAtMs(
+  state: OfficialThreadStreamState,
+): number | null {
   return readTimestampMs(state.updatedAtIso);
 }
 
@@ -817,6 +823,46 @@ function conversationStateAlreadyActive(conversationState: unknown): boolean {
 
 const STALE_OFFICIAL_ACTIVE_GRACE_MS = 30_000;
 const STALE_OFFICIAL_ACTIVE_TIMESTAMP_TOLERANCE_MS = 1_000;
+const ACTIVE_THREAD_DETAIL_VERIFY_THROTTLE_MS = 2_500;
+
+type ActiveThreadDetailVerification = {
+  activeTurnId: string;
+  cacheVersion: number;
+  verifiedAtMs: number;
+};
+
+function shouldThrottleActiveThreadDetailVerification(input: {
+  detail: ThreadDetail | null;
+  nowMs: number;
+  record: ActiveThreadDetailVerification | null;
+  state: OfficialThreadStreamState;
+}): boolean {
+  if (!input.state.isInProgress) return false;
+  if (!input.detail || !input.detail.turns.length) return false;
+  if (detailHasEmptyActiveTurn(input.detail)) return false;
+  if (!input.record) return false;
+  const activeTurnId = readActiveTurnIdFromStreamState(input.state);
+  if (!activeTurnId || input.record.activeTurnId !== activeTurnId) return false;
+  return (
+    input.nowMs - input.record.verifiedAtMs <
+    ACTIVE_THREAD_DETAIL_VERIFY_THROTTLE_MS
+  );
+}
+
+function shouldServeFreshOfficialActiveThreadDetail(input: {
+  detail: ThreadDetail | null;
+  hasExternalOfficialState: boolean;
+  nowMs: number;
+  state: OfficialThreadStreamState;
+}): boolean {
+  if (!input.hasExternalOfficialState) return false;
+  if (!input.state.isInProgress) return false;
+  if (!input.detail || !input.detail.turns.length) return false;
+  if (detailHasEmptyActiveTurn(input.detail)) return false;
+  const stateUpdatedAtMs = streamStateUpdatedAtMs(input.state);
+  if (stateUpdatedAtMs === null) return false;
+  return input.nowMs - stateUpdatedAtMs <= STALE_OFFICIAL_ACTIVE_GRACE_MS;
+}
 
 function shouldRetireStaleOfficialActiveState(
   conversationState: unknown,
@@ -836,8 +882,7 @@ function shouldRetireStaleOfficialActiveState(
   if (
     conversationUpdatedAtMs !== null &&
     stateUpdatedAtMs !== null &&
-    conversationUpdatedAtMs +
-      STALE_OFFICIAL_ACTIVE_TIMESTAMP_TOLERANCE_MS >=
+    conversationUpdatedAtMs + STALE_OFFICIAL_ACTIVE_TIMESTAMP_TOLERANCE_MS >=
       stateUpdatedAtMs
   ) {
     return true;
@@ -845,7 +890,7 @@ function shouldRetireStaleOfficialActiveState(
 
   return Boolean(
     stateUpdatedAtMs !== null &&
-      Date.now() - stateUpdatedAtMs > STALE_OFFICIAL_ACTIVE_GRACE_MS,
+    Date.now() - stateUpdatedAtMs > STALE_OFFICIAL_ACTIVE_GRACE_MS,
   );
 }
 
@@ -934,7 +979,9 @@ function preserveRicherOfficialStreamItems(
   const streamRecord = asRecord(streamConversationState);
   if (!record || !streamRecord) return conversationState;
   const turns = Array.isArray(record.turns) ? record.turns : [];
-  const streamTurns = Array.isArray(streamRecord.turns) ? streamRecord.turns : [];
+  const streamTurns = Array.isArray(streamRecord.turns)
+    ? streamRecord.turns
+    : [];
   if (streamTurns.length === 0) return conversationState;
 
   const streamTurnsById = new Map<string, unknown>();
@@ -1049,10 +1096,7 @@ async function buildTurnStartParams(input: {
     threadId: input.threadId,
     input: [
       ...textInputs,
-      ...imageInputs.flatMap((entry) => [
-        entry.placeholderInput,
-        entry.input,
-      ]),
+      ...imageInputs.flatMap((entry) => [entry.placeholderInput, entry.input]),
       ...skillInputs,
     ],
   };
@@ -1100,10 +1144,7 @@ async function buildTurnSteerParams(input: {
     expectedTurnId: input.expectedTurnId,
     input: [
       ...textInputs,
-      ...imageInputs.flatMap((entry) => [
-        entry.placeholderInput,
-        entry.input,
-      ]),
+      ...imageInputs.flatMap((entry) => [entry.placeholderInput, entry.input]),
       ...skillInputs,
     ],
     restoreMessage: buildSteerRestoreMessage({
@@ -1193,6 +1234,10 @@ export async function createServer(
   const officialIpc = overrides.officialIpc ?? new OfficialIpcBridge();
   const appServer = overrides.appServer ?? new CodexAppServerProcess();
   const pendingPatchHydrations = new Set<string>();
+  const activeThreadDetailVerifications = new Map<
+    string,
+    ActiveThreadDetailVerification
+  >();
   const serverInstanceId = randomUUID();
   const serverStartedAtIso = new Date().toISOString();
   const logPath = resolve(config.dataDir, "logs", "server.log");
@@ -1355,10 +1400,7 @@ export async function createServer(
     if (!officialIpc.canOwnConversations()) return false;
     const state = officialIpc.getThreadStreamState(threadId);
     const staleOfficialActiveRetired = state
-      ? shouldRetireStaleOfficialActiveState(
-          conversationState ?? detail,
-          state,
-        )
+      ? shouldRetireStaleOfficialActiveState(conversationState ?? detail, state)
       : false;
     if (
       (state?.isInProgress ||
@@ -2878,6 +2920,7 @@ export async function createServer(
       const hasUsableOfficialDetail =
         detail && detail.turns.length > 0 && !detailHasEmptyActiveTurn(detail);
       if (hasUsableOfficialDetail && !state.isInProgress) {
+        activeThreadDetailVerifications.delete(threadId);
         database.upsertThreadDetail(threadId, detail, "official-ipc");
         const response = threadDetailResponseSchema.safeParse({
           data: detail,
@@ -2890,6 +2933,73 @@ export async function createServer(
             "api",
             "domain-thread-detail-response-validation-failed",
             { threadId, source: "official-ipc", error },
+          );
+          await reply
+            .code(500)
+            .send({ error: `Invalid domain thread detail response: ${error}` });
+          return;
+        }
+        await reply.send(response.data);
+        return;
+      }
+      if (
+        shouldServeFreshOfficialActiveThreadDetail({
+          detail,
+          hasExternalOfficialState,
+          nowMs: Date.now(),
+          state,
+        })
+      ) {
+        const response = threadDetailResponseSchema.safeParse({
+          data: detail,
+          source: "official-ipc-active",
+        });
+        if (!response.success) {
+          const error = formatZodError(response.error);
+          diagnostics.record(
+            "error",
+            "api",
+            "domain-thread-detail-response-validation-failed",
+            { threadId, source: "official-ipc-active", error },
+          );
+          await reply
+            .code(500)
+            .send({ error: `Invalid domain thread detail response: ${error}` });
+          return;
+        }
+        await reply.send(response.data);
+        return;
+      }
+      if (
+        hasExternalOfficialState &&
+        shouldThrottleActiveThreadDetailVerification({
+          detail,
+          nowMs: Date.now(),
+          record: activeThreadDetailVerifications.get(threadId) ?? null,
+          state,
+        })
+      ) {
+        diagnostics.record(
+          "info",
+          "domain",
+          "official-thread-detail-active-verification-throttled",
+          {
+            threadId,
+            cacheVersion: state.cacheVersion,
+            activeTurnId: readActiveTurnIdFromStreamState(state),
+          },
+        );
+        const response = threadDetailResponseSchema.safeParse({
+          data: detail,
+          source: "official-ipc-active-throttled",
+        });
+        if (!response.success) {
+          const error = formatZodError(response.error);
+          diagnostics.record(
+            "error",
+            "api",
+            "domain-thread-detail-response-validation-failed",
+            { threadId, source: "official-ipc-active-throttled", error },
           );
           await reply
             .code(500)
@@ -2922,7 +3032,10 @@ export async function createServer(
       const rawThread = asRecord(result)?.thread ?? result;
       const mergedThread =
         hasExternalOfficialState && state
-          ? preserveRicherOfficialStreamItems(rawThread, state.conversationState)
+          ? preserveRicherOfficialStreamItems(
+              rawThread,
+              state.conversationState,
+            )
           : rawThread;
       const retiredStaleOfficialActive =
         hasExternalOfficialState &&
@@ -2951,6 +3064,23 @@ export async function createServer(
           ? "app-server-readonly-stale-official-retired"
           : "app-server-readonly"
         : "app-server";
+      if (hasExternalOfficialState && state) {
+        const activeTurnId = readActiveTurnIdFromStreamState(state);
+        if (
+          detail &&
+          state.isInProgress &&
+          !retiredStaleOfficialActive &&
+          activeTurnId
+        ) {
+          activeThreadDetailVerifications.set(threadId, {
+            activeTurnId,
+            cacheVersion: state.cacheVersion,
+            verifiedAtMs: Date.now(),
+          });
+        } else {
+          activeThreadDetailVerifications.delete(threadId);
+        }
+      }
       if (detail && hasExternalOfficialState && state) {
         const hydrated = officialIpc.hydrateThreadStreamState({
           threadId,
@@ -3348,12 +3478,17 @@ export async function createServer(
           "turn-steer-stale-active-fallback",
         ))
       ) {
-        diagnostics.record("warn", "turn-steer", "stale-active-start-fallback", {
-          threadId,
-          expectedTurnId,
-          error: message,
-          reason: fallback.reason,
-        });
+        diagnostics.record(
+          "warn",
+          "turn-steer",
+          "stale-active-start-fallback",
+          {
+            threadId,
+            expectedTurnId,
+            error: message,
+            reason: fallback.reason,
+          },
+        );
         try {
           const startParams = await buildTurnStartParams({
             threadId,
@@ -3620,9 +3755,7 @@ export async function createServer(
     const state = officialIpc.getThreadStreamState(sideConversationId);
     const record = asRecord(state?.conversationState);
     if (record && record.sideConversation !== true) {
-      await reply
-        .code(400)
-        .send({ error: "side-conversation-required" });
+      await reply.code(400).send({ error: "side-conversation-required" });
       return;
     }
 
@@ -3643,11 +3776,16 @@ export async function createServer(
         }
         interrupted = true;
       } catch (error) {
-        diagnostics.record("warn", "side-conversation-close", "interrupt-failed", {
-          sideConversationId,
-          activeTurnId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        diagnostics.record(
+          "warn",
+          "side-conversation-close",
+          "interrupt-failed",
+          {
+            sideConversationId,
+            activeTurnId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
       }
     }
 
@@ -3702,8 +3840,7 @@ export async function createServer(
         externalStateBeforeRename && externalStateAfterRefresh
           ? externalStateAfterRefresh
           : null;
-      const wasExternallyOwnedBeforeRename =
-        externalStateBeforeRename !== null;
+      const wasExternallyOwnedBeforeRename = externalStateBeforeRename !== null;
       const rawThread = asRecord(detailResult)?.thread ?? detailResult;
       const mergedThread =
         externalState !== null
@@ -3842,7 +3979,9 @@ export async function createServer(
     } catch (error) {
       await reply.code(502).send({
         error:
-          error instanceof Error ? error.message : "Failed to update thread goal",
+          error instanceof Error
+            ? error.message
+            : "Failed to update thread goal",
       });
     }
   });
@@ -3897,7 +4036,9 @@ export async function createServer(
     } catch (error) {
       await reply.code(502).send({
         error:
-          error instanceof Error ? error.message : "Failed to clear thread goal",
+          error instanceof Error
+            ? error.message
+            : "Failed to clear thread goal",
       });
     }
   });
