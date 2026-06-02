@@ -46,10 +46,23 @@ OpenAI Codex app-server README 和 `app-server-protocol` schema 确认：
 - `turn/start` 的核心输入是 `threadId`、`input` 和可选 `clientUserMessageId`。
 - `input` 支持官方 discriminated union：`text`、`image`、`localImage`、`skill`、`mention` 等。
 - 图片本地文件应优先使用 `{ type: "localImage", path }`，避免把大段 data URL 当作 raw app-server 参数传输。
+- 官方 `codex-rs/app-server-protocol/schema/typescript/v2/UserInput.ts` 显示 `localImage` 是独立 `UserInput` 分支，只需要 `type`、`path` 和可选 `detail`；不要求额外发送 `{ type: "text", text: "<image>" }` 占位。Web 发送链路不得生成该占位，否则会污染用户正文、会话标题和跨端展示；`<image>` 只允许作为旧缓存读取时的兼容过滤目标。
 - `turn/steer` 需要 `threadId`、`expectedTurnId`、`input`，可选 `clientUserMessageId`；它不接受线程设置 override。
 - `clientUserMessageId` 会回显到对应 `userMessage.clientId`，可作为跨端对齐用户消息的官方锚点。
 
 结论：`attachments`、`restoreMessage` 是官方客户端 UI/IPC 恢复层字段，不属于 raw app-server `turn/start` / `turn/steer` 参数。Web 后端直接调用 app-server 时必须白名单化，只发送官方字段；转发给官方 follower 时可保留 Desktop/VS Code Webview 需要的恢复消息。
+
+### Web-owned 新会话 live snapshot 边界
+
+2026-06-02 复查官方手册和本地生成的 v2 schema 后确认：
+
+- raw `thread/start` 的官方参数包含 `cwd`、`threadSource` 等，不包含 Desktop `start-conversation` 包装层里的 `workspaceRoots`。
+- raw `thread/start` 返回的 `Thread.turns` 可以为空；官方 schema 也说明非 `thread/read(includeTurns)` / resume / rollback / fork 场景下 `turns` 可能为空。
+- raw `turn/start` 之后 app-server 会发 `turn/started`、item delta、`turn/completed` 等生命周期通知。
+- Desktop/VS Code 的三端实时展示不只依赖 raw app-server 通知，而依赖 owner 通过 `thread-stream-state-changed` IPC 广播完整 `conversationState`。
+- Desktop 现场日志出现 `Received turn/started for unknown conversation`，说明 Web 本地 owner 在启动首轮 turn 前没有先让官方客户端看到完整 conversation state。
+
+结论：Web 新建会话的 `thread/start` 参数本身不是 Desktop 崩溃根因；Web-owned 本地 turn 路径必须在调用 raw app-server `turn/start` 前，先广播一个 Desktop 可渲染的 active snapshot。该 snapshot 不可为空，至少需要官方 `Thread` 必需字段、`threadRuntimeStatus: { type: "active", activeFlags: [] }`、一个 `status: "inProgress"` 的 pending `Turn`、`itemsView: "full"`、`error/completedAt/durationMs: null`、pending `userMessage`，以及 Desktop stream 额外读取的 `diff: []`、`hookRuns: []`、`commandExecutionStartedAtMsById: {}`。后续真实 app-server snapshot 再替换 pending turn。
 
 ### thread settings 与权限能力
 

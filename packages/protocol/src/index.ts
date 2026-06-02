@@ -400,6 +400,29 @@ function timestampMs(value: unknown): number | null {
   return null;
 }
 
+function timestampSeconds(value: unknown): number | null {
+  const ms = timestampMs(value);
+  return ms === null ? null : ms / 1000;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeDesktopArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeDesktopObject(value: unknown): Record<string, unknown> {
+  return isPlainObject(value) ? value : {};
+}
+
+function normalizeTurnItemsView(value: unknown): "notLoaded" | "summary" | "full" {
+  return value === "notLoaded" || value === "summary" || value === "full"
+    ? value
+    : "full";
+}
+
 function normalizeAppServerThreadStatus(value: unknown): unknown {
   const record = asRecord(value);
   if (isActiveStatus(value)) {
@@ -478,22 +501,49 @@ function normalizeOfficialBroadcastTurn(
       changed = true;
     }
   }
-  if (isAppServerTurn && next.params === undefined) {
+  if (isAppServerTurn && !isPlainObject(next.params)) {
     const params: Record<string, unknown> = {};
     if (context.cwd !== undefined) params.cwd = context.cwd;
     next.params = params;
     changed = true;
   }
-  if (isAppServerTurn && next.diff === undefined) {
+  if (isAppServerTurn && !Array.isArray(next.diff)) {
     next.diff = [];
     changed = true;
   }
-  if (isAppServerTurn && next.commandExecutionStartedAtMsById === undefined) {
+  if (
+    isAppServerTurn &&
+    !isPlainObject(next.commandExecutionStartedAtMsById)
+  ) {
     next.commandExecutionStartedAtMsById = {};
     changed = true;
   }
-  if (isAppServerTurn && next.hookRuns === undefined) {
+  if (isAppServerTurn && !Array.isArray(next.hookRuns)) {
     next.hookRuns = [];
+    changed = true;
+  }
+  if (isAppServerTurn && !Array.isArray(next.items)) {
+    next.items = [];
+    changed = true;
+  }
+  if (isAppServerTurn && next.itemsView !== normalizeTurnItemsView(next.itemsView)) {
+    next.itemsView = normalizeTurnItemsView(next.itemsView);
+    changed = true;
+  }
+  if (isAppServerTurn && next.error === undefined) {
+    next.error = null;
+    changed = true;
+  }
+  if (isAppServerTurn && next.startedAt === undefined) {
+    next.startedAt = null;
+    changed = true;
+  }
+  if (isAppServerTurn && next.completedAt === undefined) {
+    next.completedAt = null;
+    changed = true;
+  }
+  if (isAppServerTurn && next.durationMs === undefined) {
+    next.durationMs = null;
     changed = true;
   }
   if (Array.isArray(record.items)) {
@@ -506,12 +556,109 @@ function normalizeOfficialBroadcastTurn(
   return changed ? next : value;
 }
 
+function readFirstUserText(turns: unknown): string {
+  if (!Array.isArray(turns)) return "";
+  for (const turnValue of turns) {
+    const turn = asRecord(turnValue);
+    const items = Array.isArray(turn?.items) ? turn.items : [];
+    for (const itemValue of items) {
+      const item = asRecord(itemValue);
+      if (!item) continue;
+      if (readString(item.type) !== "userMessage") continue;
+      const content = Array.isArray(item.content) ? item.content : [];
+      for (const contentValue of content) {
+        const contentRecord = asRecord(contentValue);
+        const text = readString(contentRecord?.text);
+        if (text) return text;
+      }
+    }
+  }
+  return "";
+}
+
 function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
   const record = asRecord(value);
   if (!record) return value;
   const isAppServerThread = looksLikeAppServerThread(record);
   let changed = false;
   const next: Record<string, unknown> = { ...record };
+  if (isAppServerThread) {
+    const id = readString(record.id) || readString(record.sessionId);
+    if (!readString(next.id) && id) {
+      next.id = id;
+      changed = true;
+    }
+    if (!readString(next.sessionId) && id) {
+      next.sessionId = id;
+      changed = true;
+    }
+    if (next.forkedFromId === undefined) {
+      next.forkedFromId = null;
+      changed = true;
+    }
+    if (next.parentThreadId === undefined) {
+      next.parentThreadId = null;
+      changed = true;
+    }
+    if (typeof next.preview !== "string") {
+      next.preview =
+        readString(record.preview) ||
+        readString(record.name) ||
+        readString(record.title) ||
+        readFirstUserText(record.turns);
+      changed = true;
+    }
+    if (typeof next.ephemeral !== "boolean") {
+      next.ephemeral = record.ephemeral === true;
+      changed = true;
+    }
+    if (!readString(next.modelProvider)) {
+      next.modelProvider = "openai";
+      changed = true;
+    }
+    const createdAtSeconds = timestampSeconds(record.createdAt ?? record.created_at);
+    if (typeof next.createdAt !== "number" || !Number.isFinite(next.createdAt)) {
+      next.createdAt = createdAtSeconds ?? Math.floor(Date.now() / 1000);
+      changed = true;
+    }
+    const updatedAtSeconds = timestampSeconds(record.updatedAt ?? record.updated_at);
+    if (typeof next.updatedAt !== "number" || !Number.isFinite(next.updatedAt)) {
+      next.updatedAt = updatedAtSeconds ?? next.createdAt;
+      changed = true;
+    }
+    if (next.path === undefined) {
+      next.path = null;
+      changed = true;
+    }
+    if (!readString(next.cwd) && readString(record.path)) {
+      next.cwd = record.path;
+      changed = true;
+    }
+    if (!readString(next.cliVersion)) {
+      next.cliVersion = "";
+      changed = true;
+    }
+    if (!readString(next.source)) {
+      next.source = "appServer";
+      changed = true;
+    }
+    if (next.agentNickname === undefined) {
+      next.agentNickname = null;
+      changed = true;
+    }
+    if (next.agentRole === undefined) {
+      next.agentRole = null;
+      changed = true;
+    }
+    if (next.gitInfo === undefined) {
+      next.gitInfo = null;
+      changed = true;
+    }
+    if (next.name === undefined) {
+      next.name = readString(record.name) || readString(record.title) || null;
+      changed = true;
+    }
+  }
   if (!readString(record.hostId) && !readString(record.host_id)) {
     next.hostId = "local";
     changed = true;
@@ -560,6 +707,25 @@ function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
       changed = true;
     }
     next.turns = turns;
+  } else if (isAppServerThread) {
+    next.turns = [];
+    changed = true;
+  }
+  if (isAppServerThread) {
+    if (!Array.isArray(next.diff)) {
+      next.diff = normalizeDesktopArray(next.diff);
+      changed = true;
+    }
+    if (!Array.isArray(next.hookRuns)) {
+      next.hookRuns = normalizeDesktopArray(next.hookRuns);
+      changed = true;
+    }
+    if (!isPlainObject(next.commandExecutionStartedAtMsById)) {
+      next.commandExecutionStartedAtMsById = normalizeDesktopObject(
+        next.commandExecutionStartedAtMsById,
+      );
+      changed = true;
+    }
   }
   return changed ? next : value;
 }

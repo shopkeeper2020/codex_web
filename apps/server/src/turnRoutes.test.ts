@@ -26,6 +26,8 @@ class FakeOfficialIpc {
   readonly followerSteerCalls: Array<{ threadId: string; params: unknown }> =
     [];
   readonly followerCompactCalls: Array<{ threadId: string }> = [];
+  readonly snapshots: Array<{ threadId: string; state: unknown }> = [];
+  readonly streamStates = new Map<string, Record<string, unknown>>();
   readonly ownedThreads = new Set<string>();
   readonly localOnlyThreads = new Set<string>();
   readonly discardedThreads = new Set<string>();
@@ -96,6 +98,8 @@ class FakeOfficialIpc {
   }
 
   getThreadStreamState(threadId: string): Record<string, unknown> | null {
+    const streamState = this.streamStates.get(threadId);
+    if (streamState) return streamState;
     if (!this.options.hasOfficialState || this.discardedThreads.has(threadId))
       return null;
     const officialState = this.options.officialState ?? "active";
@@ -193,7 +197,24 @@ class FakeOfficialIpc {
     throw new Error(this.options.errorMessage);
   }
 
-  broadcastConversationSnapshot(): void {}
+  broadcastConversationSnapshot(threadId: string, state: unknown): boolean {
+    if (!this.canBroadcastOwnedConversation(threadId)) return false;
+    this.snapshots.push({ threadId, state });
+    this.streamStates.set(threadId, {
+      threadId,
+      conversationId: threadId,
+      hostId: "local",
+      ownerClientId: "web-test",
+      sourceClientId: "web-test",
+      changeType: "snapshot",
+      cacheVersion: this.snapshots.length,
+      updatedAtIso: "2026-05-29T00:00:00.000Z",
+      isInProgress: true,
+      activeTurnId: "pending-turn",
+      conversationState: state,
+    });
+    return true;
+  }
 }
 
 class FakeAppServer {
@@ -357,7 +378,7 @@ describe("turn HTTP routes", () => {
       payload: { threadId: "thread-a" },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
     expect(response.json()).toMatchObject({
       data: { mode: "official-follower", result: { ok: true } },
     });
@@ -380,7 +401,7 @@ describe("turn HTTP routes", () => {
       payload: { threadId: "thread-a" },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
     expect(response.json()).toMatchObject({
       data: {
         mode: "app-server",
@@ -467,10 +488,6 @@ describe("turn HTTP routes", () => {
         params: expect.objectContaining({
           input: [
             expect.objectContaining({
-              type: "text",
-              text: "<image>",
-            }),
-            expect.objectContaining({
               type: "localImage",
               path: attachmentPath,
             }),
@@ -541,10 +558,6 @@ describe("turn HTTP routes", () => {
           expectedTurnId: "turn-active",
           input: [
             expect.objectContaining({ type: "text", text: "guide" }),
-            expect.objectContaining({
-              type: "text",
-              text: "<image>",
-            }),
             expect.objectContaining({
               type: "localImage",
               path: attachmentPath,
@@ -772,7 +785,7 @@ describe("turn HTTP routes", () => {
       payload: { threadId: "thread-a", text: "hello" },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
     expect(response.json()).toMatchObject({
       data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
     });
@@ -887,7 +900,7 @@ describe("turn HTTP routes", () => {
   });
 
   it("falls back to local app-server only for Web-owned conversations", async () => {
-    const { context, appServer } = await createHarness({
+    const { context, officialIpc, appServer } = await createHarness({
       errorMessage: "no-official-owner",
       hasOfficialState: true,
       webOwned: true,
@@ -899,7 +912,7 @@ describe("turn HTTP routes", () => {
       payload: { threadId: "thread-a", text: "hello" },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
     expect(response.json()).toMatchObject({
       data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
     });
@@ -907,6 +920,31 @@ describe("turn HTTP routes", () => {
       "thread/resume",
       "turn/start",
     ]);
+    expect(officialIpc.snapshots[0]).toMatchObject({
+      threadId: "thread-a",
+      state: {
+        id: "thread-a",
+        status: { type: "active", activeFlags: [] },
+        threadRuntimeStatus: { type: "active", activeFlags: [] },
+        turns: expect.arrayContaining([
+          expect.objectContaining({
+            id: expect.stringMatching(/^pending-/),
+            turnId: expect.stringMatching(/^pending-/),
+            status: "inProgress",
+            itemsView: "full",
+            items: [
+              {
+                type: "userMessage",
+                id: expect.any(String),
+                content: [
+                  { type: "text", text: "hello", text_elements: [] },
+                ],
+              },
+            ],
+          }),
+        ]),
+      },
+    });
   });
 
   it("records sanitized runtime selections for start requests", async () => {

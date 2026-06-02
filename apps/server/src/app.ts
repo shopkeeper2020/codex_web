@@ -1163,10 +1163,7 @@ async function buildTurnStartParams(input: {
     clientUserMessageId,
     input: [
       ...textInputs,
-      ...imageInputs.flatMap((entry) => [
-        entry.placeholderInput,
-        entry.input,
-      ]),
+      ...imageInputs.map((entry) => entry.input),
       ...skillInputs,
     ],
   };
@@ -1189,6 +1186,173 @@ async function buildTurnStartParams(input: {
   if (collaborationMode) params.collaborationMode = collaborationMode;
   Object.assign(params, buildPermissionOverrides(input.permissionMode));
   return params;
+}
+
+function readUnixSeconds(value: unknown, fallbackSeconds: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value / 1000 : value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed / 1000;
+  }
+  return fallbackSeconds;
+}
+
+function normalizePendingUserInput(value: unknown): Record<string, unknown> | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const type = readString(record.type);
+  if (type === "text") {
+    return {
+      type: "text",
+      text: typeof record.text === "string" ? record.text : "",
+      text_elements: Array.isArray(record.text_elements)
+        ? record.text_elements
+        : [],
+    };
+  }
+  if (type === "localImage") {
+    const path = readString(record.path);
+    if (!path) return null;
+    return {
+      type: "localImage",
+      path,
+      ...(record.detail !== undefined ? { detail: record.detail } : {}),
+    };
+  }
+  if (type === "image") {
+    const url = readString(record.url);
+    if (!url) return null;
+    return {
+      type: "image",
+      url,
+      ...(record.detail !== undefined ? { detail: record.detail } : {}),
+    };
+  }
+  if (type === "skill" || type === "mention") {
+    const name = readString(record.name);
+    const path = readString(record.path);
+    if (!name || !path) return null;
+    return { type, name, path };
+  }
+  return null;
+}
+
+function buildPendingTurnParams(
+  params: TurnStartParams,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of [
+    "cwd",
+    "model",
+    "effort",
+    "serviceTier",
+    "summary",
+    "personality",
+    "outputSchema",
+    "collaborationMode",
+    "approvalPolicy",
+    "approvalsReviewer",
+    "sandboxPolicy",
+    "permissions",
+    "runtimeWorkspaceRoots",
+    "environments",
+    "additionalContext",
+    "responsesapiClientMetadata",
+  ]) {
+    const value = (params as unknown as Record<string, unknown>)[key];
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
+}
+
+function buildPendingLocalTurnSnapshot(input: {
+  threadId: string;
+  params: TurnStartParams;
+  baseThread: Record<string, unknown> | null;
+  fallbackDetail: ThreadDetail | null;
+  fallbackCwd: string;
+  nowMs?: number;
+}): Record<string, unknown> {
+  const nowMs = input.nowMs ?? Date.now();
+  const nowSeconds = nowMs / 1000;
+  const base = input.baseThread ?? {};
+  const detailThread = input.fallbackDetail?.thread;
+  const threadId =
+    readString(base.id) ||
+    readString(base.sessionId) ||
+    detailThread?.id ||
+    input.threadId;
+  const cwd =
+    readString(base.cwd) ||
+    readString(input.params.cwd) ||
+    detailThread?.projectId ||
+    detailThread?.path ||
+    input.fallbackCwd;
+  const existingTurns = Array.isArray(base.turns) ? base.turns : [];
+  const content = input.params.input
+    .map(normalizePendingUserInput)
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  const userMessageId =
+    readString(input.params.clientUserMessageId) || randomUUID();
+  const pendingTurnId = `pending-${userMessageId}`;
+  const pendingTurn = {
+    id: pendingTurnId,
+    turnId: pendingTurnId,
+    items: [
+      {
+        type: "userMessage",
+        id: userMessageId,
+        content,
+      },
+    ],
+    itemsView: "full",
+    status: "inProgress",
+    error: null,
+    startedAt: nowSeconds,
+    completedAt: null,
+    durationMs: null,
+    turnStartedAtMs: nowMs,
+    params: buildPendingTurnParams(input.params),
+    diff: [],
+    commandExecutionStartedAtMsById: {},
+    hookRuns: [],
+  };
+  const name =
+    readString(base.name) ||
+    readString(base.title) ||
+    detailThread?.title ||
+    null;
+  return {
+    ...base,
+    id: threadId,
+    sessionId: readString(base.sessionId) || threadId,
+    forkedFromId: base.forkedFromId ?? null,
+    parentThreadId: base.parentThreadId ?? null,
+    preview:
+      readString(base.preview) ||
+      readString(base.name) ||
+      readString(base.title) ||
+      detailThread?.title ||
+      readString(content[0]?.text),
+    ephemeral: base.ephemeral === true,
+    modelProvider: readString(base.modelProvider) || "openai",
+    createdAt: readUnixSeconds(base.createdAt ?? base.created_at, nowSeconds),
+    updatedAt: nowSeconds,
+    status: { type: "active", activeFlags: [] },
+    threadRuntimeStatus: { type: "active", activeFlags: [] },
+    path: base.path ?? null,
+    cwd,
+    cliVersion: readString(base.cliVersion),
+    source: readString(base.source) || "appServer",
+    threadSource: readString(base.threadSource) || "user",
+    agentNickname: base.agentNickname ?? null,
+    agentRole: base.agentRole ?? null,
+    gitInfo: base.gitInfo ?? null,
+    name,
+    turns: [...existingTurns, pendingTurn],
+  };
 }
 
 async function buildTurnSteerParams(input: {
@@ -1217,10 +1381,7 @@ async function buildTurnSteerParams(input: {
     clientUserMessageId,
     input: [
       ...textInputs,
-      ...imageInputs.flatMap((entry) => [
-        entry.placeholderInput,
-        entry.input,
-      ]),
+      ...imageInputs.map((entry) => entry.input),
       ...skillInputs,
     ],
     restoreMessage: buildSteerRestoreMessage({
@@ -1444,6 +1605,57 @@ export async function createServer(
       });
       return false;
     }
+  };
+
+  const broadcastPendingLocalTurnSnapshot = async (
+    threadId: string,
+    params: TurnStartParams,
+    reason: string,
+  ): Promise<boolean> => {
+    if (
+      !officialIpc.isOwnedConversation(threadId) ||
+      !officialIpc.canBroadcastOwnedConversation(threadId)
+    ) {
+      return false;
+    }
+    let baseThread: Record<string, unknown> | null = null;
+    try {
+      baseThread = await readAppServerThreadSnapshot(appServer, threadId);
+    } catch (error) {
+      diagnostics.record(
+        isTransientEmptyRolloutReadError(error) ? "info" : "warn",
+        "official-ipc",
+        "pending-turn-base-read-failed",
+        {
+          threadId,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+    const snapshot = buildPendingLocalTurnSnapshot({
+      threadId,
+      params,
+      baseThread,
+      fallbackDetail: database.readThreadDetail(threadId),
+      fallbackCwd: config.projectRoot,
+    });
+    const broadcasted = officialIpc.broadcastConversationSnapshot(
+      threadId,
+      preserveSideConversationMetadata({
+        threadId,
+        conversationState: snapshot,
+        existingState: officialIpc.getThreadStreamState(threadId),
+      }),
+    );
+    if (broadcasted) {
+      persistOfficialStreamState(threadId);
+      diagnostics.record("info", "official-ipc", "pending-turn-snapshot", {
+        threadId,
+        reason,
+      });
+    }
+    return broadcasted;
   };
 
   const claimIdleAppServerConversation = (
@@ -3435,6 +3647,24 @@ export async function createServer(
 
     try {
       if (!promoteLocalOwnerConversation(threadId, "turn-start")) {
+        await reply
+          .code(503)
+          .send({ error: "official-ipc-owner-not-broadcastable" });
+        return;
+      }
+      const pendingSnapshotBroadcasted =
+        await broadcastPendingLocalTurnSnapshot(
+          threadId,
+          params,
+          "local-turn-start",
+        );
+      if (!pendingSnapshotBroadcasted) {
+        diagnostics.record(
+          "warn",
+          "turn-start",
+          "pending-turn-snapshot-failed",
+          { threadId },
+        );
         await reply
           .code(503)
           .send({ error: "official-ipc-owner-not-broadcastable" });
