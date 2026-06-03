@@ -61,6 +61,7 @@ import {
 import {
   INITIAL_THREAD_DETAIL_REQUEST_STATE,
   beginThreadDetailRequest,
+  mergeThreadDetailWithLiveItems,
   shouldApplyThreadDetailResponse,
   type ThreadDetailRequestState,
 } from "../threadDetailRequests";
@@ -420,14 +421,20 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
             request.token,
           )
         ) {
+          const latestCurrentDetail = threadDetailRef.current;
           if (
             options.silent &&
-            currentDetail?.thread.id === threadId &&
+            latestCurrentDetail?.thread.id === threadId &&
             hasActiveDocumentSelection()
           ) {
             return;
           }
-          setThreadDetail(detail);
+          const nextDetail = mergeThreadDetailWithLiveItems(
+            latestCurrentDetail,
+            detail,
+          );
+          threadDetailRef.current = nextDetail;
+          setThreadDetail(nextDetail);
         }
       } catch (unknownError) {
         if (
@@ -454,10 +461,13 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   const applyRealtimeThreadDetail = useCallback(
     (threadId: string, detail: ThreadDetail): boolean => {
       if (!threadId || detail.thread.id !== threadId) return false;
+      const currentDetail = threadDetailRef.current;
+      const nextDetail = mergeThreadDetailWithLiveItems(currentDetail, detail);
+      if (!nextDetail) return false;
       setThreadList((current) => ({
         ...current,
         threads: current.threads.map((thread) =>
-          thread.id === threadId ? { ...thread, ...detail.thread } : thread,
+          thread.id === threadId ? { ...thread, ...nextDetail.thread } : thread,
         ),
       }));
       if (selectedThreadIdRef.current !== threadId) return false;
@@ -468,8 +478,8 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       );
       detailRequestStateRef.current = request.state;
       lastRealtimeDetailAtRef.current = Date.now();
-      threadDetailRef.current = detail;
-      setThreadDetail(detail);
+      threadDetailRef.current = nextDetail;
+      setThreadDetail(nextDetail);
       setDetailLoading(false);
       return true;
     },
