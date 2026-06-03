@@ -382,34 +382,6 @@
   height: 26px;
 }
 
-.searchBox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  margin: 8px 0 12px;
-  padding: 0 9px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-row);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-muted);
-}
-
-.searchBox input {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 13px;
-}
-
-.searchBox input::placeholder {
-  color: var(--color-text-muted);
-}
-
 .navSection {
   margin-top: 8px;
 }
@@ -606,9 +578,12 @@
   width: 100%;
   min-width: 0;
   min-height: 38px;
-  overflow: hidden;
+  overflow: visible;
   border-radius: var(--radius-row);
   color: var(--color-text-secondary);
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .threadRowMain {
@@ -626,57 +601,70 @@
   cursor: pointer;
   font: inherit;
   text-align: left;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .threadPinIcon {
   color: var(--color-text-muted);
 }
 
-.threadRowActions {
+.threadActionMenu {
   position: absolute;
-  top: 50%;
-  right: 6px;
-  z-index: 1;
-  display: inline-flex;
+  top: calc(100% - 2px);
+  right: 4px;
+  z-index: var(--z-popover);
+  display: grid;
+  gap: 2px;
+  width: min(190px, calc(100vw - 40px));
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-row);
+  padding: 5px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 16px 34px rgb(15 23 42 / 16%);
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.threadActionMenuItem {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
   align-items: center;
-  justify-content: flex-end;
-  gap: 1px;
-  width: 74px;
-  transform: translateY(-50%);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
-}
-
-.threadRowShell:hover .threadRowActions,
-.threadRowShellActive:hover .threadRowActions,
-.threadRowShell:focus-within .threadRowActions,
-.threadRowShellActive:focus-within .threadRowActions,
-.threadRowActions:focus-within {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.threadRowAction {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
+  min-height: 34px;
   border: 0;
   border-radius: var(--radius-control);
+  padding: 0 8px;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.threadRowAction:hover:not(:disabled) {
-  background: var(--color-bg-elevated);
+.threadActionMenuItem span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threadActionMenuItem:hover:not(:disabled) {
+  background: var(--color-bg-hover);
   color: var(--color-text-primary);
 }
 
-.threadRowAction:disabled {
+.threadActionMenuItem:disabled {
   cursor: default;
-  opacity: 0.32;
+  opacity: 0.42;
 }
 
 .projectIcon {
@@ -711,13 +699,6 @@
   color: var(--color-text-muted);
   font-size: 11px;
   transition: opacity 120ms ease;
-}
-
-.threadRowShell:hover .threadTime,
-.threadRowShellActive:hover .threadTime,
-.threadRowShell:focus-within .threadTime,
-.threadRowShellActive:focus-within .threadTime {
-  opacity: 0;
 }
 
 .virtualThreadList {
@@ -1821,7 +1802,11 @@
   height: 2.6em;
   pointer-events: none;
   content: "";
-  background: linear-gradient(to bottom, rgb(255 255 255 / 0%), var(--color-bg-main) 88%);
+  background: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0%),
+    var(--color-bg-main) 88%
+  );
 }
 
 .agentTaskToggle {
@@ -5771,146 +5756,160 @@ button.fileRowActive:hover {
   z-index: var(--z-popover);
   display: grid;
   place-items: start center;
-  padding: 8vh 16px 16px;
+  padding: 27vh 16px 16px;
 }
 
 .searchScrim {
   position: absolute;
   inset: 0;
   border: 0;
-  background: rgb(24 24 27 / 28%);
+  background: rgb(24 24 27 / 20%);
+  backdrop-filter: blur(1px);
 }
 
 .searchDialog {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  width: min(100%, 640px);
-  max-height: min(78vh, 760px);
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(650px, calc(100vw - 32px));
+  max-height: min(58vh, 520px);
   overflow: hidden;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-row);
+  border: 1px solid rgb(24 24 27 / 8%);
+  border-radius: 24px;
   background: var(--color-bg-main);
-  box-shadow: 0 24px 70px rgb(15 23 42 / 22%);
+  box-shadow: 0 28px 80px rgb(15 23 42 / 24%);
 }
 
-.searchHeader {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 32px;
-  gap: 8px;
-  align-items: center;
-  min-height: 48px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--color-border-subtle);
+.searchCommandInput {
+  display: block;
+  padding: 14px 18px 8px;
 }
 
-.searchHeader h2 {
-  margin: 0;
-  color: var(--color-text-primary);
-  font-size: 15px;
-}
-
-.searchInput {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  min-height: 46px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--color-border-subtle);
-  color: var(--color-text-muted);
-}
-
-.searchInput input {
+.searchCommandInput input {
   width: 100%;
   min-width: 0;
+  height: 30px;
   border: 0;
   outline: none;
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
+  font-size: 16px;
 }
 
-.searchResults {
+.searchCommandInput input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.searchCommandList {
   min-height: 0;
   overflow: auto;
-  padding: 10px;
+  padding: 0 7px 9px;
 }
 
-.searchGroup {
-  display: grid;
-  gap: 4px;
-  margin-bottom: 12px;
-}
-
-.searchGroup h3 {
-  margin: 0;
-  padding: 4px 6px;
+.searchSectionLabel {
+  padding: 6px 10px 8px;
   color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-size: 13px;
 }
 
-.searchResultRow,
-.searchResultRowActive {
+.searchCommandRow,
+.searchCommandRowActive {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  gap: 10px;
   align-items: center;
   width: 100%;
-  min-height: 46px;
+  min-height: 40px;
   border: 0;
-  border-radius: var(--radius-control);
-  padding: 7px 8px;
+  border-radius: 13px;
+  padding: 7px 10px 7px 46px;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
   text-align: left;
 }
 
-.searchResultRow:hover,
-.searchResultRowActive {
+.searchCommandRow:hover,
+.searchCommandRowActive {
   background: var(--color-bg-selected);
   color: var(--color-text-primary);
 }
 
-.searchResultRow span,
-.searchResultRowActive span {
+.searchCommandText {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-.searchResultRow strong,
-.searchResultRow small,
-.searchResultRowActive strong,
-.searchResultRowActive small {
+.searchCommandText strong,
+.searchCommandText small {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.searchResultRow strong,
-.searchResultRowActive strong {
+.searchCommandText strong {
   color: var(--color-text-primary);
   font-size: 13px;
   font-weight: 650;
 }
 
-.searchResultRow small,
-.searchResultRowActive small {
+.searchCommandText small,
+.searchProjectName {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 
-.searchEmpty {
-  min-height: 34px;
-  padding: 9px 8px;
+.searchProjectName {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchShortcut {
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: var(--color-bg-hover);
   color: var(--color-text-muted);
+  font: inherit;
   font-size: 12px;
+}
+
+.searchStatus {
+  min-height: 34px;
+  padding: 9px 10px 9px 46px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .searchLayer {
+    padding-top: 18vh;
+  }
+
+  .searchDialog {
+    border-radius: 20px;
+  }
+
+  .searchCommandRow,
+  .searchCommandRowActive,
+  .searchStatus {
+    padding-left: 10px;
+  }
+
+  .searchCommandRow,
+  .searchCommandRowActive {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .searchProjectName {
+    display: none;
+  }
 }
 
 .settingsLayer {

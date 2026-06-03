@@ -65,6 +65,25 @@ async function installLongThreadListMocks(page: Page): Promise<void> {
     });
   });
 
+  await page.route("**/api/domain/thread-search**", async (route) => {
+    const searchTerm =
+      new URL(route.request().url()).searchParams.get("searchTerm") ?? "";
+    const normalizedSearchTerm = searchTerm.toLocaleLowerCase();
+    const results = threads
+      .filter((item) =>
+        String(item.title).toLocaleLowerCase().includes(normalizedSearchTerm),
+      )
+      .slice(0, 9)
+      .map((item) => ({ thread: item, snippet: String(item.title) }));
+    await fulfillJson(route, {
+      data: {
+        results,
+        nextCursor: null,
+        backwardsCursor: null,
+      },
+    });
+  });
+
   await page.route("**/api/runtime-options", async (route) => {
     await fulfillJson(route, {
       data: {
@@ -170,7 +189,7 @@ test.describe("long thread list", () => {
     await expect(sidebar.getByText("Long list thread 001")).toHaveCount(0);
   });
 
-  test("searches across a loaded 1000-thread list without requiring manual scroll", async ({
+  test("searches a deep thread through official thread search without manual scroll", async ({
     page,
   }, testInfo) => {
     test.skip(
@@ -181,15 +200,16 @@ test.describe("long thread list", () => {
     await installLongThreadListMocks(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    const sidebar = page.getByLabel("项目和会话");
-    await sidebar
-      .getByPlaceholder("搜索项目、会话或文件")
-      .fill("Long list thread 1000");
+    await page.getByRole("button", { name: "Search" }).click();
+    const searchDialog = page.getByRole("dialog", { name: "Search" });
+    await expect(searchDialog).toBeVisible();
+    await page.getByLabel("全局搜索").fill("Long list thread 1000");
+    const searchResult = searchDialog.getByRole("button", {
+      name: /Long list thread 1000/,
+    });
+    await expect(searchResult).toBeVisible();
+    await searchResult.click();
 
-    await expect(sidebar.getByText("Long list thread 1000")).toBeVisible();
-    await expect(sidebar.getByText("Long list thread 001")).toHaveCount(0);
-    await expect(
-      sidebar.getByRole("button").filter({ hasText: "Long list thread" }),
-    ).toHaveCount(1);
+    await expect(page).toHaveURL(/\/thread\/long-thread-1000$/);
   });
 });

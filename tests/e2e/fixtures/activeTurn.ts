@@ -21,6 +21,7 @@ async function fulfillJson(route: Route, body: JsonBody): Promise<void> {
 async function clearMockRoutes(page: Page): Promise<void> {
   for (const pattern of [
     "**/api/domain/threads**",
+    "**/api/domain/thread-search**",
     "**/api/domain/thread-detail**",
     "**/api/domain/side-conversation-create",
     "**/api/domain/side-conversation-close",
@@ -208,6 +209,24 @@ export async function installActiveTurnMocks(
         ...resolveThreadDetailOverrides(options),
       },
       source: "e2e-mock",
+    });
+  });
+
+  await page.route("**/api/domain/thread-search**", async (route) => {
+    const searchTerm =
+      new URL(route.request().url()).searchParams.get("searchTerm") ?? "";
+    const thread = activeThread(options);
+    const results = String(thread.title)
+      .toLocaleLowerCase()
+      .includes(searchTerm.toLocaleLowerCase())
+      ? [{ thread, snippet: String(thread.title) }]
+      : [];
+    await fulfillJson(route, {
+      data: {
+        results,
+        nextCursor: null,
+        backwardsCursor: null,
+      },
     });
   });
 

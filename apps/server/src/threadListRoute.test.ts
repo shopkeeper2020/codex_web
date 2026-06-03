@@ -7,6 +7,7 @@ import { createServer, type ServerContext } from "./app.js";
 import type {
   CodexAppServerProcess,
   ThreadListParams,
+  ThreadSearchParams,
 } from "./appServerProcess.js";
 
 class FakeAppServer {
@@ -38,6 +39,25 @@ class FakeAppServer {
         },
       ],
       nextCursor: params.cursor ? null : "cursor-1",
+      backwardsCursor: null,
+    };
+  }
+
+  async threadSearch(params: ThreadSearchParams): Promise<unknown> {
+    this.calls.push({ method: "thread/search", params });
+    return {
+      data: [
+        {
+          thread: {
+            id: "thread-search-1",
+            name: "Search Hit",
+            cwd: "C:\\workspace\\codex_web",
+            updatedAt: "2026-05-29T00:00:00.000Z",
+          },
+          snippet: "matched snippet",
+        },
+      ],
+      nextCursor: null,
       backwardsCursor: null,
     };
   }
@@ -177,7 +197,7 @@ describe("thread list route", () => {
       url: "/api/domain/threads?limit=1&archived=false",
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({
       data: {
         threads: [
@@ -204,11 +224,47 @@ describe("thread list route", () => {
       url: "/api/domain/threads?limit=1&archived=false",
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({
       data: {
         threads: [{ id: "thread-page-1", pinned: true }],
       },
     });
+  });
+
+  it("searches threads through the official app-server", async () => {
+    const { context, appServer } = await createHarness();
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-search?searchTerm=weather&archived=false&limit=9",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        results: [
+          {
+            thread: { id: "thread-search-1", title: "Search Hit" },
+            snippet: "matched snippet",
+          },
+        ],
+        nextCursor: null,
+        backwardsCursor: null,
+      },
+    });
+    expect(appServer.calls).toEqual([
+      {
+        method: "thread/search",
+        params: {
+          searchTerm: "weather",
+          archived: false,
+          limit: 9,
+          cursor: null,
+          sortKey: "updated_at",
+          sortDirection: "desc",
+        },
+      },
+    ]);
   });
 });

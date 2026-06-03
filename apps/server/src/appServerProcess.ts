@@ -39,6 +39,16 @@ export type ThreadListParams = {
   cursor?: string | null;
 };
 
+export type ThreadSearchParams = {
+  cursor?: string | null;
+  limit?: number | null;
+  sortKey?: "created_at" | "updated_at";
+  sortDirection?: "asc" | "desc";
+  sourceKinds?: string[] | null;
+  archived?: boolean | null;
+  searchTerm: string;
+};
+
 export type ThreadReadParams = {
   threadId: string;
   includeTurns: boolean;
@@ -311,6 +321,18 @@ export class CodexAppServerProcess {
         ? {}
         : { useStateDbOnly: params.useStateDbOnly }),
       ...(params.cursor ? { cursor: params.cursor } : {}),
+    });
+  }
+
+  async threadSearch(params: ThreadSearchParams): Promise<unknown> {
+    return await this.rpc("thread/search", {
+      cursor: params.cursor ?? null,
+      limit: params.limit ?? null,
+      sortKey: params.sortKey ?? null,
+      sortDirection: params.sortDirection ?? null,
+      sourceKinds: params.sourceKinds ?? null,
+      archived: params.archived ?? null,
+      searchTerm: params.searchTerm,
     });
   }
 

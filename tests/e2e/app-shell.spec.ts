@@ -241,13 +241,8 @@ test.describe("codex_web app shell", () => {
       const searchDialog = page.getByRole("dialog", { name: "Search" });
       await expect(searchDialog).toBeVisible();
       await page.getByLabel("全局搜索").fill("codex");
-      await expect(
-        searchDialog.getByRole("heading", { name: "Projects" }),
-      ).toBeVisible();
-      await searchDialog
-        .locator("header")
-        .getByRole("button", { name: "关闭搜索" })
-        .click();
+      await expect(searchDialog.getByText("没有结果")).toBeVisible();
+      await page.keyboard.press("Escape");
       await expect(
         page.getByRole("button", { name: "Settings menu" }),
       ).toBeVisible();
@@ -975,12 +970,12 @@ test.describe("codex_web app shell", () => {
     await expect(activityStrip.getByText("进行中的目标")).toHaveCount(0);
   });
 
-  test("wires desktop sidebar hover actions to thread APIs", async ({
+  test("wires desktop sidebar context menu actions to thread APIs", async ({
     page,
   }, testInfo) => {
     test.skip(
       testInfo.project.name.includes("mobile"),
-      "Desktop-only sidebar hover actions",
+      "Desktop-only sidebar context menu actions",
     );
 
     let pinned = false;
@@ -1048,17 +1043,26 @@ test.describe("codex_web app shell", () => {
     });
     expect(rowWidths.shell - rowWidths.button).toBeLessThanOrEqual(2);
 
-    await activeRow.hover();
-    await page
-      .getByRole("button", {
-        name: /停止 Active turn composer state 的所有后台终端/,
-      })
-      .click();
+    async function openActiveThreadMenu() {
+      const row = page
+        .getByRole("button", { name: /Active turn composer state/ })
+        .first();
+      await expect(row).toBeVisible();
+      await row.click({ button: "right" });
+      const menu = page.getByRole("menu", {
+        name: /Active turn composer state 的会话操作/,
+      });
+      await expect(menu).toBeVisible();
+      return menu;
+    }
+
+    let menu = await openActiveThreadMenu();
+    await menu.getByRole("menuitem", { name: "停止后台终端" }).click();
     await expect.poll(() => stopBodies.length).toBe(1);
     expect(stopBodies[0]).toMatchObject({ threadId: activeThreadId });
 
-    await activeRow.hover();
-    await page.getByRole("button", { name: "置顶对话" }).click();
+    menu = await openActiveThreadMenu();
+    await menu.getByRole("menuitem", { name: "置顶对话" }).click();
     await expect.poll(() => pinBodies.length).toBe(1);
     expect(pinBodies[0]).toMatchObject({
       threadId: activeThreadId,
@@ -1069,25 +1073,19 @@ test.describe("codex_web app shell", () => {
       page.getByRole("button", { name: /Active turn composer state/ }).first(),
     ).toBeVisible();
 
-    await page
-      .getByRole("button", { name: /Active turn composer state/ })
-      .first()
-      .hover();
-    await page.getByRole("button", { name: "取消置顶对话" }).click();
+    menu = await openActiveThreadMenu();
+    await menu.getByRole("menuitem", { name: "取消置顶对话" }).click();
     await expect.poll(() => pinBodies.length).toBe(2);
     expect(pinBodies[1]).toMatchObject({
       threadId: activeThreadId,
       pinned: false,
     });
 
-    await page
-      .getByRole("button", { name: /Active turn composer state/ })
-      .first()
-      .hover();
+    menu = await openActiveThreadMenu();
     page.once("dialog", async (dialog) => {
       await dialog.accept();
     });
-    await page.getByRole("button", { name: "归档对话" }).click();
+    await menu.getByRole("menuitem", { name: "归档对话" }).click();
     await expect.poll(() => archiveBodies.length).toBe(1);
     expect(archiveBodies[0]).toMatchObject({ threadId: activeThreadId });
     await expect(
@@ -1631,6 +1629,18 @@ test.describe("codex_web app shell", () => {
   test("opens global search from keyboard and mobile header", async ({
     page,
   }, testInfo) => {
+    await page.route("**/api/domain/thread-search**", async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            results: [],
+            nextCursor: null,
+            backwardsCursor: null,
+          },
+        }),
+      });
+    });
     await page.goto("/", { waitUntil: "domcontentloaded" });
     if (testInfo.project.name.includes("mobile")) {
       await page.getByRole("button", { name: "更多操作" }).click();
@@ -1646,8 +1656,7 @@ test.describe("codex_web app shell", () => {
     await expect(page.getByRole("dialog", { name: "Search" })).toBeVisible();
     await expect(page.getByLabel("全局搜索")).toBeFocused();
     await page.getByLabel("全局搜索").fill("zzzzzz-no-match");
-    await expect(page.getByText("没有匹配项目")).toBeVisible();
-    await expect(page.getByText("没有匹配会话")).toBeVisible();
+    await expect(page.getByText("没有结果")).toBeVisible();
   });
 
   test("keeps the mobile composer controls usable without horizontal overflow", async ({

@@ -214,7 +214,7 @@ report 只保存 compatibility、sync readiness、recent follower/handoff、mark
 | S20 | 后端重启恢复                     | Web + Desktop + VS Code | 三端                            | active 或 idle 后重启 Web 后端并刷新 Web         | 状态可恢复；不产生重复发送                                                                        |
 | S21 | Web 多浏览器                     | Web A                   | Web B + Desktop + VS Code       | 两个 Web 客户端打开同一 thread，Web A 发送       | Web B 实时更新，官方两端一致                                                                      |
 | S22 | 移动端发送                       | Mobile Web              | Desktop + VS Code + Desktop Web | 手机浏览器登录后发送 marker                      | 移动端无横向溢出，三端实时显示                                                                    |
-| S23 | 搜索打开归档结果                 | Web                     | Desktop + VS Code               | 搜索归档 thread，点击恢复并打开                  | 恢复后 thread 可同步，列表状态一致                                                                |
+| S23 | 搜索打开普通会话                 | Web                     | Desktop + VS Code               | 用官方 `thread/search` 搜索普通 thread 并打开结果 | 命中 snippet 正常展示；打开后 thread 可同步，列表状态一致                                         |
 | S24 | debug/diagnostics 可读           | Web                     | 验收记录                        | 打开 `/settings` Diagnostics 和 `/debug`         | compatibility、sync readiness、IPC、app-server、method map、导出信息可定位问题且脱敏              |
 | S25 | 追求目标状态同步                 | Web                     | Desktop + VS Code               | 在已有 goal 的 thread 上编辑、暂停/恢复、清除目标 | Web 调用 `thread/goal/*`，Desktop/Web 展示同一目标状态；plan/progress 与 Composer Plan 模式不混淆 |
 

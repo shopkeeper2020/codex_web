@@ -1513,18 +1513,17 @@ This is important because `codex_web` should be a peer-capable surface, not only
 
 Decision:
 
-- first version searches thread titles and projects
-- full message-text search is deferred
+- conversation search uses official app-server `thread/search`
+- results show the official `snippet` returned for each matched thread
+- project filtering remains a sidebar concern, not part of the search dialog
 
-This keeps the MVP useful without requiring a complete local message indexing/search engine on day one.
+This keeps the MVP aligned with Desktop / VS Code search semantics and avoids a separate Web-only local search index.
 
 Future search may include:
 
-- full thread message content
 - file names
 - command output
 - attachment names
-- project paths
 
 ### 21.10 Projection Cache And Thread Loading
 

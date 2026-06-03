@@ -542,12 +542,8 @@ export function App(): ReactElement {
       <SearchPanel
         open={searchOpen}
         threadList={threadList}
-        archivedThreads={archivedThreads}
-        selectedThreadId={visibleSelectedThreadId}
         onClose={() => setSearchOpen(false)}
         onSelectThread={selectSyncedThread}
-        onSelectProject={setSelectedProjectId}
-        onRestoreThread={restoreSyncedThread}
       />
       <SettingsDiagnosticsPanel
         open={settingsOpen}

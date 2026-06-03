@@ -53,6 +53,7 @@ import {
   threadPinResponseSchema,
   threadRenameRequestSchema,
   threadRenameResponseSchema,
+  threadSearchResponseSchema,
   threadStopBackgroundRequestSchema,
   threadStopBackgroundResponseSchema,
   threadUnarchiveRequestSchema,
@@ -1501,6 +1502,12 @@ export type ServerContext = {
 export type CreateServerOverrides = {
   officialIpc?: OfficialIpcBridge;
   appServer?: CodexAppServerProcess;
+};
+
+type OfficialThreadSearchResponse = {
+  data: Array<{ thread: Record<string, unknown>; snippet: string }>;
+  nextCursor: string | null;
+  backwardsCursor: string | null;
 };
 
 export async function createServer(
@@ -3295,6 +3302,71 @@ export async function createServer(
           error instanceof Error
             ? error.message
             : "Failed to list domain threads",
+      });
+    }
+  });
+
+  app.get("/api/domain/thread-search", async (request, reply) => {
+    const query = request.query as Record<string, unknown>;
+    const searchTerm = readString(query.searchTerm);
+    if (!searchTerm) {
+      await reply.code(400).send({ error: "Missing searchTerm" });
+      return;
+    }
+
+    try {
+      const result = (await appServer.threadSearch({
+        searchTerm,
+        archived: readOptionalBoolean(query.archived) ?? false,
+        limit: Number(query.limit ?? 9),
+        cursor: readString(query.cursor) || null,
+        sortKey: "updated_at",
+        sortDirection: "desc",
+      })) as OfficialThreadSearchResponse;
+      const rawThreads = result.data.map((entry) => entry.thread);
+      const ownerByThreadId = Object.fromEntries(
+        rawThreads.map((thread) => {
+          const threadId = thread.id as string;
+          return [threadId, ownerFromOfficialState(officialIpc, threadId)];
+        }),
+      );
+      const list = overlayPinnedThreads(
+        overlayLiveStreamStateOnThreadList(
+          mergeThreadListProjects(
+            normalizeOfficialThreadList(
+              {
+                data: rawThreads,
+                nextCursor: result.nextCursor,
+                backwardsCursor: result.backwardsCursor,
+              },
+              ownerByThreadId,
+            ),
+            readFavoriteProjectPaths(config),
+          ),
+          officialIpc,
+        ),
+        new Set(database.listPinnedThreadIds()),
+      );
+      const threadsById = new Map(
+        list.threads.map((thread) => [thread.id, thread]),
+      );
+      const response = threadSearchResponseSchema.parse({
+        data: {
+          results: result.data.map((entry) => ({
+            thread: threadsById.get(entry.thread.id as string),
+            snippet: entry.snippet,
+          })),
+          nextCursor: result.nextCursor,
+          backwardsCursor: result.backwardsCursor,
+        },
+      });
+      await reply.send(response);
+    } catch (error) {
+      await reply.code(502).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to search domain threads",
       });
     }
   });

@@ -63,7 +63,7 @@
 | -------------------- | --------------------------------------------------------------------------------------------------------------- |
 | rail icon button     | 默认、hover、active、disabled、tooltip/aria label。                                                             |
 | workspace button     | 长名称截断、meta 截断、hover、选中工作区标识。                                                                  |
-| search box/dialog    | 关闭、打开、输入中、无结果、项目结果、thread 结果、键盘关闭。                                                   |
+| search dialog        | 关闭、打开、输入中、无结果、thread 结果、键盘关闭。                                                           |
 | project row          | 默认、active、长路径、最近活动、无项目/global thread 分组。                                                     |
 | thread row           | 默认、active、长标题、空标题、时间戳、streaming/activity dot。                                                  |
 | status badge         | ready、warning、idle、长文本截断。                                                                              |
@@ -95,7 +95,7 @@
 | 顶栏      | 桌面 `56px`，移动 `52px`；桌面水平 padding `22/18px`，移动 `10px`。                                        |
 | 列宽      | chat column `58rem`，右侧栏 `320px`，桌面 chat/right gap `72px`；桌面网格向右对齐，让右侧栏贴近窗口右侧。 |
 | 控件      | icon button `32px`，tiny icon `26px`，composer button `36px`，send/stop `38px`，block action `24px`。      |
-| 行高      | project row 贴近官方密度，thread row token `28px` 起步，section header `28px`，search box `34px`。         |
+| 行高      | project row 贴近官方密度，thread row token `28px` 起步，section header `28px`，search dialog row `40px`。 |
 | 消息块    | block header `min 36px`，plan row `min 38px`，detail row `min 36px`，file row `min 38px`。                 |
 | 层级      | drawer `z=40`，header `z=20`，popover `z=50`；遮罩透明黑约 28%-30%。                                       |
 

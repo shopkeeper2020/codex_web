@@ -404,6 +404,19 @@ export const threadListResponseSchema = z.object({
   data: threadListSchema,
 });
 
+export const threadSearchResultSchema = z.object({
+  thread: threadSchema,
+  snippet: z.string(),
+});
+
+export const threadSearchResponseSchema = z.object({
+  data: z.object({
+    results: z.array(threadSearchResultSchema),
+    nextCursor: z.string().nullable(),
+    backwardsCursor: z.string().nullable(),
+  }),
+});
+
 export const threadDetailResponseSchema = z.object({
   data: threadDetailSchema.nullable(),
   source: z.string().optional(),
@@ -1594,6 +1607,8 @@ export type ThreadUnarchiveResponse = z.infer<
   typeof threadUnarchiveResponseSchema
 >;
 export type ThreadListResponse = z.infer<typeof threadListResponseSchema>;
+export type ThreadSearchResult = z.infer<typeof threadSearchResultSchema>;
+export type ThreadSearchResponse = z.infer<typeof threadSearchResponseSchema>;
 export type ThreadDetailResponse = z.infer<typeof threadDetailResponseSchema>;
 export type OfficialIpcStatus = z.infer<typeof officialIpcStatusSchema>;
 export type AppServerStatus = z.infer<typeof appServerStatusSchema>;

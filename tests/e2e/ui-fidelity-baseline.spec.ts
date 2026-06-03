@@ -171,6 +171,19 @@ test.describe("codex_web UI fidelity baseline captures", () => {
     }
     await capture(page, testInfo, "message-blocks");
 
+    await page.route("**/api/domain/thread-search**", async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            results: [],
+            nextCursor: null,
+            backwardsCursor: null,
+          },
+        }),
+      });
+    });
+
     if (testInfo.project.name.includes("mobile")) {
       await page.getByRole("button", { name: "打开导航" }).first().click();
       await expect(
@@ -193,6 +206,7 @@ test.describe("codex_web UI fidelity baseline captures", () => {
     const searchDialog = page.getByRole("dialog", { name: "Search" });
     await expect(searchDialog).toBeVisible();
     await page.getByLabel("全局搜索").fill("ui-fidelity-no-match");
+    await expect(searchDialog.getByText("没有结果")).toBeVisible();
     await capture(page, testInfo, "search-empty");
 
     await page.goto("/settings", { waitUntil: "domcontentloaded" });

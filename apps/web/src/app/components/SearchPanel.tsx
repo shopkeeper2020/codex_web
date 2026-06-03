@@ -1,50 +1,58 @@
-import { Archive, Folder, MessageSquare, Search, X } from "lucide-react";
-import type { ReactElement } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactElement,
+} from "react";
 import { useEffect, useRef, useState } from "react";
-import type { Project, Thread, ThreadList } from "../../api";
+import {
+  searchThreads,
+  type Project,
+  type Thread,
+  type ThreadList,
+  type ThreadSearchResult,
+} from "../../api";
 import styles from "../App.module.css";
-
-function formatTime(value: string | null): string {
-  if (!value) return "刚刚";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "刚刚";
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
 
 function projectForThread(thread: Thread, projects: Project[]): Project | null {
   if (!thread.projectId) return null;
   return projects.find((project) => project.id === thread.projectId) ?? null;
 }
 
+type SearchRow = {
+  thread: Thread;
+  snippet: string;
+};
+
 type SearchPanelProps = {
   open: boolean;
   threadList: ThreadList;
-  archivedThreads: Thread[];
-  selectedThreadId: string;
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
-  onSelectProject: (projectId: string | null) => void;
-  onRestoreThread: (threadId: string) => Promise<void>;
 };
 
 export function SearchPanel({
   open,
   threadList,
-  archivedThreads,
-  selectedThreadId,
   onClose,
   onSelectThread,
-  onSelectProject,
-  onRestoreThread,
 }: SearchPanelProps): ReactElement | null {
   const [query, setQuery] = useState("");
+  const [results, setResults] = useState<ThreadSearchResult[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const searchTerm = query.trim();
+
+  const rows: SearchRow[] = searchTerm
+    ? results.map((entry) => ({
+        thread: entry.thread,
+        snippet: entry.snippet,
+      }))
+    : threadList.threads.slice(0, 9).map((thread) => ({
+        thread,
+        snippet: "",
+      }));
 
   useEffect(() => {
     if (!open) return;
@@ -52,35 +60,108 @@ export function SearchPanel({
   }, [open]);
 
   useEffect(() => {
-    if (!open) setQuery("");
+    if (!open) {
+      setQuery("");
+      setHighlightedIndex(0);
+    }
   }, [open]);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (!open || !searchTerm) {
+      setResults([]);
+      setSearchError(null);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setSearchError(null);
+    setResults([]);
+    const timeout = window.setTimeout(() => {
+      void searchThreads({ searchTerm, archived: false, limit: 9 })
+        .then((payload) => {
+          if (!cancelled) setResults(payload.results);
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) {
+            setResults([]);
+            setSearchError(
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [open, searchTerm]);
+
+  useEffect(() => {
+    if (highlightedIndex >= rows.length) {
+      setHighlightedIndex(Math.max(0, rows.length - 1));
+    }
+  }, [highlightedIndex, rows.length]);
+
+  useEffect(() => {
+    rowRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
+  }, [highlightedIndex, rows.length]);
 
   if (!open) return null;
 
-  const projectMatches = (project: Project) =>
-    !normalizedQuery ||
-    [project.name, project.path ?? project.id].some((value) =>
-      value.toLocaleLowerCase().includes(normalizedQuery),
-    );
-  const threadMatches = (thread: Thread) => {
-    const project = projectForThread(thread, threadList.projects);
-    return (
-      !normalizedQuery ||
-      [
-        thread.title,
-        thread.path ?? "",
-        thread.projectId ?? "",
-        project?.name ?? "",
-      ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
-    );
-  };
-  const projects = threadList.projects.filter(projectMatches).slice(0, 8);
-  const threads = threadList.threads.filter(threadMatches).slice(0, 12);
-  const archived = archivedThreads.filter(threadMatches).slice(0, 6);
-
-  async function restoreArchived(threadId: string): Promise<void> {
-    await onRestoreThread(threadId);
+  function selectRow(row: SearchRow): void {
+    onSelectThread(row.thread.id);
     onClose();
+  }
+
+  function handleInputKeyDown(
+    event: ReactKeyboardEvent<HTMLInputElement>,
+  ): void {
+    if (event.key === "Escape") {
+      onClose();
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (rows.length > 0)
+        setHighlightedIndex((index) => (index + 1) % rows.length);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (rows.length > 0)
+        setHighlightedIndex(
+          (index) => (index - 1 + rows.length) % rows.length,
+        );
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (rows.length > 0) selectRow(rows[highlightedIndex]!);
+      return;
+    }
+
+    const shortcutIndex = Number(event.key) - 1;
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      shortcutIndex >= 0 &&
+      shortcutIndex < rows.length
+    ) {
+      event.preventDefault();
+      selectRow(rows[shortcutIndex]!);
+    }
   }
 
   return (
@@ -88,7 +169,7 @@ export function SearchPanel({
       className={styles.searchLayer}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="global-search-title"
+      aria-label="Search"
     >
       <button
         className={styles.searchScrim}
@@ -97,114 +178,65 @@ export function SearchPanel({
         onClick={onClose}
       />
       <section className={styles.searchDialog}>
-        <header className={styles.searchHeader}>
-          <Search size={18} />
-          <h2 id="global-search-title">Search</h2>
-          <button
-            className={styles.iconButton}
-            type="button"
-            aria-label="关闭搜索"
-            onClick={onClose}
-          >
-            <X size={18} />
-          </button>
-        </header>
-        <label className={styles.searchInput}>
-          <Search size={16} />
+        <label className={styles.searchCommandInput}>
           <input
             ref={inputRef}
             type="search"
             aria-label="全局搜索"
-            placeholder="搜索项目、会话或路径"
+            placeholder="搜索对话"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") onClose();
-            }}
+            onKeyDown={handleInputKeyDown}
           />
         </label>
-        <div className={styles.searchResults}>
-          <section className={styles.searchGroup}>
-            <h3>Projects</h3>
-            {projects.map((project) => (
+
+        <div className={styles.searchCommandList}>
+          {!searchTerm ? (
+            <div className={styles.searchSectionLabel}>近期对话</div>
+          ) : null}
+
+          {rows.map((row, index) => {
+            const project = projectForThread(row.thread, threadList.projects);
+            return (
               <button
-                className={styles.searchResultRow}
+                className={
+                  index === highlightedIndex
+                    ? styles.searchCommandRowActive
+                    : styles.searchCommandRow
+                }
                 type="button"
-                key={project.id}
-                onClick={() => {
-                  onSelectProject(project.id);
-                  onClose();
+                key={row.thread.id}
+                ref={(node) => {
+                  rowRefs.current[index] = node;
                 }}
+                aria-selected={index === highlightedIndex}
+                onMouseEnter={() => setHighlightedIndex(index)}
+                onClick={() => selectRow(row)}
               >
-                <Folder size={16} />
-                <span>
-                  <strong>{project.name}</strong>
-                  <small>
-                    {project.source === "web-favorite" ? "本地收藏" : "官方"} ·{" "}
-                    {project.path ?? project.id}
-                  </small>
+                <span className={styles.searchCommandText}>
+                  <strong>{row.thread.title}</strong>
+                  {searchTerm ? (
+                    <small>{row.snippet}</small>
+                  ) : (
+                    <small>{project?.name ?? row.thread.path ?? ""}</small>
+                  )}
                 </span>
+                <span className={styles.searchProjectName}>
+                  {project?.name ?? row.thread.path ?? ""}
+                </span>
+                <kbd className={styles.searchShortcut}>Ctrl+{index + 1}</kbd>
               </button>
-            ))}
-            {projects.length === 0 ? (
-              <div className={styles.searchEmpty}>没有匹配项目</div>
-            ) : null}
-          </section>
+            );
+          })}
 
-          <section className={styles.searchGroup}>
-            <h3>Threads</h3>
-            {threads.map((thread) => {
-              const project = projectForThread(thread, threadList.projects);
-              return (
-                <button
-                  className={
-                    thread.id === selectedThreadId
-                      ? styles.searchResultRowActive
-                      : styles.searchResultRow
-                  }
-                  type="button"
-                  key={thread.id}
-                  onClick={() => {
-                    onSelectThread(thread.id);
-                    onClose();
-                  }}
-                >
-                  <MessageSquare size={16} />
-                  <span>
-                    <strong>{thread.title}</strong>
-                    <small>
-                      {project?.name ?? thread.path ?? "无项目会话"} ·{" "}
-                      {thread.inProgress
-                        ? "live"
-                        : formatTime(thread.updatedAtIso)}
-                    </small>
-                  </span>
-                </button>
-              );
-            })}
-            {threads.length === 0 ? (
-              <div className={styles.searchEmpty}>没有匹配会话</div>
-            ) : null}
-          </section>
-
-          {archived.length > 0 ? (
-            <section className={styles.searchGroup}>
-              <h3>Archived</h3>
-              {archived.map((thread) => (
-                <button
-                  className={styles.searchResultRow}
-                  type="button"
-                  key={thread.id}
-                  onClick={() => void restoreArchived(thread.id)}
-                >
-                  <Archive size={16} />
-                  <span>
-                    <strong>{thread.title}</strong>
-                    <small>点击恢复 · {formatTime(thread.updatedAtIso)}</small>
-                  </span>
-                </button>
-              ))}
-            </section>
+          {searchTerm && loading ? (
+            <div className={styles.searchStatus}>搜索中...</div>
+          ) : null}
+          {searchTerm && !loading && searchError ? (
+            <div className={styles.searchStatus}>{searchError}</div>
+          ) : null}
+          {searchTerm && !loading && !searchError && rows.length === 0 ? (
+            <div className={styles.searchStatus}>没有结果</div>
           ) : null}
         </div>
       </section>

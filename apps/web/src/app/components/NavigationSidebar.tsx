@@ -22,7 +22,12 @@ import {
   SquarePen,
   X,
 } from "lucide-react";
-import type { ReactElement } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactElement,
+} from "react";
 import { useEffect, useRef, useState } from "react";
 import type {
   AccountStatus,
@@ -42,6 +47,7 @@ import {
 
 export const NO_PROJECT_FILTER_ID = "__codex_web_no_project__";
 const COLLAPSED_SECTION_LIMIT = 5;
+const THREAD_ACTION_LONG_PRESS_MS = 520;
 
 function formatTime(value: string | null): string {
   if (!value) return "";
@@ -373,7 +379,19 @@ function ThreadRows({
   const [scrollTop, setScrollTop] = useState(() =>
     initialThreadScrollTop(selectedIndex, threads.length),
   );
+  const [actionMenuThreadId, setActionMenuThreadId] = useState<string | null>(
+    null,
+  );
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const actionMenuRef = useRef<HTMLDivElement | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current === null) return;
+    window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  };
 
   useEffect(() => {
     if (!virtualize) return;
@@ -382,15 +400,92 @@ function ThreadRows({
     if (scrollerRef.current) scrollerRef.current.scrollTop = nextScrollTop;
   }, [selectedIndex, threads.length, virtualize]);
 
-  const window = virtualize
+  useEffect(() => clearLongPressTimer, []);
+
+  useEffect(() => {
+    if (!actionMenuThreadId) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && actionMenuRef.current?.contains(target))
+        return;
+      setActionMenuThreadId(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setActionMenuThreadId(null);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [actionMenuThreadId]);
+
+  function openThreadActionMenu(threadId: string): void {
+    clearLongPressTimer();
+    setActionMenuThreadId(threadId);
+  }
+
+  function handleThreadPointerDown(
+    threadId: string,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ): void {
+    if (event.pointerType === "mouse") return;
+    clearLongPressTimer();
+    longPressTriggeredRef.current = false;
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      openThreadActionMenu(threadId);
+    }, THREAD_ACTION_LONG_PRESS_MS);
+  }
+
+  function handleThreadPointerEnd(): void {
+    clearLongPressTimer();
+  }
+
+  function handleThreadClick(threadId: string): void {
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+    setActionMenuThreadId(null);
+    onSelectThread(threadId);
+  }
+
+  function handleThreadContextMenu(
+    threadId: string,
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ): void {
+    event.preventDefault();
+    event.stopPropagation();
+    longPressTriggeredRef.current = false;
+    openThreadActionMenu(threadId);
+  }
+
+  function handleThreadKeyDown(
+    threadId: string,
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ): void {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
+      return;
+    event.preventDefault();
+    openThreadActionMenu(threadId);
+  }
+
+  function runThreadAction(action: () => void): void {
+    setActionMenuThreadId(null);
+    action();
+  }
+
+  const virtualWindow = virtualize
     ? calculateVirtualThreadWindow({
         itemCount: threads.length,
         scrollTop,
         viewportHeight,
       })
     : null;
-  const renderedThreads = window
-    ? threads.slice(window.startIndex, window.endIndex)
+  const renderedThreads = virtualWindow
+    ? threads.slice(virtualWindow.startIndex, virtualWindow.endIndex)
     : threads;
 
   const rows = renderedThreads.map((thread) => {
@@ -416,6 +511,7 @@ function ThreadRows({
     }
 
     const project = projectForThread(thread, projects);
+    const actionMenuOpen = actionMenuThreadId === thread.id;
     return (
       <div
         className={
@@ -428,7 +524,15 @@ function ThreadRows({
         <button
           className={styles.threadRowMain}
           type="button"
-          onClick={() => onSelectThread(thread.id)}
+          aria-haspopup="menu"
+          aria-expanded={actionMenuOpen}
+          onClick={() => handleThreadClick(thread.id)}
+          onContextMenu={(event) => handleThreadContextMenu(thread.id, event)}
+          onKeyDown={(event) => handleThreadKeyDown(thread.id, event)}
+          onPointerDown={(event) => handleThreadPointerDown(thread.id, event)}
+          onPointerUp={handleThreadPointerEnd}
+          onPointerCancel={handleThreadPointerEnd}
+          onPointerLeave={handleThreadPointerEnd}
         >
           {thread.pinned ? (
             <Pin
@@ -449,43 +553,61 @@ function ThreadRows({
             {thread.inProgress ? "live" : formatTime(thread.updatedAtIso)}
           </span>
         </button>
-        <div className={styles.threadRowActions} aria-label="会话操作">
-          <button
-            className={styles.threadRowAction}
-            type="button"
-            aria-label={`停止 ${thread.title} 的所有后台终端`}
-            title={
-              thread.inProgress ? "停止所有后台终端" : "没有正在运行的后台"
-            }
-            disabled={!thread.inProgress}
-            onClick={() => onStopThreadBackground(thread.id)}
+        {actionMenuOpen ? (
+          <div
+            className={styles.threadActionMenu}
+            ref={actionMenuRef}
+            role="menu"
+            aria-label={`${thread.title} 的会话操作`}
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
           >
-            <Square size={10} fill="currentColor" />
-          </button>
-          <button
-            className={styles.threadRowAction}
-            type="button"
-            aria-label={thread.pinned ? "取消置顶对话" : "置顶对话"}
-            title={thread.pinned ? "取消置顶对话" : "置顶对话"}
-            onClick={() => onTogglePinThread(thread.id, !thread.pinned)}
-          >
-            {thread.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-          </button>
-          <button
-            className={styles.threadRowAction}
-            type="button"
-            aria-label="归档对话"
-            title="归档对话"
-            onClick={() => onArchiveThread(thread.id)}
-          >
-            <Archive size={14} />
-          </button>
-        </div>
+            <button
+              className={styles.threadActionMenuItem}
+              type="button"
+              role="menuitem"
+              disabled={!thread.inProgress}
+              title={
+                thread.inProgress ? "停止后台终端" : "没有正在运行的后台终端"
+              }
+              onClick={() =>
+                runThreadAction(() => onStopThreadBackground(thread.id))
+              }
+            >
+              <Square size={10} fill="currentColor" />
+              <span>停止后台终端</span>
+            </button>
+            <button
+              className={styles.threadActionMenuItem}
+              type="button"
+              role="menuitem"
+              title={thread.pinned ? "取消置顶对话" : "置顶对话"}
+              onClick={() =>
+                runThreadAction(() =>
+                  onTogglePinThread(thread.id, !thread.pinned),
+                )
+              }
+            >
+              {thread.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+              <span>{thread.pinned ? "取消置顶对话" : "置顶对话"}</span>
+            </button>
+            <button
+              className={styles.threadActionMenuItem}
+              type="button"
+              role="menuitem"
+              title="归档对话"
+              onClick={() => runThreadAction(() => onArchiveThread(thread.id))}
+            >
+              <Archive size={14} />
+              <span>归档对话</span>
+            </button>
+          </div>
+        ) : null}
       </div>
     );
   });
 
-  if (!virtualize || !window) return <>{rows}</>;
+  if (!virtualize || !virtualWindow) return <>{rows}</>;
 
   return (
     <div
@@ -494,16 +616,16 @@ function ThreadRows({
         archived ? "archived-thread-list-window" : "thread-list-window"
       }
       ref={scrollerRef}
-      style={{ height: window.viewportHeight }}
+      style={{ height: virtualWindow.viewportHeight }}
       onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
     >
       <div
         className={styles.virtualThreadInner}
-        style={{ height: window.totalHeight }}
+        style={{ height: virtualWindow.totalHeight }}
       >
         <div
           className={styles.virtualThreadItems}
-          style={{ transform: `translateY(${window.offsetTop}px)` }}
+          style={{ transform: `translateY(${virtualWindow.offsetTop}px)` }}
         >
           {rows}
         </div>
@@ -565,14 +687,12 @@ function SidebarContent({
   onStopThreadBackground: (threadId: string) => void;
   onSignOut: () => void;
 }): ReactElement {
-  const [query, setQuery] = useState("");
   const [projectsExpanded, setProjectsExpanded] = useState(false);
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
   const [threadsExpanded, setThreadsExpanded] = useState(false);
   const [archivedSectionOpen, setArchivedSectionOpen] = useState(false);
   const [archivedExpanded, setArchivedExpanded] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  const normalizedQuery = query.trim().toLocaleLowerCase();
   const selectedProject =
     selectedProjectId && selectedProjectId !== NO_PROJECT_FILTER_ID
       ? (threadList.projects.find(
@@ -585,67 +705,33 @@ function SidebarContent({
     selectedProjectId === NO_PROJECT_FILTER_ID
       ? null
       : (selectedProjectCwd ?? undefined);
-  const visibleProjects = normalizedQuery
-    ? threadList.projects.filter((project) =>
-        [project.name, project.path ?? project.id].some((value) =>
-          value.toLocaleLowerCase().includes(normalizedQuery),
-        ),
-      )
-    : threadList.projects;
-  const renderedProjects = limitedRows(
-    visibleProjects,
-    projectsExpanded,
-    Boolean(normalizedQuery),
-  );
+  const visibleProjects = threadList.projects;
+  const renderedProjects = limitedRows(visibleProjects, projectsExpanded, false);
   const pinnedThreads = threadList.threads.filter((thread) => thread.pinned);
   const unpinnedThreads = threadList.threads.filter((thread) => !thread.pinned);
   const projectFilteredPinnedThreads = pinnedThreads.filter((thread) =>
     threadMatchesProject(thread, selectedProjectId),
   );
-  const visiblePinnedThreads = normalizedQuery
-    ? projectFilteredPinnedThreads.filter((thread) => {
-        const project = projectForThread(thread, threadList.projects);
-        return [thread.title, thread.path ?? "", project?.name ?? ""].some(
-          (value) => value.toLocaleLowerCase().includes(normalizedQuery),
-        );
-      })
-    : projectFilteredPinnedThreads;
+  const visiblePinnedThreads = projectFilteredPinnedThreads;
   const renderedPinnedThreads = limitedRows(
     visiblePinnedThreads,
     pinnedExpanded,
-    Boolean(normalizedQuery),
+    false,
   );
   const projectFilteredThreads = unpinnedThreads.filter((thread) =>
     threadMatchesProject(thread, selectedProjectId),
   );
-  const visibleThreads = normalizedQuery
-    ? projectFilteredThreads.filter((thread) => {
-        const project = projectForThread(thread, threadList.projects);
-        return [thread.title, thread.path ?? "", project?.name ?? ""].some(
-          (value) => value.toLocaleLowerCase().includes(normalizedQuery),
-        );
-      })
-    : projectFilteredThreads;
-  const renderedThreads = limitedRows(
-    visibleThreads,
-    threadsExpanded,
-    Boolean(normalizedQuery),
-  );
+  const visibleThreads = projectFilteredThreads;
+  const renderedThreads = limitedRows(visibleThreads, threadsExpanded, false);
   const projectFilteredArchivedThreads = archivedThreads.filter((thread) =>
     threadMatchesProject(thread, selectedProjectId),
   );
-  const visibleArchivedThreads = normalizedQuery
-    ? projectFilteredArchivedThreads.filter((thread) =>
-        [thread.title, thread.path ?? "", thread.projectId ?? ""].some(
-          (value) => value.toLocaleLowerCase().includes(normalizedQuery),
-        ),
-      )
-    : projectFilteredArchivedThreads;
-  const showArchivedContents = archivedSectionOpen || Boolean(normalizedQuery);
+  const visibleArchivedThreads = projectFilteredArchivedThreads;
+  const showArchivedContents = archivedSectionOpen;
   const renderedArchivedThreads = limitedRows(
     showArchivedContents ? visibleArchivedThreads : [],
     archivedExpanded,
-    Boolean(normalizedQuery),
+    false,
   );
   const noProjectCount = threadList.threads.filter(
     (thread) => !thread.projectId,
@@ -685,16 +771,6 @@ function SidebarContent({
           </button>
         </nav>
 
-        <label className={styles.searchBox}>
-          <Search size={15} />
-          <input
-            type="search"
-            placeholder="搜索项目、会话或文件"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-
         {visiblePinnedThreads.length > 0 ? (
           <section className={styles.navSection}>
             <div className={styles.sectionHeader}>
@@ -713,11 +789,7 @@ function SidebarContent({
             />
             <ExpandRowsButton
               expanded={pinnedExpanded}
-              hiddenCount={
-                normalizedQuery
-                  ? 0
-                  : visiblePinnedThreads.length - COLLAPSED_SECTION_LIMIT
-              }
+              hiddenCount={visiblePinnedThreads.length - COLLAPSED_SECTION_LIMIT}
               onToggle={() => setPinnedExpanded((value) => !value)}
             />
           </section>
@@ -771,11 +843,7 @@ function SidebarContent({
           })}
           <ExpandRowsButton
             expanded={projectsExpanded}
-            hiddenCount={
-              normalizedQuery
-                ? 0
-                : visibleProjects.length - COLLAPSED_SECTION_LIMIT
-            }
+            hiddenCount={visibleProjects.length - COLLAPSED_SECTION_LIMIT}
             onToggle={() => setProjectsExpanded((value) => !value)}
           />
           {noProjectCount > 0 ? (
@@ -819,11 +887,7 @@ function SidebarContent({
           />
           <ExpandRowsButton
             expanded={threadsExpanded}
-            hiddenCount={
-              normalizedQuery
-                ? 0
-                : visibleThreads.length - COLLAPSED_SECTION_LIMIT
-            }
+            hiddenCount={visibleThreads.length - COLLAPSED_SECTION_LIMIT}
             onToggle={() => setThreadsExpanded((value) => !value)}
           />
           {visibleThreads.length === 0 ? (
@@ -883,9 +947,7 @@ function SidebarContent({
             <ExpandRowsButton
               expanded={archivedExpanded}
               hiddenCount={
-                normalizedQuery
-                  ? 0
-                  : visibleArchivedThreads.length - COLLAPSED_SECTION_LIMIT
+                visibleArchivedThreads.length - COLLAPSED_SECTION_LIMIT
               }
               onToggle={() => setArchivedExpanded((value) => !value)}
             />

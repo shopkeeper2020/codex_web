@@ -38,6 +38,7 @@ import {
   threadListResponseSchema,
   threadPinResponseSchema,
   threadRenameResponseSchema,
+  threadSearchResponseSchema,
   threadStopBackgroundResponseSchema,
   threadUnarchiveResponseSchema,
   workspaceStatusResponseSchema,
@@ -66,6 +67,7 @@ import {
   type SkillList,
   type SkillOption,
   type SyncReadiness,
+  type ThreadSearchResult,
   type TurnInterruptRequest,
   type TurnStartRequest,
   type TurnSteerRequest,
@@ -110,6 +112,7 @@ export type {
   SkillList,
   SkillOption,
   SyncReadiness,
+  ThreadSearchResult,
   WorkspaceStatus,
 } from "@codex-web/api";
 
@@ -523,6 +526,25 @@ export async function getDomainThreads(
   if (cursor) params.set("cursor", cursor);
   const payload = threadListResponseSchema.parse(
     await readJson<unknown>(`/api/domain/threads?${params.toString()}`),
+  );
+  return payload.data;
+}
+
+export async function searchThreads(input: {
+  searchTerm: string;
+  archived: boolean;
+  limit: number;
+}): Promise<{
+  results: ThreadSearchResult[];
+  nextCursor: string | null;
+  backwardsCursor: string | null;
+}> {
+  const params = new URLSearchParams();
+  params.set("searchTerm", input.searchTerm);
+  params.set("archived", input.archived ? "true" : "false");
+  params.set("limit", String(input.limit));
+  const payload = threadSearchResponseSchema.parse(
+    await readJson<unknown>(`/api/domain/thread-search?${params.toString()}`),
   );
   return payload.data;
 }

@@ -130,6 +130,24 @@ async function installMobileFlowMocks(page: Page): Promise<void> {
     });
   });
 
+  await page.route("**/api/domain/thread-search**", async (route) => {
+    const searchTerm =
+      new URL(route.request().url()).searchParams.get("searchTerm") ?? "";
+    const thread = flowThread();
+    const results = String(thread.title)
+      .toLocaleLowerCase()
+      .includes(searchTerm.toLocaleLowerCase())
+      ? [{ thread, snippet: String(thread.title) }]
+      : [];
+    await fulfillJson(route, {
+      data: {
+        results,
+        nextCursor: null,
+        backwardsCursor: null,
+      },
+    });
+  });
+
   await page.route("**/api/runtime-options", async (route) => {
     await fulfillJson(route, {
       data: {
@@ -363,18 +381,8 @@ test.describe("codex_web mobile real task flow", () => {
     await expect(searchDialog).toBeVisible();
     await expect(page.getByLabel("全局搜索")).toBeFocused();
     await page.getByLabel("全局搜索").fill("mobile-flow-no-match");
-    await expect(
-      searchDialog.getByRole("heading", { name: "Projects" }),
-    ).toBeVisible();
-    await expect(
-      searchDialog.getByRole("heading", { name: "Threads" }),
-    ).toBeVisible();
-    await expect(searchDialog.getByText("没有匹配项目")).toBeVisible();
-    await expect(searchDialog.getByText("没有匹配会话")).toBeVisible();
-    await searchDialog
-      .locator("header")
-      .getByRole("button", { name: "关闭搜索" })
-      .click();
+    await expect(searchDialog.getByText("没有结果")).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(searchDialog).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
 
@@ -395,6 +403,90 @@ test.describe("codex_web mobile real task flow", () => {
     ).toBeVisible();
     await expect(settingsDialog.getByText("Attachments")).toBeVisible();
     await expectNoHorizontalOverflow(page);
+  });
+
+  test("opens thread actions from a long press in the mobile drawer", async ({
+    page,
+  }) => {
+    const pinBodies: Array<Record<string, unknown>> = [];
+    await page.route("**/api/domain/thread-pin", async (route) => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      pinBodies.push(body);
+      await fulfillJson(route, {
+        data: {
+          ok: true,
+          threadId: flowThreadId,
+          pinned: Boolean(body.pinned),
+          result: { source: "e2e" },
+        },
+      });
+    });
+
+    await page.getByRole("button", { name: "打开导航" }).first().click();
+    const threadRow = page
+      .getByRole("button", { name: /Mobile flow thread/ })
+      .last();
+    await expect(threadRow).toBeVisible();
+    await expect
+      .poll(async () =>
+        threadRow.evaluate((element) => {
+          const style = window.getComputedStyle(element);
+          return {
+            userSelect: style.userSelect,
+            touchAction: style.touchAction,
+          };
+        }),
+      )
+      .toEqual({
+        userSelect: "none",
+        touchAction: "manipulation",
+      });
+    const box = await threadRow.boundingBox();
+    expect(box).not.toBeNull();
+    const clientX = Math.round((box?.x ?? 0) + 24);
+    const clientY = Math.round((box?.y ?? 0) + (box?.height ?? 0) / 2);
+
+    await threadRow.dispatchEvent("pointerdown", {
+      pointerId: 1,
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+      clientX,
+      clientY,
+    });
+    await page.waitForTimeout(650);
+    await threadRow.dispatchEvent("pointerup", {
+      pointerId: 1,
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+      buttons: 0,
+      clientX,
+      clientY,
+    });
+
+    const actionMenu = page.getByRole("menu", {
+      name: /Mobile flow thread 的会话操作/,
+    });
+    await expect(actionMenu).toBeVisible();
+    await expect(
+      actionMenu.getByRole("menuitem", { name: "停止后台终端" }),
+    ).toBeDisabled();
+    await expect(
+      actionMenu.getByRole("menuitem", { name: "置顶对话" }),
+    ).toBeVisible();
+    await expect(
+      actionMenu.getByRole("menuitem", { name: "归档对话" }),
+    ).toBeVisible();
+    await expectNoHorizontalOverflow(page, "mobile thread action menu");
+
+    await actionMenu.getByRole("menuitem", { name: "置顶对话" }).click();
+    await expect.poll(() => pinBodies.length).toBe(1);
+    expect(pinBodies[0]).toMatchObject({
+      threadId: flowThreadId,
+      pinned: true,
+    });
   });
 
   test("keeps composer attachment and Skills entries tappable", async ({
