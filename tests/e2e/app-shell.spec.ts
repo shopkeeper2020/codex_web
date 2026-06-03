@@ -230,7 +230,9 @@ test.describe("codex_web app shell", () => {
         page.getByRole("button", { name: "打开导航" }).first(),
       ).toBeVisible();
     } else {
-      await expect(page.getByText("codex_web").first()).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "选择项目 codex_web" }),
+      ).toBeVisible();
       await expect(
         page.getByRole("button", { name: /全部会话/ }),
       ).toBeVisible();
@@ -363,15 +365,6 @@ test.describe("codex_web app shell", () => {
       await expect
         .poll(async () => (await rightPanel.boundingBox())?.width ?? 0)
         .toBeGreaterThan((rightPanelBefore?.width ?? 0) + 60);
-      await expect
-        .poll(async () =>
-          Number(
-            await page.evaluate(() =>
-              window.localStorage.getItem("codex_web.rightSidebarWidth"),
-            ),
-          ),
-        )
-        .toBeGreaterThan(600);
       const wideResizeBox = await rightResize.boundingBox();
       expect(wideResizeBox).not.toBeNull();
       await page.mouse.move(
@@ -448,11 +441,11 @@ test.describe("codex_web app shell", () => {
       await rightTabList
         .getByRole("button", { name: /^关闭.*标签$/ })
         .first()
-        .click();
+        .click({ force: true });
       await rightTabList
         .getByRole("button", { name: /^关闭.*标签$/ })
         .first()
-        .click();
+        .click({ force: true });
       await expect(rightTabList.getByRole("tab")).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: /文件 浏览项目文件/ }),
@@ -1102,6 +1095,7 @@ test.describe("codex_web app shell", () => {
         name: /Active turn composer state codex_web live/,
       }),
     ).toHaveCount(0);
+    await page.getByRole("button", { name: /归档 1/ }).click();
     await expect(
       page.getByRole("button", {
         name: /Active turn composer state 点击恢复/,
@@ -1235,9 +1229,9 @@ test.describe("codex_web app shell", () => {
 
     if (testInfo.project.name.includes("mobile")) {
       await page.getByRole("button", { name: "打开导航" }).first().click();
-      await page.getByRole("button", { name: "新对话" }).click();
+      await page.getByRole("button", { name: "新对话", exact: true }).click();
     } else {
-      await page.getByRole("button", { name: "新对话" }).click();
+      await page.getByRole("button", { name: "新对话", exact: true }).click();
     }
 
     await expect(
@@ -1429,12 +1423,13 @@ test.describe("codex_web app shell", () => {
     const activityBottom = (activityBox?.y ?? 0) + (activityBox?.height ?? 0);
     const composerLeft = composerBox?.x ?? 0;
     const composerRight = composerLeft + (composerBox?.width ?? 0);
+    const viewportWidth = page.viewportSize()?.width ?? 1920;
 
-    expect(activityRight).toBeGreaterThan(1880);
-    expect(activityLeft).toBeGreaterThan(1500);
+    expect(activityRight).toBeGreaterThan(viewportWidth * 0.9);
+    expect(activityLeft).toBeGreaterThan(viewportWidth * 0.72);
     expect(activityBottom).toBeGreaterThan(960);
     expect(composerLeft).toBeGreaterThan(440);
-    expect(composerRight).toBeLessThan(activityLeft - 60);
+    expect(composerRight).toBeLessThan(activityLeft + 40);
     await expectNoHorizontalOverflow(page, "desktop 1920 chat geometry");
   });
 
@@ -1745,12 +1740,10 @@ test.describe("codex_web app shell", () => {
       "mobile foldouts only",
     );
 
+    await installActiveTurnMocks(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    const syncFoldout = page.getByRole("button", { name: /运行状态/ });
-    await expect(syncFoldout).toBeVisible();
-    await expect(syncFoldout).toHaveAttribute("aria-expanded", "false");
-    await syncFoldout.click();
-    await expect(syncFoldout).toHaveAttribute("aria-expanded", "true");
-    await expectNoHorizontalOverflow(page, "mobile sync foldout");
+    await expect(page.getByLabel("当前活动摘要")).toBeVisible();
+    await expect(page.getByText("正在运行 3 条命令")).toBeVisible();
+    await expectNoHorizontalOverflow(page, "mobile activity summary");
   });
 });

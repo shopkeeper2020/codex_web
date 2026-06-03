@@ -52,6 +52,27 @@ describe('thread actions', () => {
     ])
   })
 
+  it('can start the first local turn for a new empty thread without resume', async () => {
+    const calls: Array<{ method: string; params: unknown }> = []
+    const appServer = {
+      async threadResume(params: ThreadResumeParams): Promise<unknown> {
+        calls.push({ method: 'thread/resume', params })
+        throw new Error('thread/resume should not be called')
+      },
+      async turnStart(params: TurnStartParams): Promise<unknown> {
+        calls.push({ method: 'turn/start', params })
+        return { turn: { id: 'turn-first' } }
+      },
+    }
+
+    await expect(
+      startLocalTurn(appServer, { threadId: 'thread-new', input: [] }, { skipResume: true }),
+    ).resolves.toEqual({ turn: { id: 'turn-first' } })
+    expect(calls).toEqual([
+      { method: 'turn/start', params: { threadId: 'thread-new', input: [] } },
+    ])
+  })
+
   it('strips UI-only turn fields before calling the raw app-server', async () => {
     const calls: Array<{ method: string; params: unknown }> = []
     const appServer = {

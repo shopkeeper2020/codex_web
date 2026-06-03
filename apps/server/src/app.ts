@@ -3595,6 +3595,15 @@ export async function createServer(
     const streamStateRecord = asRecord(
       officialIpc.getThreadStreamState(threadId)?.conversationState,
     );
+    const streamStateTurns = Array.isArray(streamStateRecord?.turns)
+      ? streamStateRecord.turns
+      : null;
+    const skipResumeForEmptyWebOwnedThread =
+      officialIpc.isOwnedConversation(threadId) &&
+      streamStateTurns !== null &&
+      streamStateTurns.length === 0;
+    // Official app-server lifecycle: a fresh thread goes thread/start -> turn/start.
+    // thread/resume is only for continuing a materialized existing thread.
     const params = await buildTurnStartParams({
       threadId,
       text,
@@ -3696,7 +3705,17 @@ export async function createServer(
           .send({ error: "official-ipc-owner-not-broadcastable" });
         return;
       }
-      const result = await startLocalTurn(appServer, params);
+      if (skipResumeForEmptyWebOwnedThread) {
+        diagnostics.record(
+          "info",
+          "turn-start",
+          "skip-resume-empty-web-owned-thread",
+          { threadId },
+        );
+      }
+      const result = await startLocalTurn(appServer, params, {
+        skipResume: skipResumeForEmptyWebOwnedThread,
+      });
       associateSentAttachments();
       void broadcastOwnedAppServerSnapshot(threadId, "local-turn-start");
       await reply.send({ data: { mode: "app-server", result } });

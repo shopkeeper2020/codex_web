@@ -12,6 +12,10 @@ type LocalTurnStarter = {
   turnStart: (params: TurnStartParams) => Promise<unknown>
 }
 
+type StartLocalTurnOptions = {
+  skipResume?: boolean
+}
+
 type ThreadArchiver = {
   threadArchive: (params: ThreadArchiveParams) => Promise<unknown>
   threadRead: (params: ThreadReadParams) => Promise<unknown>
@@ -28,13 +32,19 @@ function readString(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : ''
 }
 
-export async function startLocalTurn(appServer: LocalTurnStarter, params: TurnStartParams): Promise<unknown> {
+export async function startLocalTurn(
+  appServer: LocalTurnStarter,
+  params: TurnStartParams,
+  options: StartLocalTurnOptions = {},
+): Promise<unknown> {
   const officialParams = toOfficialTurnStartParams(params)
-  const resumeParams: ThreadResumeParams = {
-    threadId: officialParams.threadId,
-    ...(officialParams.cwd ? { cwd: officialParams.cwd } : {}),
+  if (!options.skipResume) {
+    const resumeParams: ThreadResumeParams = {
+      threadId: officialParams.threadId,
+      ...(officialParams.cwd ? { cwd: officialParams.cwd } : {}),
+    }
+    await appServer.threadResume(resumeParams)
   }
-  await appServer.threadResume(resumeParams)
   return await appServer.turnStart(officialParams)
 }
 

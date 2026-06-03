@@ -16,7 +16,7 @@ import type {
 type FakeOfficialIpcOptions = {
   errorMessage: string;
   hasOfficialState?: boolean;
-  officialState?: "active" | "idle" | "stale-active";
+  officialState?: "active" | "idle" | "empty-idle" | "stale-active";
   webOwned?: boolean;
 };
 
@@ -104,6 +104,22 @@ class FakeOfficialIpc {
     if (!this.options.hasOfficialState || this.discardedThreads.has(threadId))
       return null;
     const officialState = this.options.officialState ?? "active";
+    if (officialState === "empty-idle") {
+      return {
+        conversationId: threadId,
+        ownerClientId: this.options.webOwned ? "web-test" : "official-test",
+        sourceClientId: this.options.webOwned ? "web-test" : "official-test",
+        cacheVersion: 1,
+        updatedAtIso: "2026-05-29T00:00:00.000Z",
+        isInProgress: false,
+        activeTurnId: "",
+        conversationState: {
+          id: threadId,
+          threadRuntimeStatus: { type: "idle" },
+          turns: [],
+        },
+      };
+    }
     if (officialState === "idle") {
       return {
         conversationId: threadId,
@@ -969,6 +985,39 @@ describe("turn HTTP routes", () => {
     };
     const pendingUserMessage = snapshotState.turns?.at(-1)?.items?.[0];
     expect(pendingUserMessage?.clientId).toBe(pendingUserMessage?.id);
+  });
+
+  it("starts the first turn for a new empty Web-owned thread without resume", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "no-official-owner",
+      hasOfficialState: true,
+      officialState: "empty-idle",
+      webOwned: true,
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn-start",
+      payload: { threadId: "thread-a", text: "first message" },
+    });
+
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
+    });
+    expect(officialIpc.canBroadcastOwnedConversation("thread-a")).toBe(true);
+    expect(appServer.calls.map((call) => call.method)).toEqual([
+      "turn/start",
+    ]);
+    expect(context.diagnostics.list()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "turn-start",
+          message: "skip-resume-empty-web-owned-thread",
+          data: { threadId: "thread-a" },
+        }),
+      ]),
+    );
   });
 
   it("records sanitized runtime selections for start requests", async () => {
