@@ -108,6 +108,91 @@ describe('domain normalization', () => {
     ])
   })
 
+  it('preserves assistant markdown whitespace from live snapshots', () => {
+    const markdown = [
+      '天气如下：',
+      '',
+      '| 日期 | 天气 |',
+      '|---|---|',
+      '| 6月3日 | 多云 |',
+      '',
+    ].join('\n')
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-markdown-live',
+      owner: null,
+      thread: {
+        id: 'thread-markdown-live',
+        turns: [
+          {
+            id: 'turn-live',
+            status: 'active',
+            items: [
+              {
+                type: 'agentMessage',
+                id: 'item-agent',
+                text: markdown,
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.turns[0]?.items).toEqual([
+      { type: 'assistant', id: 'item-agent', text: markdown },
+    ])
+  })
+
+  it('merges pending user turn shadows into official live turns', () => {
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-pending-user',
+      owner: null,
+      thread: {
+        id: 'thread-pending-user',
+        turns: [
+          {
+            id: 'pending-client-user-1',
+            status: 'inProgress',
+            items: [
+              {
+                type: 'userMessage',
+                id: 'client-user-1',
+                content: [{ type: 'text', text: '再整理北京的。' }],
+              },
+            ],
+          },
+          {
+            id: 'turn-official',
+            status: 'inProgress',
+            items: [
+              {
+                type: 'userMessage',
+                id: 'official-user-1',
+                content: [{ type: 'text', text: '再整理北京的。' }],
+              },
+              {
+                type: 'agentMessage',
+                id: 'assistant-1',
+                text: '正在思考',
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.turns).toEqual([
+      {
+        id: 'turn-official',
+        status: 'active',
+        items: [
+          { type: 'user', id: 'official-user-1', text: '再整理北京的。' },
+          { type: 'assistant', id: 'assistant-1', text: '正在思考' },
+        ],
+      },
+    ])
+  })
+
   it('drops sparse or null official turn item placeholders', () => {
     const sparseItems = [
       {

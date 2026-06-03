@@ -1287,7 +1287,8 @@
 }
 
 .plainAssistantMessage {
-  max-width: 78ch;
+  width: 100%;
+  max-width: 100%;
 }
 
 .messageAuthor {
@@ -1453,8 +1454,7 @@
 
 .fileReferenceButton {
   display: inline-block;
-  max-width: min(260px, 100%);
-  overflow: hidden;
+  max-width: 100%;
   border: 0;
   border-radius: 5px;
   padding: 1px 5px;
@@ -1464,8 +1464,8 @@
   font: inherit;
   font-size: 0.96em;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .fileReferenceButton:hover,
@@ -1557,7 +1557,8 @@
 }
 
 .plainAssistantMessage .markdownBody {
-  max-width: 78ch;
+  width: 100%;
+  max-width: 100%;
   color: #111827;
 }
 
@@ -1740,6 +1741,20 @@
 
 .groupedMessageBody .shellCommandBlock {
   margin: 5px 0 0 22px;
+}
+
+.webSearchList {
+  display: grid;
+  gap: 5px;
+  margin: 4px 0 0 37px;
+  color: #a1a1aa;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.webSearchQuery {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .agentTaskBody {
@@ -4172,7 +4187,7 @@ button.fileRowActive:hover {
 }
 
 .filePreviewMarkdownPane {
-  max-width: 76ch;
+  max-width: 100%;
   padding: 22px 26px 48px;
   color: var(--color-text-primary);
   font-size: 14px;
@@ -6733,6 +6748,7 @@ button.fileRowActive:hover {
   .errorInlineToggle,
   .errorInlineDetail,
   .groupedMessageBody,
+  .webSearchList,
   .agentTaskBody,
   .approvalList,
   .fileBrowser,

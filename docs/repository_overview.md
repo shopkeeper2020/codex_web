@@ -22,6 +22,7 @@ codex_web/
     protocol/    官方 IPC/app-server wire protocol
     ui/          设计 token 和共享 UI 基础
   docs/          产品、架构、启动和踩坑文档
+    design/      前端/交互分层设计文档
   documentation/
     protocol/    官方协议研究记录和 fixture 说明
   data/          本地数据目录，默认不提交运行数据
@@ -34,6 +35,7 @@ app-server/官方协议对接硬门禁：
 - 凡新增或修改 Codex app-server、official IPC、follower method、raw RPC 参数、request/notification shape，必须先阅读 OpenAI 官方 Codex app-server 文档，再核对官方 `codex-rs/app-server` 源码和 `app-server-protocol` schema。
 - 官方 Desktop/VS Code 的本地私有字段只能作为现象证据；只有官方文档、app-server 源码或协议 schema 明确支持的字段，才能进入 Web 后端对 app-server 的 raw RPC。
 - 接口改动必须在方案或实现记录中写明证据路径和结论，优先更新 `documentation/protocol/official_client_runtime_evidence.md`、`docs/official_client_interaction_refactor_plan.md` 或相关排障文档。
+- 前端/交互面新增较大 UI surface 时，优先补充 `docs/design/` 下的独立设计文档，再落组件实现；设计文档应写清 domain/API 边界、组件职责、状态矩阵和测试策略。
 - 未完成官方文档/source/schema 核对时，不允许提交 app-server/IPC 对接改动；宁可先保留明确失败，也不要自建一套会导致三端分叉的兼容逻辑。
 
 - `apps/web` 不直接读取官方 raw protocol。

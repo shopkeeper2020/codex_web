@@ -9,6 +9,7 @@
 - `docs/product_spec.md`
 - `docs/mvp_gap_tracker.md`
 - `docs/playwright_e2e.md`
+- `docs/design/conversation_streaming_output.md`
 - `apps/web/src/styles/tokens.css`
 - `apps/web/src/app/App.module.css`
 

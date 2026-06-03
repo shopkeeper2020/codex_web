@@ -9,6 +9,7 @@
 - `docs/product_spec.md`
 - `docs/implementation_status.md`
 - UI 高保真验收基准：`docs/ui_fidelity.md`
+- 会话流式输出设计：`docs/design/conversation_streaming_output.md`
 - i18n 架构规划：`docs/i18n.md`
 - `docs/startup_runbook.md`
 - `docs/repository_overview.md`

@@ -63,6 +63,30 @@ describe("app-server realtime reducer", () => {
     ]);
   });
 
+  it("preserves markdown whitespace while streaming assistant deltas", () => {
+    let detail: ThreadDetail | null = createDetail();
+    for (const delta of ["清单：", "\n\n", "- **stream-bold**\n", "- `inline-code`\n"]) {
+      detail = applyAppServerRealtimeNotification(
+        detail,
+        "item/agentMessage/delta",
+        {
+          threadId: "thread-a",
+          turnId: "turn-a",
+          itemId: "assistant-a",
+          delta,
+        },
+      );
+    }
+
+    expect(detail?.turns[0]?.items).toEqual([
+      {
+        type: "assistant",
+        id: "assistant-a",
+        text: "清单：\n\n- **stream-bold**\n- `inline-code`\n",
+      },
+    ]);
+  });
+
   it("uses completed assistant items as the authoritative final text", () => {
     const streamed = applyAppServerRealtimeNotification(
       createDetail(),
@@ -136,6 +160,92 @@ describe("app-server realtime reducer", () => {
         text: "未来一周有雨",
         status: "completed",
         rawType: "webSearch",
+      },
+    ]);
+  });
+
+  it("normalizes started web search items before completion", () => {
+    const detail = applyAppServerRealtimeNotification(
+      createDetail(),
+      "item/started",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "webSearch",
+          id: "search-a",
+          action: {
+            type: "openPage",
+            url: "https://m.nmc.cn/publish/forecast/AGD/shenzhen.html",
+          },
+        },
+      },
+    );
+
+    expect(detail?.turns[0]?.items).toEqual([
+      {
+        type: "toolOutput",
+        id: "search-a",
+        title: "Web search: https://m.nmc.cn/publish/forecast/AGD/shenzhen.html",
+        text: "",
+        status: "active",
+        rawType: "webSearch",
+      },
+    ]);
+  });
+
+  it("adopts pending user turns into the official active turn", () => {
+    const pendingDetail: ThreadDetail = {
+      ...createDetail(),
+      thread: { ...createDetail().thread, inProgress: true },
+      turns: [
+        {
+          id: "pending-client-user-1",
+          status: "active",
+          items: [
+            { type: "user", id: "client-user-1", text: "再整理北京的。" },
+          ],
+        },
+      ],
+    };
+    const started = applyAppServerRealtimeNotification(
+      pendingDetail,
+      "turn/started",
+      {
+        threadId: "thread-a",
+        turn: { id: "turn-official", status: "inProgress" },
+      },
+    );
+    const userStarted = applyAppServerRealtimeNotification(
+      started,
+      "item/started",
+      {
+        threadId: "thread-a",
+        turnId: "turn-official",
+        item: {
+          type: "userMessage",
+          id: "official-user-1",
+          content: [{ type: "text", text: "再整理北京的。" }],
+        },
+      },
+    );
+
+    expect(started?.turns).toEqual([
+      {
+        id: "turn-official",
+        status: "active",
+        items: [
+          { type: "user", id: "client-user-1", text: "再整理北京的。" },
+        ],
+      },
+    ]);
+    expect(userStarted?.turns).toEqual([
+      {
+        id: "turn-official",
+        status: "active",
+        items: [
+          { type: "user", id: "official-user-1", text: "再整理北京的。" },
+        ],
       },
     ]);
   });

@@ -231,6 +231,12 @@ function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function readContentString(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  if (value.trim() === '<image>') return ''
+  return value.trim().length > 0 ? value : ''
+}
+
 function readStatusString(value: unknown): string {
   const direct = readString(value)
   if (direct) return direct
@@ -370,29 +376,29 @@ function readThreadGoal(record: Record<string, unknown>): ThreadGoal | null {
 }
 
 function readTextContent(value: unknown): string {
-  if (typeof value === 'string') return value.trim() === '<image>' ? '' : value
+  if (typeof value === 'string') return readContentString(value)
   const record = asRecord(value)
   if (record) {
     const direct =
-      readString(record.text) ||
-      readString(record.content) ||
-      readString(record.message) ||
-      readString(record.value)
-    if (direct) return direct.trim() === '<image>' ? '' : direct
+      readContentString(record.text) ||
+      readContentString(record.content) ||
+      readContentString(record.message) ||
+      readContentString(record.value)
+    if (direct) return direct
     const nested = readTextContent(record.content ?? record.message ?? record.delta)
     if (nested) return nested
   }
   if (Array.isArray(value)) {
     return value
       .map((entry) => {
-        if (typeof entry === 'string') return entry.trim() === '<image>' ? '' : entry
+        if (typeof entry === 'string') return readContentString(entry)
         const entryRecord = asRecord(entry)
         const text =
-          readString(entryRecord?.text) ||
-          readString(entryRecord?.content) ||
-          readString(entryRecord?.value) ||
+          readContentString(entryRecord?.text) ||
+          readContentString(entryRecord?.content) ||
+          readContentString(entryRecord?.value) ||
           readTextContent(entryRecord?.content)
-        return text.trim() === '<image>' ? '' : text
+        return text
       })
       .filter(Boolean)
       .join('\n')
@@ -740,7 +746,7 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
   }
   if (type === 'agentMessage' || type === 'assistantMessage' || normalizedType === 'assistant') {
     const images = readImagesContent(record?.content)
-    const text = readString(record?.text) || readTextContent(record?.content)
+    const text = readTextContent(record?.text) || readTextContent(record?.content)
     const agentTaskTextItem = normalizeAgentTaskTextMessageItem(text, id, type)
     if (agentTaskTextItem) return agentTaskTextItem
     return {
@@ -754,7 +760,7 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
     return {
       type: 'reasoning',
       id,
-      text: readString(record?.text) || readTextContent(record?.content),
+      text: readTextContent(record?.text) || readTextContent(record?.content),
       collapsed: true,
       status: readStatusString(record?.status) || readStatusString(record?.state) || null,
     }
@@ -856,6 +862,59 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
     }
   }
   return { type: 'unknown', id, rawType: type || 'unknown', raw: value }
+}
+
+function isPendingTurnId(turnId: string): boolean {
+  return turnId.startsWith('pending-')
+}
+
+function normalizedUserText(item: MessageItem): string {
+  return item.type === 'user' ? item.text.replace(/\s+/g, ' ').trim() : ''
+}
+
+function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number {
+  if (item.type !== 'user') return -1
+  const text = normalizedUserText(item)
+  return items.findIndex((entry) => {
+    if (entry.type !== 'user') return false
+    if (entry.id === item.id) return true
+    return text.length > 0 && normalizedUserText(entry) === text
+  })
+}
+
+function mergeTurnItems(pendingItems: MessageItem[], targetItems: MessageItem[]): MessageItem[] {
+  const merged = [...pendingItems]
+  for (const item of targetItems) {
+    const duplicateIndex = duplicateUserItemIndex(merged, item)
+    if (duplicateIndex >= 0) {
+      merged[duplicateIndex] = item
+    } else {
+      merged.push(item)
+    }
+  }
+  return merged
+}
+
+function mergePendingTurnShadows(turns: Turn[]): Turn[] {
+  const result: Turn[] = []
+  let pendingTurns: Turn[] = []
+  for (const turn of turns) {
+    if (isPendingTurnId(turn.id)) {
+      pendingTurns.push(turn)
+      continue
+    }
+    if (pendingTurns.length === 0) {
+      result.push(turn)
+      continue
+    }
+    const pendingItems = pendingTurns.flatMap((pendingTurn) => pendingTurn.items)
+    result.push({
+      ...turn,
+      items: mergeTurnItems(pendingItems, turn.items),
+    })
+    pendingTurns = []
+  }
+  return [...result, ...pendingTurns]
 }
 
 function readSubAgentArrays(record: Record<string, unknown>): unknown[] {
@@ -1161,7 +1220,7 @@ export function normalizeOfficialThreadDetail(input: {
     goal: readThreadGoal(threadRecord),
     subAgents: normalizeThreadSubAgents(threadRecord, input.source ?? 'app-server'),
     sideConversations: [],
-    turns: turnsRaw.map((turnValue, turnIndex) => {
+    turns: mergePendingTurnShadows(turnsRaw.map((turnValue, turnIndex) => {
       const turn = asRecord(turnValue)
       const itemsRaw = Array.isArray(turn?.items) ? turn.items : []
       return {
@@ -1171,7 +1230,7 @@ export function normalizeOfficialThreadDetail(input: {
           itemValue == null ? [] : [normalizeMessageItem(itemValue, itemIndex)],
         ),
       }
-    }),
+    })),
   }
 }
 

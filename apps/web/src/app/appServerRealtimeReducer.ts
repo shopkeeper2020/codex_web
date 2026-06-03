@@ -12,6 +12,10 @@ function readString(value: unknown): string {
     : "";
 }
 
+function readDeltaString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 function readTextContent(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
@@ -48,6 +52,17 @@ function compactStatus(value: unknown): string {
 function isActiveStatus(value: unknown): boolean {
   return ["active", "inprogress", "running", "streaming"].includes(
     compactStatus(value),
+  );
+}
+
+function readWebSearchQuery(record: Record<string, unknown> | null): string {
+  const action = asRecord(record?.action);
+  return (
+    readString(record?.query) ||
+    readString(record?.searchQuery) ||
+    readString(record?.search_query) ||
+    readString(action?.query) ||
+    readString(action?.url)
   );
 }
 
@@ -92,6 +107,80 @@ function readItemId(params: unknown): string {
   const record = asRecord(params);
   const item = asRecord(record?.item);
   return readString(record?.itemId) || readString(record?.item_id) || readString(item?.id);
+}
+
+function isPendingTurnId(turnId: string): boolean {
+  return turnId.startsWith("pending-");
+}
+
+function normalizedUserText(item: MessageItem): string {
+  return item.type === "user" ? item.text.replace(/\s+/g, " ").trim() : "";
+}
+
+function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number {
+  if (item.type !== "user") return -1;
+  const text = normalizedUserText(item);
+  return items.findIndex((entry) => {
+    if (entry.type !== "user") return false;
+    if (entry.id === item.id) return true;
+    return text.length > 0 && normalizedUserText(entry) === text;
+  });
+}
+
+function mergeTurnItems(
+  pendingItems: MessageItem[],
+  targetItems: MessageItem[],
+): MessageItem[] {
+  const merged = [...pendingItems];
+  for (const item of targetItems) {
+    const duplicateIndex = duplicateUserItemIndex(merged, item);
+    if (duplicateIndex >= 0) {
+      merged[duplicateIndex] = item;
+    } else {
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
+function adoptPendingTurn(
+  turns: Turn[],
+  targetTurnId: string,
+  status: Turn["status"],
+): Turn[] {
+  if (!targetTurnId || isPendingTurnId(targetTurnId)) return turns;
+  const pendingTurns = turns.filter((turn) => isPendingTurnId(turn.id));
+  if (pendingTurns.length === 0) return turns;
+  const pendingItems = pendingTurns.flatMap((turn) => turn.items);
+  const targetIndex = turns.findIndex((turn) => turn.id === targetTurnId);
+  if (targetIndex >= 0) {
+    return turns.flatMap((turn) => {
+      if (isPendingTurnId(turn.id)) return [];
+      if (turn.id !== targetTurnId) return [turn];
+      return [
+        {
+          ...turn,
+          status: status === "unknown" ? turn.status : status,
+          items: mergeTurnItems(pendingItems, turn.items),
+        },
+      ];
+    });
+  }
+  const pendingToAdopt = pendingTurns.at(-1);
+  if (!pendingToAdopt) return turns;
+  let adopted = false;
+  return turns.flatMap((turn) => {
+    if (!isPendingTurnId(turn.id)) return [turn];
+    if (turn.id !== pendingToAdopt.id) return [];
+    adopted = true;
+    return [
+      {
+        ...turn,
+        id: targetTurnId,
+        status: status === "unknown" ? turn.status : status,
+      },
+    ];
+  }).concat(adopted ? [] : [{ id: targetTurnId, status, items: pendingItems }]);
 }
 
 function normalizeItem(value: unknown, fallbackId: string): MessageItem {
@@ -160,10 +249,7 @@ function normalizeItem(value: unknown, fallbackId: string): MessageItem {
     };
   }
   if (type === "websearch" || type.includes("websearch")) {
-    const query =
-      readString(record?.query) ||
-      readString(record?.searchQuery) ||
-      readString(record?.search_query);
+    const query = readWebSearchQuery(record);
     return {
       type: "toolOutput",
       id,
@@ -225,8 +311,9 @@ function updateTurn(
   updater: (turn: Turn) => Turn,
 ): ThreadDetail {
   const turnId = requestedTurnId || activeTurnId(detail) || "turn-live";
+  const sourceTurns = adoptPendingTurn(detail.turns, turnId, status);
   let found = false;
-  const turns = detail.turns.map((turn) => {
+  const turns = sourceTurns.map((turn) => {
     if (turn.id !== turnId) return turn;
     found = true;
     return updater({
@@ -243,8 +330,15 @@ function updateTurn(
 
 function upsertItem(turn: Turn, item: MessageItem): Turn {
   const existingIndex = turn.items.findIndex((entry) => entry.id === item.id);
-  if (existingIndex < 0) return { ...turn, items: [...turn.items, item] };
   const items = [...turn.items];
+  if (existingIndex < 0) {
+    const duplicateUserIndex = duplicateUserItemIndex(items, item);
+    if (duplicateUserIndex >= 0) {
+      items[duplicateUserIndex] = item;
+      return { ...turn, items };
+    }
+    return { ...turn, items: [...items, item] };
+  }
   items[existingIndex] = item;
   return { ...turn, items };
 }
@@ -328,7 +422,7 @@ function appendDelta(
   const record = asRecord(params);
   const turnId = readTurnId(params);
   const itemId = readItemId(params) || `${kind}-live`;
-  const delta = readString(record?.delta) || readTextContent(record?.text);
+  const delta = readDeltaString(record?.delta) || readTextContent(record?.text);
   if (!delta) return detail;
   return updateTurn(detail, turnId, "active", (turn) => {
     const existingIndex = turn.items.findIndex((entry) => entry.id === itemId);

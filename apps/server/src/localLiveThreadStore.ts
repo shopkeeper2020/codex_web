@@ -44,6 +44,10 @@ function readString(value: unknown): string {
     : "";
 }
 
+function readDeltaString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 function cloneDetail(detail: ThreadDetail): ThreadDetail {
   return JSON.parse(JSON.stringify(detail)) as ThreadDetail;
 }
@@ -101,6 +105,17 @@ function isActiveStatus(value: unknown): boolean {
   );
 }
 
+function readWebSearchQuery(record: Record<string, unknown> | null): string {
+  const action = asRecord(record?.action);
+  return (
+    readString(record?.query) ||
+    readString(record?.searchQuery) ||
+    readString(record?.search_query) ||
+    readString(action?.query) ||
+    readString(action?.url)
+  );
+}
+
 function normalizeLiveItem(value: unknown, fallbackId: string): MessageItem {
   const record = asRecord(value);
   const rawType = readString(record?.type);
@@ -153,6 +168,23 @@ function normalizeLiveItem(value: unknown, fallbackId: string): MessageItem {
       status: readString(record?.status) || null,
     };
   }
+  if (type === "websearch" || type.includes("websearch")) {
+    const query = readWebSearchQuery(record);
+    return {
+      type: "toolOutput",
+      id,
+      title: query ? `Web search: ${query}` : "Web search",
+      text: readTextContent(
+        record?.output ??
+          record?.results ??
+          record?.content ??
+          record?.text ??
+          record?.result,
+      ),
+      status: readString(record?.status) || null,
+      rawType: rawType || "webSearch",
+    };
+  }
   return { type: "unknown", id, rawType: rawType || "unknown", raw: value };
 }
 
@@ -190,6 +222,40 @@ function itemIndex(turn: Turn, itemId: string): number {
   return turn.items.findIndex((item) => item.id === itemId);
 }
 
+function isPendingTurnId(turnId: string): boolean {
+  return turnId.startsWith("pending-");
+}
+
+function normalizedUserText(item: MessageItem): string {
+  return item.type === "user" ? item.text.replace(/\s+/g, " ").trim() : "";
+}
+
+function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number {
+  if (item.type !== "user") return -1;
+  const text = normalizedUserText(item);
+  return items.findIndex((entry) => {
+    if (entry.type !== "user") return false;
+    if (entry.id === item.id) return true;
+    return text.length > 0 && normalizedUserText(entry) === text;
+  });
+}
+
+function mergeTurnItems(
+  pendingItems: MessageItem[],
+  targetItems: MessageItem[],
+): MessageItem[] {
+  const merged = [...pendingItems];
+  for (const item of targetItems) {
+    const duplicateIndex = duplicateUserItemIndex(merged, item);
+    if (duplicateIndex >= 0) {
+      merged[duplicateIndex] = item;
+    } else {
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
 export class LocalLiveThreadStore {
   private readonly states = new Map<string, LiveThreadState>();
 
@@ -212,7 +278,12 @@ export class LocalLiveThreadStore {
       const turnId = readTurnIdFromParams(notification.params);
       if (turnId) {
         state.activeTurnId = turnId;
-        this.ensureTurn(state, turnId, readTurnStatus(turn?.status) || "active");
+        const activeTurn = this.ensureTurn(
+          state,
+          turnId,
+          readTurnStatus(turn?.status) || "active",
+        );
+        this.adoptPendingTurnItems(state, activeTurn);
       }
       state.detail.thread.inProgress = true;
       changed = true;
@@ -348,10 +419,31 @@ export class LocalLiveThreadStore {
     return turn;
   }
 
+  private adoptPendingTurnItems(state: LiveThreadState, targetTurn: Turn): void {
+    if (isPendingTurnId(targetTurn.id)) return;
+    const pendingTurns = state.detail.turns.filter((turn) =>
+      isPendingTurnId(turn.id),
+    );
+    if (pendingTurns.length === 0) return;
+    const pendingItems = pendingTurns.flatMap((turn) => turn.items);
+    targetTurn.items = mergeTurnItems(pendingItems, targetTurn.items);
+    state.detail.turns = state.detail.turns.filter(
+      (turn) => !isPendingTurnId(turn.id),
+    );
+    if (!state.detail.turns.some((turn) => turn.id === targetTurn.id)) {
+      state.detail.turns.push(targetTurn);
+    }
+  }
+
   private upsertItem(turn: Turn, item: MessageItem): void {
     const existingIndex = itemIndex(turn, item.id);
     if (existingIndex >= 0) {
       turn.items[existingIndex] = item;
+      return;
+    }
+    const duplicateUserIndex = duplicateUserItemIndex(turn.items, item);
+    if (duplicateUserIndex >= 0) {
+      turn.items[duplicateUserIndex] = item;
       return;
     }
     turn.items.push(item);
@@ -370,7 +462,7 @@ export class LocalLiveThreadStore {
     const record = asRecord(params);
     const itemId =
       readItemIdFromParams(params) || `${kind}-${turn.items.length + 1}`;
-    const delta = readString(record?.delta) || readTextContent(record?.text);
+    const delta = readDeltaString(record?.delta) || readTextContent(record?.text);
     const existingIndex = itemIndex(turn, itemId);
     if (existingIndex < 0) {
       if (kind === "assistant") {

@@ -9,6 +9,7 @@ import {
   Code2,
   Download,
   FileCode2,
+  Globe2,
   Maximize2,
   Minimize2,
   PanelRightOpen,
@@ -44,6 +45,7 @@ type ReasoningItem = Extract<MessageItem, { type: 'reasoning' }>
 type ToolOutputItem = Extract<MessageItem, { type: 'toolOutput' }>
 type UnknownItem = Extract<MessageItem, { type: 'unknown' }>
 type GroupedOperationItem = CommandItem | FileChangeItem | ToolOutputItem
+type WebSearchRenderItem = ToolOutputItem | UnknownItem
 type RenderOptions = {
   projectRoot?: string | null
   onOpenFileReference?: (path: string) => void
@@ -1212,6 +1214,16 @@ function ToolOutputBlockDetails({ item, expanded, onToggleExpanded }: { item: To
 
 function ToolOutputMessage({ item }: { item: ToolOutputItem }): ReactElement {
   const [expanded, setExpanded] = useState(false)
+  if (isWebSearchToolOutput(item)) {
+    return (
+      <WebSearchSummaryMessage
+        forceComplete={false}
+        items={[item]}
+        key={item.id}
+        turnStatus={item.status ?? 'completed'}
+      />
+    )
+  }
   return (
     <article className={styles.assistantMessage} key={item.id}>
       <CollapsedMessageToggle
@@ -1430,6 +1442,95 @@ function ContextCompactionMessage(): ReactElement {
 
 function isGroupedOperationItem(item: MessageItem): item is GroupedOperationItem {
   return item.type === 'command' || item.type === 'fileChange' || item.type === 'toolOutput'
+}
+
+function sourceKeyLooksLikeWebSearch(value?: string | null): boolean {
+  const normalized = (value ?? '').toLowerCase()
+  const compact = normalized.replace(/[-_\s]/g, '')
+  return compact.includes('websearch') || normalized.includes('网页搜索')
+}
+
+function isWebSearchToolOutput(item: ToolOutputItem): boolean {
+  return sourceKeyLooksLikeWebSearch(item.rawType) || sourceKeyLooksLikeWebSearch(item.title)
+}
+
+function isUnknownWebSearchItem(item: UnknownItem): boolean {
+  const raw = asUnknownRecord(item.raw)
+  return sourceKeyLooksLikeWebSearch(item.rawType)
+    || sourceKeyLooksLikeWebSearch(unknownRawType(item))
+    || sourceKeyLooksLikeWebSearch(readUnknownString(raw?.type))
+}
+
+function isWebSearchRenderItem(item: MessageItem): item is WebSearchRenderItem {
+  return item.type === 'toolOutput' && isWebSearchToolOutput(item)
+    || item.type === 'unknown' && isUnknownWebSearchItem(item)
+}
+
+function webSearchRawQuery(item: UnknownItem): string {
+  const raw = asUnknownRecord(item.raw)
+  const action = asUnknownRecord(raw?.action)
+  return readUnknownString(raw?.query)
+    || readUnknownString(raw?.searchQuery)
+    || readUnknownString(raw?.search_query)
+    || readUnknownString(action?.query)
+    || readUnknownString(action?.url)
+}
+
+function webSearchQuery(item: WebSearchRenderItem): string {
+  const title = item.type === 'toolOutput'
+    ? item.title || item.rawType || '网页搜索'
+    : webSearchRawQuery(item) || item.rawType || unknownRawType(item) || '网页搜索'
+  return title
+    .replace(/^\s*web\s*search\s*:\s*/i, '')
+    .replace(/^\s*网页搜索\s*[:：]\s*/u, '')
+    .trim() || title
+}
+
+function webSearchSummary(
+  items: WebSearchRenderItem[],
+  turnStatus: string,
+  forceComplete: boolean,
+): { label: string; meta: string; active: boolean } {
+  const active = items.some((item) => item.type === 'toolOutput' && isOperationItemActive(item, turnStatus, forceComplete))
+  return {
+    label: active ? '正在搜索网页' : '已搜索网页',
+    meta: `${items.length} 次`,
+    active,
+  }
+}
+
+function WebSearchSummaryMessage({
+  items,
+  turnStatus,
+  forceComplete,
+}: {
+  items: WebSearchRenderItem[]
+  turnStatus: string
+  forceComplete: boolean
+}): ReactElement {
+  const [expanded, setExpanded] = useState(false)
+  const summary = webSearchSummary(items, turnStatus, forceComplete)
+  return (
+    <article className={styles.assistantMessage} key={`web-search-group-${items.map((item) => item.id).join('-')}`}>
+      <CollapsedMessageToggle
+        icon={<Globe2 size={16} />}
+        label={summary.label}
+        meta={summary.meta}
+        expanded={expanded}
+        active={summary.active}
+        onToggle={() => setExpanded((value) => !value)}
+      />
+      {expanded ? (
+        <div className={styles.webSearchList}>
+          {items.map((item) => (
+            <span className={styles.webSearchQuery} key={item.id}>
+              {webSearchQuery(item)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  )
 }
 
 function groupedOperationSummary(
@@ -1901,6 +2002,16 @@ export function renderMessageItem(item: MessageItem, turnStatus: string, options
     return <ToolOutputMessage item={item} key={item.id} />
   }
   if (item.type === 'unknown') {
+    if (isUnknownWebSearchItem(item)) {
+      return (
+        <WebSearchSummaryMessage
+          forceComplete={false}
+          items={[item]}
+          key={item.id}
+          turnStatus={turnStatus}
+        />
+      )
+    }
     const steeringUserMessage = readSteeringUserMessage(item)
     if (steeringUserMessage) {
       return (
@@ -1920,6 +2031,7 @@ export function renderMessageItem(item: MessageItem, turnStatus: string, options
 export function renderTurnItems(items: MessageItem[], turnStatus: string, options: RenderOptions = {}): ReactElement[] {
   const rendered: ReactElement[] = []
   let operationGroup: GroupedOperationItem[] = []
+  let webSearchGroup: WebSearchRenderItem[] = []
 
   function flushOperationGroup(forceComplete: boolean): void {
     if (operationGroup.length === 0) return
@@ -1932,6 +2044,21 @@ export function renderTurnItems(items: MessageItem[], turnStatus: string, option
           key={`file-change-group-${fileChangeItems.map((item) => item.id).join('-')}`}
           onOpenFileReference={options.onOpenFileReference}
           projectRoot={options.projectRoot}
+          turnStatus={turnStatus}
+        />,
+      )
+      operationGroup = []
+      return
+    }
+    const webSearchItems = operationGroup.filter(
+      (item): item is ToolOutputItem => item.type === 'toolOutput' && isWebSearchToolOutput(item),
+    )
+    if (webSearchItems.length === operationGroup.length) {
+      rendered.push(
+        <WebSearchSummaryMessage
+          forceComplete={forceComplete}
+          items={webSearchItems}
+          key={`web-search-group-${webSearchItems.map((item) => item.id).join('-')}`}
           turnStatus={turnStatus}
         />,
       )
@@ -1951,23 +2078,44 @@ export function renderTurnItems(items: MessageItem[], turnStatus: string, option
     operationGroup = []
   }
 
+  function flushWebSearchGroup(forceComplete: boolean): void {
+    if (webSearchGroup.length === 0) return
+    rendered.push(
+      <WebSearchSummaryMessage
+        forceComplete={forceComplete}
+        items={webSearchGroup}
+        key={`web-search-group-${webSearchGroup.map((item) => item.id).join('-')}`}
+        turnStatus={turnStatus}
+      />,
+    )
+    webSearchGroup = []
+  }
+
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]
     if (!item) continue
     if (item.type === 'reasoning' && !shouldRenderReasoningItem(items, index, turnStatus)) {
       continue
     }
+    if (isWebSearchRenderItem(item)) {
+      flushOperationGroup(true)
+      webSearchGroup.push(item)
+      continue
+    }
     if (isChatFlowSilentItem(item)) {
       continue
     }
     if (isGroupedOperationItem(item)) {
+      flushWebSearchGroup(true)
       operationGroup.push(item)
       continue
     }
+    flushWebSearchGroup(item.type !== 'reasoning')
     flushOperationGroup(item.type !== 'reasoning')
     const renderedItem = renderMessageItem(item, turnStatus, options)
     if (renderedItem) rendered.push(renderedItem)
   }
+  flushWebSearchGroup(false)
   flushOperationGroup(false)
 
   return rendered
