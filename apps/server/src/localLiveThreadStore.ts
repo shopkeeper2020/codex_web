@@ -222,10 +222,6 @@ function itemIndex(turn: Turn, itemId: string): number {
   return turn.items.findIndex((item) => item.id === itemId);
 }
 
-function isPendingTurnId(turnId: string): boolean {
-  return turnId.startsWith("pending-");
-}
-
 function normalizedUserText(item: MessageItem): string {
   return item.type === "user" ? item.text.replace(/\s+/g, " ").trim() : "";
 }
@@ -238,22 +234,6 @@ function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number
     if (entry.id === item.id) return true;
     return text.length > 0 && normalizedUserText(entry) === text;
   });
-}
-
-function mergeTurnItems(
-  pendingItems: MessageItem[],
-  targetItems: MessageItem[],
-): MessageItem[] {
-  const merged = [...pendingItems];
-  for (const item of targetItems) {
-    const duplicateIndex = duplicateUserItemIndex(merged, item);
-    if (duplicateIndex >= 0) {
-      merged[duplicateIndex] = item;
-    } else {
-      merged.push(item);
-    }
-  }
-  return merged;
 }
 
 export class LocalLiveThreadStore {
@@ -283,7 +263,9 @@ export class LocalLiveThreadStore {
           turnId,
           readTurnStatus(turn?.status) || "active",
         );
-        this.adoptPendingTurnItems(state, activeTurn);
+        activeTurn.items = activeTurn.items.filter(
+          (item) => item.type !== "user" || !item.id.startsWith("pending-"),
+        );
       }
       state.detail.thread.inProgress = true;
       changed = true;
@@ -372,6 +354,7 @@ export class LocalLiveThreadStore {
     const detail =
       this.options.readInitialDetail(threadId) ??
       this.createEmptyDetail(threadId, atIso);
+    detail.turns = detail.turns.filter((turn) => !turn.id.startsWith("pending-"));
     detail.thread.inProgress = true;
     detail.thread.owner = this.options.readOwner(threadId);
     const state: LiveThreadState = {
@@ -393,6 +376,7 @@ export class LocalLiveThreadStore {
         updatedAtIso: atIso ?? new Date().toISOString(),
         inProgress: true,
         pinned: false,
+        gitInfo: null,
         owner: this.options.readOwner(threadId),
       },
       goal: null,
@@ -417,22 +401,6 @@ export class LocalLiveThreadStore {
       turn.status = status;
     }
     return turn;
-  }
-
-  private adoptPendingTurnItems(state: LiveThreadState, targetTurn: Turn): void {
-    if (isPendingTurnId(targetTurn.id)) return;
-    const pendingTurns = state.detail.turns.filter((turn) =>
-      isPendingTurnId(turn.id),
-    );
-    if (pendingTurns.length === 0) return;
-    const pendingItems = pendingTurns.flatMap((turn) => turn.items);
-    targetTurn.items = mergeTurnItems(pendingItems, targetTurn.items);
-    state.detail.turns = state.detail.turns.filter(
-      (turn) => !isPendingTurnId(turn.id),
-    );
-    if (!state.detail.turns.some((turn) => turn.id === targetTurn.id)) {
-      state.detail.turns.push(targetTurn);
-    }
   }
 
   private upsertItem(turn: Turn, item: MessageItem): void {

@@ -11,6 +11,7 @@ const initialDetail: ThreadDetail = {
     updatedAtIso: null,
     inProgress: false,
     pinned: false,
+    gitInfo: null,
     owner: null,
   },
   goal: null,
@@ -152,7 +153,7 @@ describe("LocalLiveThreadStore", () => {
     ]);
   });
 
-  it("adopts pending user turns into the official active turn", () => {
+  it("waits for the official user item instead of adopting pending turns", () => {
     const pendingDetail: ThreadDetail = {
       ...initialDetail,
       thread: { ...initialDetail.thread, inProgress: true },
@@ -196,9 +197,7 @@ describe("LocalLiveThreadStore", () => {
       {
         id: "turn-official",
         status: "active",
-        items: [
-          { type: "user", id: "client-user-1", text: "再整理北京的。" },
-        ],
+        items: [],
       },
     ]);
     expect(userStarted?.detail.turns).toEqual([

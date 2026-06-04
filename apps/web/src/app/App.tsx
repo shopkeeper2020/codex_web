@@ -123,8 +123,7 @@ export function App(): ReactElement {
       ? DESKTOP_LEFT_SIDEBAR_WIDTH
       : 0;
   const mainPaneWidth = Math.max(0, layoutViewportWidth - leftSidebarWidth);
-  const rightRailAutoCollapsed =
-    mainPaneWidth < RIGHT_RAIL_MIN_MAIN_WIDTH;
+  const rightRailAutoCollapsed = mainPaneWidth < RIGHT_RAIL_MIN_MAIN_WIDTH;
   const pinnedSummaryVisible =
     pinnedSummaryOpen &&
     (!rightRailAutoCollapsed || manualRightRailOpen === "summary");
@@ -316,6 +315,9 @@ export function App(): ReactElement {
     },
     [draftThread, sendDraftMessage],
   );
+  const selectDraftProject = useCallback((cwd: string | null) => {
+    setDraftThread((current) => (current ? { ...current, cwd } : current));
+  }, []);
   const draftProjectName = draftThread?.cwd
     ? (threadList.projects.find(
         (project) =>
@@ -327,12 +329,8 @@ export function App(): ReactElement {
   const visibleSelectedThreadProjectId = visibleSelectedThread
     ? (visibleSelectedThread.projectId ?? NO_PROJECT_FILTER_ID)
     : null;
-  const visiblePinnedSummaryOpen = draftThread
-    ? false
-    : pinnedSummaryVisible;
-  const visibleRightSidebarOpen = draftThread
-    ? false
-    : rightSidebarVisible;
+  const visiblePinnedSummaryOpen = draftThread ? false : pinnedSummaryVisible;
+  const visibleRightSidebarOpen = draftThread ? false : rightSidebarVisible;
   const visibleBottomTerminalOpen = draftThread ? false : bottomTerminalOpen;
   const appClassName = [
     styles.app,
@@ -426,77 +424,80 @@ export function App(): ReactElement {
           <DebugPage onBack={leaveDebug} />
         ) : (
           <ChatMain
-              config={config}
-              ipc={ipc}
-              appServer={appServer}
-              threadList={threadList}
-              threadListLoading={threadListLoading}
-              selectedThread={visibleSelectedThread}
-              draftThread={
-                draftThread
-                  ? { cwd: draftThread.cwd, projectName: draftProjectName }
-                  : null
-              }
-              threadDetail={draftThread ? null : threadDetail}
-              approvals={draftThread ? [] : approvals}
-              detailLoading={draftThread ? false : detailLoading}
-              realtimeEvents={realtimeEvents}
-              runtimeOptions={runtimeOptions}
-              error={error}
-              onDecideApproval={decidePendingApproval}
-              queuedMessages={draftThread ? [] : queuedMessages}
-              onRemoveQueuedMessage={removeQueuedMessage}
-              onSteerQueuedMessage={steerQueuedMessage}
-              onSetThreadGoal={setThreadGoalById}
-              onClearThreadGoal={clearThreadGoalById}
-              pinnedSummaryOpen={visiblePinnedSummaryOpen}
-              rightSidebarOpen={visibleRightSidebarOpen}
-              bottomTerminalOpen={visibleBottomTerminalOpen}
-              onOpenRightSidebar={
-                draftThread ? () => undefined : openRightSidebar
-              }
-              onSendSideChat={sendSideConversationMessage}
-              onCreateSideChat={
-                draftThread
-                  ? async () => null
-                  : createSideConversationForSelectedThread
-              }
-              onCloseSideChat={
-                draftThread
-                  ? async () => undefined
-                  : closeSideConversationForSelectedThread
-              }
-              composer={
-                <Composer
-                  threadId={
-                    draftThread ? `draft:${draftThread.key}` : selectedThreadId
-                  }
-                  cwd={
-                    draftThread
-                      ? draftThread.cwd
-                      : (selectedThread?.projectId ??
-                        selectedThread?.path ??
-                        null)
-                  }
-                  activeTurnId={draftThread ? "" : activeTurnId}
-                  threadInProgress={
-                    draftThread
-                      ? false
-                      : Boolean(
-                          threadDetail?.thread.inProgress ||
-                            selectedThread?.inProgress,
-                        )
-                  }
-                  runtimeOptions={runtimeOptions}
-                  disabled={draftThread ? false : !selectedThreadId}
-                  sending={sending}
-                  onSend={draftThread ? sendDraftThreadMessage : sendMessage}
-                  onInterrupt={() => void interruptSelectedTurn()}
-                  onCompactThread={
-                    draftThread ? undefined : () => void compactSelectedThread()
-                  }
-                />
-              }
+            config={config}
+            ipc={ipc}
+            appServer={appServer}
+            threadList={threadList}
+            threadListLoading={threadListLoading}
+            selectedThread={visibleSelectedThread}
+            draftThread={
+              draftThread
+                ? { cwd: draftThread.cwd, projectName: draftProjectName }
+                : null
+            }
+            threadDetail={draftThread ? null : threadDetail}
+            approvals={draftThread ? [] : approvals}
+            detailLoading={draftThread ? false : detailLoading}
+            realtimeEvents={realtimeEvents}
+            runtimeOptions={runtimeOptions}
+            error={error}
+            onDecideApproval={decidePendingApproval}
+            queuedMessages={draftThread ? [] : queuedMessages}
+            onRemoveQueuedMessage={removeQueuedMessage}
+            onSteerQueuedMessage={steerQueuedMessage}
+            onSetThreadGoal={setThreadGoalById}
+            onClearThreadGoal={clearThreadGoalById}
+            pinnedSummaryOpen={visiblePinnedSummaryOpen}
+            rightSidebarOpen={visibleRightSidebarOpen}
+            bottomTerminalOpen={visibleBottomTerminalOpen}
+            onOpenRightSidebar={
+              draftThread ? () => undefined : openRightSidebar
+            }
+            onSendSideChat={sendSideConversationMessage}
+            onCreateSideChat={
+              draftThread
+                ? async () => null
+                : createSideConversationForSelectedThread
+            }
+            onCloseSideChat={
+              draftThread
+                ? async () => undefined
+                : closeSideConversationForSelectedThread
+            }
+            composer={
+              <Composer
+                threadId={
+                  draftThread ? `draft:${draftThread.key}` : selectedThreadId
+                }
+                cwd={
+                  draftThread
+                    ? draftThread.cwd
+                    : (selectedThread?.projectId ??
+                      selectedThread?.path ??
+                      null)
+                }
+                projects={threadList.projects}
+                onSelectProject={draftThread ? selectDraftProject : undefined}
+                showContextControls={Boolean(draftThread)}
+                activeTurnId={draftThread ? "" : activeTurnId}
+                threadInProgress={
+                  draftThread
+                    ? false
+                    : Boolean(
+                        threadDetail?.thread.inProgress ||
+                        selectedThread?.inProgress,
+                      )
+                }
+                runtimeOptions={runtimeOptions}
+                disabled={draftThread ? false : !selectedThreadId}
+                sending={sending}
+                onSend={draftThread ? sendDraftThreadMessage : sendMessage}
+                onInterrupt={() => void interruptSelectedTurn()}
+                onCompactThread={
+                  draftThread ? undefined : () => void compactSelectedThread()
+                }
+              />
+            }
           />
         )}
       </main>

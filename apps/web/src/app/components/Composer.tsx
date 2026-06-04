@@ -7,7 +7,10 @@ import {
   Download,
   FileCode2,
   FileText,
+  FolderGit2,
+  GitBranch,
   Hand,
+  Laptop,
   Mic,
   Paperclip,
   Plus,
@@ -31,14 +34,18 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   attachmentContentUrl,
+  checkoutWorkspaceBranch,
+  getWorkspaceStatus,
   getSkills,
   transcribeNativeDictation,
   uploadAttachment,
   type Attachment,
   type PermissionMode,
+  type Project,
   type RuntimeCollaborationModeOption,
   type RuntimeOptions,
   type SkillOption,
+  type WorkspaceStatus,
 } from "../../api";
 import styles from "../App.module.css";
 
@@ -69,6 +76,20 @@ type ComposerDraft = {
   text: string;
   attachments: Attachment[];
 };
+
+type ComposerLaunchMode = "local";
+
+const LAUNCH_MODE_OPTIONS: Array<{
+  mode: ComposerLaunchMode;
+  label: string;
+  icon: typeof Laptop;
+}> = [
+  {
+    mode: "local",
+    label: "本地处理",
+    icon: Laptop,
+  },
+];
 
 function emptyComposerDraft(): ComposerDraft {
   return { text: "", attachments: [] };
@@ -252,6 +273,42 @@ function compactReasoningEffortLabel(effort: {
   return effort.description || effort.reasoningEffort;
 }
 
+function projectDisplayName(path: string): string {
+  return path.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? path;
+}
+
+function projectPath(project: Project): string | null {
+  return project.path ?? project.id ?? null;
+}
+
+function sameProjectPath(left: string | null, right: string | null): boolean {
+  return (left ?? "").toLocaleLowerCase() === (right ?? "").toLocaleLowerCase();
+}
+
+function compactProjectLabel(cwd: string | null, projects: Project[]): string {
+  if (!cwd) return "不使用项目";
+  return (
+    projects.find((project) => sameProjectPath(projectPath(project), cwd))
+      ?.name ?? projectDisplayName(cwd)
+  );
+}
+
+function compactBranchLabel(status: WorkspaceStatus | null): string {
+  if (!status) return "分支";
+  if (!status.isGitRepository) return "无 Git";
+  return status.branch ?? status.commit?.slice(0, 7) ?? "分支";
+}
+
+function branchStatusMeta(status: WorkspaceStatus | null): string {
+  if (!status?.isGitRepository) return "";
+  const parts: string[] = [];
+  if (status.changedFiles > 0) parts.push(`未提交: ${status.changedFiles} 个文件`);
+  if (status.ahead) parts.push(`领先 ${status.ahead}`);
+  if (status.behind) parts.push(`落后 ${status.behind}`);
+  if (status.hasUntracked) parts.push("含未跟踪");
+  return parts.join(" · ");
+}
+
 function formatElapsedSeconds(seconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(safeSeconds / 60);
@@ -278,6 +335,9 @@ function buildCollaborationModePayload(
 export function Composer({
   threadId,
   cwd,
+  projects = [],
+  onSelectProject,
+  showContextControls = false,
   activeTurnId,
   threadInProgress = false,
   runtimeOptions,
@@ -292,6 +352,9 @@ export function Composer({
 }: {
   threadId: string;
   cwd: string | null;
+  projects?: Project[];
+  onSelectProject?: (cwd: string | null) => void;
+  showContextControls?: boolean;
   activeTurnId: string;
   threadInProgress?: boolean;
   runtimeOptions: RuntimeOptions | null;
@@ -324,14 +387,23 @@ export function Composer({
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [launchMenuOpen, setLaunchMenuOpen] = useState(false);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [permissionMenuOpen, setPermissionMenuOpen] = useState(false);
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
+  const [launchMode, setLaunchMode] = useState<ComposerLaunchMode>("local");
+  const [workspaceStatus, setWorkspaceStatus] =
+    useState<WorkspaceStatus | null>(null);
+  const [branchSwitching, setBranchSwitching] = useState(false);
+  const [branchSwitchError, setBranchSwitchError] = useState("");
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsError, setSkillsError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
-  const [previewAttachment, setPreviewAttachment] =
-    useState<Attachment | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(
+    null,
+  );
   const [dictationState, setDictationState] = useState<
     "idle" | "recording" | "transcribing"
   >("idle");
@@ -358,6 +430,9 @@ export function Composer({
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const actionControlRef = useRef<HTMLDivElement>(null);
+  const projectControlRef = useRef<HTMLDivElement>(null);
+  const launchControlRef = useRef<HTMLDivElement>(null);
+  const branchControlRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const slashActiveItemRef = useRef<HTMLButtonElement | null>(null);
   const permissionControlRef = useRef<HTMLDivElement>(null);
@@ -393,6 +468,20 @@ export function Composer({
     PERMISSION_OPTIONS.find((option) => option.mode === permissionMode) ??
     DEFAULT_PERMISSION_OPTION;
   const SelectedPermissionIcon = selectedPermission.icon;
+  const selectedLaunchMode =
+    LAUNCH_MODE_OPTIONS.find((option) => option.mode === launchMode) ??
+    LAUNCH_MODE_OPTIONS[0]!;
+  const SelectedLaunchModeIcon = selectedLaunchMode.icon;
+  const selectedProjectLabel = compactProjectLabel(cwd, projects);
+  const selectedBranchLabel = compactBranchLabel(workspaceStatus);
+  const branchAvailable = Boolean(workspaceStatus?.isGitRepository);
+  const canSelectProject =
+    Boolean(onSelectProject) &&
+    !disabled &&
+    !sending &&
+    !uploading &&
+    !branchSwitching;
+  const showDesktopContextControls = showContextControls;
   const selectedSkillOptions = skills.filter((skill) =>
     selectedSkillIds.includes(skill.id),
   );
@@ -406,6 +495,7 @@ export function Composer({
   const hasSubmitContent =
     text.trim().length > 0 || attachments.length > 0 || hasSelectedSkills;
   const controlsDisabled = disabled || sending || uploading;
+  const contextControlsDisabled = controlsDisabled || branchSwitching;
   const dictationStatusText =
     dictationState === "transcribing" ? "正在转写..." : "";
   const hasAttachmentMeta =
@@ -663,7 +753,12 @@ export function Composer({
   }, [slashActiveIndex, filteredSlashMenuItems.length, slashMenuOpen]);
 
   useEffect(() => {
-    if (controlsDisabled || dictationState !== "idle") setSlashMenuOpen(false);
+    if (controlsDisabled || dictationState !== "idle") {
+      setSlashMenuOpen(false);
+      setProjectMenuOpen(false);
+      setLaunchMenuOpen(false);
+      setBranchMenuOpen(false);
+    }
   }, [controlsDisabled, dictationState]);
 
   useEffect(() => {
@@ -707,6 +802,26 @@ export function Composer({
     };
   }, [cwd]);
 
+  useEffect(() => {
+    let disposed = false;
+    setWorkspaceStatus(null);
+    setBranchSwitchError("");
+    if (!cwd)
+      return () => {
+        disposed = true;
+      };
+    getWorkspaceStatus({ cwd })
+      .then((status) => {
+        if (!disposed) setWorkspaceStatus(status);
+      })
+      .catch(() => {
+        if (!disposed) setWorkspaceStatus(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [cwd]);
+
   useLayoutEffect(() => {
     const previousThreadId = currentThreadIdRef.current;
     if (previousThreadId !== threadId) {
@@ -726,6 +841,10 @@ export function Composer({
     setSkillsOpen(false);
     setActionMenuOpen(false);
     setSlashMenuOpen(false);
+    setProjectMenuOpen(false);
+    setLaunchMenuOpen(false);
+    setBranchMenuOpen(false);
+    setBranchSwitchError("");
     setPermissionMenuOpen(false);
     setRuntimeMenuOpen(false);
     setSendModeTouched(false);
@@ -764,6 +883,9 @@ export function Composer({
     if (
       !actionMenuOpen &&
       !slashMenuOpen &&
+      !projectMenuOpen &&
+      !launchMenuOpen &&
+      !branchMenuOpen &&
       !permissionMenuOpen &&
       !runtimeMenuOpen
     )
@@ -774,6 +896,9 @@ export function Composer({
       if (!(target instanceof Node)) return;
       if (
         actionControlRef.current?.contains(target) ||
+        projectControlRef.current?.contains(target) ||
+        launchControlRef.current?.contains(target) ||
+        branchControlRef.current?.contains(target) ||
         slashMenuRef.current?.contains(target) ||
         textareaRef.current?.contains(target) ||
         permissionControlRef.current?.contains(target) ||
@@ -782,6 +907,9 @@ export function Composer({
         return;
       setActionMenuOpen(false);
       setSlashMenuOpen(false);
+      setProjectMenuOpen(false);
+      setLaunchMenuOpen(false);
+      setBranchMenuOpen(false);
       setPermissionMenuOpen(false);
       setRuntimeMenuOpen(false);
       setSkillsOpen(false);
@@ -791,6 +919,9 @@ export function Composer({
       if (event.key !== "Escape") return;
       setActionMenuOpen(false);
       setSlashMenuOpen(false);
+      setProjectMenuOpen(false);
+      setLaunchMenuOpen(false);
+      setBranchMenuOpen(false);
       setPermissionMenuOpen(false);
       setRuntimeMenuOpen(false);
       setSkillsOpen(false);
@@ -802,7 +933,15 @@ export function Composer({
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [actionMenuOpen, permissionMenuOpen, runtimeMenuOpen, slashMenuOpen]);
+  }, [
+    actionMenuOpen,
+    branchMenuOpen,
+    launchMenuOpen,
+    permissionMenuOpen,
+    projectMenuOpen,
+    runtimeMenuOpen,
+    slashMenuOpen,
+  ]);
 
   useEffect(() => {
     window.localStorage.setItem(PERMISSION_STORAGE_KEY, permissionMode);
@@ -1212,16 +1351,30 @@ export function Composer({
     void submitCurrentMessage();
   }
 
+  async function switchWorkspaceBranch(branch: string): Promise<void> {
+    if (!cwd || branch === workspaceStatus?.branch) {
+      setBranchMenuOpen(false);
+      return;
+    }
+    setBranchSwitching(true);
+    setBranchSwitchError("");
+    try {
+      const status = await checkoutWorkspaceBranch({ cwd, branch });
+      setWorkspaceStatus(status);
+      setBranchMenuOpen(false);
+    } catch (unknownError) {
+      setBranchSwitchError(
+        unknownError instanceof Error ? unknownError.message : "分支切换失败",
+      );
+    } finally {
+      setBranchSwitching(false);
+    }
+  }
+
   async function submitCurrentMessage(): Promise<void> {
     const trimmed = text.trim();
     if (slashMenuOpen && trimmed.startsWith("/")) return;
-    if (
-      !hasSubmitContent ||
-      disabled ||
-      sending ||
-      uploading
-    )
-      return;
+    if (!hasSubmitContent || disabled || sending || uploading) return;
     const collaborationMode = selectedCollaborationMode
       ? buildCollaborationModePayload(selectedCollaborationMode, model, effort)
       : undefined;
@@ -1527,6 +1680,9 @@ export function Composer({
                   onClick={() => {
                     setActionMenuOpen((open) => !open);
                     setSlashMenuOpen(false);
+                    setProjectMenuOpen(false);
+                    setLaunchMenuOpen(false);
+                    setBranchMenuOpen(false);
                     setPermissionMenuOpen(false);
                     setRuntimeMenuOpen(false);
                   }}
@@ -1682,6 +1838,9 @@ export function Composer({
                     setPermissionMenuOpen((open) => !open);
                     setActionMenuOpen(false);
                     setSlashMenuOpen(false);
+                    setProjectMenuOpen(false);
+                    setLaunchMenuOpen(false);
+                    setBranchMenuOpen(false);
                     setRuntimeMenuOpen(false);
                     setSkillsOpen(false);
                   }}
@@ -1721,6 +1880,228 @@ export function Composer({
                   </div>
                 ) : null}
               </div>
+              {showDesktopContextControls ? (
+                <>
+                  <div
+                    className={styles.desktopContextControl}
+                    ref={projectControlRef}
+                  >
+                    <button
+                      className={[
+                        styles.controlButton,
+                        styles.projectSelect,
+                      ].join(" ")}
+                      type="button"
+                      aria-label="选择项目"
+                      aria-expanded={projectMenuOpen}
+                      title={cwd ?? selectedProjectLabel}
+                      disabled={!canSelectProject || projects.length === 0}
+                      onClick={() => {
+                        setProjectMenuOpen((open) => !open);
+                        setActionMenuOpen(false);
+                        setSlashMenuOpen(false);
+                        setLaunchMenuOpen(false);
+                        setBranchMenuOpen(false);
+                        setPermissionMenuOpen(false);
+                        setRuntimeMenuOpen(false);
+                        setSkillsOpen(false);
+                      }}
+                    >
+                      <FolderGit2 size={15} />
+                      <span>{selectedProjectLabel}</span>
+                      <ChevronDown size={13} />
+                    </button>
+                    {projectMenuOpen ? (
+                      <div
+                        className={styles.workspaceMenu}
+                        role="menu"
+                        aria-label="选择项目"
+                      >
+                        <div className={styles.workspaceMenuSearch}>
+                          搜索项目
+                        </div>
+                        {projects.map((project) => {
+                          const path = projectPath(project);
+                          if (!path) return null;
+                          const checked = sameProjectPath(path, cwd);
+                          return (
+                            <button
+                              className={styles.composerActionMenuItem}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={checked}
+                              key={project.id}
+                              onClick={() => {
+                                onSelectProject?.(path);
+                                setProjectMenuOpen(false);
+                              }}
+                            >
+                              <FolderGit2 size={15} />
+                              <span>
+                                {project.name || projectDisplayName(path)}
+                              </span>
+                              {checked ? <Check size={14} /> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div
+                    className={styles.desktopContextControl}
+                    ref={launchControlRef}
+                  >
+                    <button
+                      className={[
+                        styles.controlButton,
+                        styles.launchSelect,
+                      ].join(" ")}
+                      type="button"
+                      aria-label="启动模式"
+                      aria-expanded={launchMenuOpen}
+                      disabled={contextControlsDisabled}
+                      onClick={() => {
+                        setLaunchMenuOpen((open) => !open);
+                        setActionMenuOpen(false);
+                        setSlashMenuOpen(false);
+                        setProjectMenuOpen(false);
+                        setBranchMenuOpen(false);
+                        setPermissionMenuOpen(false);
+                        setRuntimeMenuOpen(false);
+                        setSkillsOpen(false);
+                      }}
+                    >
+                      <SelectedLaunchModeIcon size={15} />
+                      <span>{selectedLaunchMode.label}</span>
+                      <ChevronDown size={13} />
+                    </button>
+                    {launchMenuOpen ? (
+                      <div
+                        className={styles.launchMenu}
+                        role="menu"
+                        aria-label="启动模式"
+                      >
+                        <div className={styles.runtimeMenuSection}>
+                          启动模式
+                        </div>
+                        {LAUNCH_MODE_OPTIONS.map((option) => {
+                          const OptionIcon = option.icon;
+                          const checked = option.mode === launchMode;
+                          return (
+                            <button
+                              className={styles.composerActionMenuItem}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={checked}
+                              key={option.mode}
+                              onClick={() => {
+                                setLaunchMode(option.mode);
+                                setLaunchMenuOpen(false);
+                              }}
+                            >
+                              <OptionIcon size={15} />
+                              <span>{option.label}</span>
+                              {checked ? <Check size={14} /> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div
+                    className={styles.desktopContextControl}
+                    ref={branchControlRef}
+                  >
+                    <button
+                      className={[
+                        styles.controlButton,
+                        styles.branchSelect,
+                      ].join(" ")}
+                      type="button"
+                      aria-label="分支"
+                      aria-expanded={branchMenuOpen}
+                      disabled={contextControlsDisabled || !branchAvailable}
+                      title={
+                        branchStatusMeta(workspaceStatus) ||
+                        selectedBranchLabel
+                      }
+                      onClick={() => {
+                        setBranchMenuOpen((open) => !open);
+                        setActionMenuOpen(false);
+                        setSlashMenuOpen(false);
+                        setProjectMenuOpen(false);
+                        setLaunchMenuOpen(false);
+                        setPermissionMenuOpen(false);
+                        setRuntimeMenuOpen(false);
+                        setSkillsOpen(false);
+                      }}
+                    >
+                      <GitBranch size={15} />
+                      <span>{selectedBranchLabel}</span>
+                      <ChevronDown size={13} />
+                    </button>
+                    {branchMenuOpen && branchAvailable ? (
+                      <div
+                        className={styles.branchMenu}
+                        role="menu"
+                        aria-label="分支"
+                      >
+                        <div className={styles.workspaceMenuSearch}>
+                          搜索分支
+                        </div>
+                        <div className={styles.runtimeMenuSection}>分支</div>
+                        {(
+                          workspaceStatus?.branches.length
+                            ? workspaceStatus.branches
+                            : [selectedBranchLabel]
+                        ).map((branch) => {
+                          const checked = branch === workspaceStatus?.branch;
+                          return (
+                            <div
+                              className={styles.branchMenuRow}
+                              key={branch}
+                            >
+                              <button
+                                className={styles.composerActionMenuItem}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={checked}
+                                disabled={contextControlsDisabled}
+                                onClick={() =>
+                                  void switchWorkspaceBranch(branch)
+                                }
+                              >
+                                <GitBranch size={15} />
+                                <span>{branch}</span>
+                                {checked ? <Check size={14} /> : null}
+                              </button>
+                              {checked && branchStatusMeta(workspaceStatus) ? (
+                                <div className={styles.workspaceMenuMeta}>
+                                  {branchStatusMeta(workspaceStatus)}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                        {branchSwitchError ? (
+                          <div className={styles.workspaceMenuMeta}>
+                            {branchSwitchError}
+                          </div>
+                        ) : null}
+                        <div className={styles.workspaceMenuDivider} />
+                        <button
+                          className={styles.composerActionMenuItem}
+                          type="button"
+                          disabled
+                        >
+                          <Plus size={15} />
+                          <span>创建并检出新分支...</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
               {activeTurnId ? (
                 <button
                   className={[styles.controlButton, styles.targetSelect].join(
@@ -1751,6 +2132,9 @@ export function Composer({
                   onClick={() => {
                     setActionMenuOpen(true);
                     setSlashMenuOpen(false);
+                    setProjectMenuOpen(false);
+                    setLaunchMenuOpen(false);
+                    setBranchMenuOpen(false);
                     setPermissionMenuOpen(false);
                     setRuntimeMenuOpen(false);
                   }}
@@ -1772,6 +2156,9 @@ export function Composer({
                     setActionMenuOpen(true);
                     setSkillsOpen(true);
                     setSlashMenuOpen(false);
+                    setProjectMenuOpen(false);
+                    setLaunchMenuOpen(false);
+                    setBranchMenuOpen(false);
                     setPermissionMenuOpen(false);
                     setRuntimeMenuOpen(false);
                   }}
@@ -1794,6 +2181,9 @@ export function Composer({
                     setRuntimeMenuOpen((open) => !open);
                     setActionMenuOpen(false);
                     setSlashMenuOpen(false);
+                    setProjectMenuOpen(false);
+                    setLaunchMenuOpen(false);
+                    setBranchMenuOpen(false);
                     setPermissionMenuOpen(false);
                   }}
                 >
@@ -1878,9 +2268,7 @@ export function Composer({
               <button
                 className={styles.sendButton}
                 type={stopActiveTurnMode ? "button" : "submit"}
-                aria-label={
-                  stopActiveTurnMode ? "停止当前回复" : sendAriaLabel
-                }
+                aria-label={stopActiveTurnMode ? "停止当前回复" : sendAriaLabel}
                 disabled={
                   disabled ||
                   sending ||

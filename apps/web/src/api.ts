@@ -41,6 +41,7 @@ import {
   threadSearchResponseSchema,
   threadStopBackgroundResponseSchema,
   threadUnarchiveResponseSchema,
+  workspaceBranchCheckoutResponseSchema,
   workspaceStatusResponseSchema,
   type AccountStatus,
   type AppConfig,
@@ -497,6 +498,16 @@ export async function getWorkspaceStatus(
   const query = params.toString();
   const payload = workspaceStatusResponseSchema.parse(
     await readJson<unknown>(`/api/workspace/status${query ? `?${query}` : ""}`),
+  );
+  return payload.data;
+}
+
+export async function checkoutWorkspaceBranch(input: {
+  cwd: string;
+  branch: string;
+}): Promise<WorkspaceStatus> {
+  const payload = workspaceBranchCheckoutResponseSchema.parse(
+    await writeJson<unknown>("/api/workspace/branch", input),
   );
   return payload.data;
 }

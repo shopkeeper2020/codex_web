@@ -16,6 +16,7 @@ describe('domain normalization', () => {
           cwd: 'C:\\workspace\\codex_web',
           updatedAt: 1_779_998_000,
           status: { type: 'notLoaded' },
+          gitInfo: { sha: 'abcdef1234567890', branch: 'main', originUrl: null },
         },
         {
           id: 'thread-b',
@@ -36,6 +37,7 @@ describe('domain normalization', () => {
       title: 'Build web shell',
       projectId: 'C:\\workspace\\codex_web',
       inProgress: false,
+      gitInfo: { sha: 'abcdef1234567890', branch: 'main', originUrl: null },
     })
     expect(normalized.threads[1]).toMatchObject({
       id: 'thread-b',
@@ -70,6 +72,44 @@ describe('domain normalization', () => {
       name: 'Local Agent',
       source: 'web-favorite',
     })
+  })
+
+  it('prefers Desktop saved workspace roots for the visible project menu', () => {
+    const normalized = normalizeOfficialThreadList({
+      data: [
+        {
+          id: 'thread-a',
+          name: 'Build web shell',
+          cwd: 'C:\\workspace\\codex_web',
+        },
+        {
+          id: 'thread-old',
+          name: 'Old project',
+          cwd: 'C:\\Users\\lwm\\Documents\\Codex\\2026-04-18-python',
+        },
+      ],
+    })
+
+    const merged = mergeThreadListProjects(
+      normalized,
+      [],
+      [
+        'C:\\workspace\\codex_web',
+        'C:\\workspace\\mcp_server',
+        'C:\\workspace\\Local Agent',
+      ],
+    )
+
+    expect(merged.projects.map((project) => project.name)).toEqual([
+      'codex_web',
+      'mcp_server',
+      'Local Agent',
+    ])
+    expect(merged.projects.map((project) => project.source)).toEqual([
+      'desktop-workspace',
+      'desktop-workspace',
+      'desktop-workspace',
+    ])
   })
 
   it('normalizes app-server thread/read turns and message text', () => {

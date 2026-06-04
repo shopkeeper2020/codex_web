@@ -77,6 +77,7 @@ describe("safe diagnostics export", () => {
         cwd: "C:\\workspace\\codex_web",
         isGitRepository: true,
         branch: "feature/diagnostics",
+        branches: ["feature/diagnostics"],
         upstream: "origin/feature/diagnostics",
         ahead: 1,
         behind: 0,

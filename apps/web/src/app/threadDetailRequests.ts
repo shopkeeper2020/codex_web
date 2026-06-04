@@ -101,6 +101,10 @@ function isLiveOperationItem(item: MessageItem): boolean {
   return item.type === 'command' || item.type === 'fileChange' || item.type === 'toolOutput'
 }
 
+function isPendingTurnId(turnId: string): boolean {
+  return turnId.startsWith('pending-')
+}
+
 function turnItemsScore(turn: Turn): number {
   const operationScore = turn.items.filter(isLiveOperationItem).length * 100_000
   const itemCountScore = turn.items.length * 1_000
@@ -151,13 +155,15 @@ function mergeTurnWithLiveItems(incomingTurn: Turn, currentTurn: Turn): Turn {
 }
 
 function shouldCarryCurrentTurn(turn: Turn): boolean {
+  if (isPendingTurnId(turn.id)) return false
   return turn.status === 'active' || turn.items.some(isLiveOperationItem)
 }
 
 function mergeTurnsWithLiveItems(incomingTurns: Turn[], currentTurns: Turn[]): Turn[] {
+  const visibleIncomingTurns = incomingTurns.filter((turn) => !isPendingTurnId(turn.id))
   const currentById = new Map(currentTurns.map((turn) => [turn.id, turn]))
   const usedCurrentTurnIds = new Set<string>()
-  const mergedTurns = incomingTurns.map((incomingTurn) => {
+  const mergedTurns = visibleIncomingTurns.map((incomingTurn) => {
     const currentTurn = currentById.get(incomingTurn.id)
     if (!currentTurn) return incomingTurn
     usedCurrentTurnIds.add(currentTurn.id)

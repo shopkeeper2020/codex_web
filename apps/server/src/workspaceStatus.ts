@@ -35,6 +35,14 @@ async function runGit(cwd: string, args: string[]): Promise<CommandResult> {
   return runCommand("git", args, cwd, GIT_TIMEOUT_MS);
 }
 
+export async function checkoutWorkspaceBranch(
+  cwd: string,
+  branch: string,
+): Promise<void> {
+  const result = await runGit(cwd, ["switch", branch]);
+  if (!result.ok) throw new Error(result.message);
+}
+
 function parseAheadBehind(value: string): {
   ahead: number | null;
   behind: number | null;
@@ -58,6 +66,27 @@ function parseShortStat(value: string): {
     additions: insertions ? Number(insertions[1]) : 0,
     deletions: deletions ? Number(deletions[1]) : 0,
   };
+}
+
+function parseBranches(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function parseRemoteDefaultBranch(value: string): string | null {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.replace(/^origin\//, "") || null;
+}
+
+function orderBranches(branches: string[], defaultBranch: string | null): string[] {
+  if (!defaultBranch || !branches.includes(defaultBranch)) return branches;
+  return [
+    defaultBranch,
+    ...branches.filter((branch) => branch !== defaultBranch),
+  ];
 }
 
 function defaultGithubCli(): WorkspaceStatus["githubCli"] {
@@ -118,6 +147,7 @@ export async function readWorkspaceStatus(
       cwd,
       isGitRepository: false,
       branch: null,
+      branches: [],
       upstream: null,
       ahead: null,
       behind: null,
@@ -131,9 +161,20 @@ export async function readWorkspaceStatus(
     };
   }
 
-  const [branch, commit, upstream, aheadBehind, porcelain, shortStat] =
+  const [
+    branch,
+    branches,
+    defaultBranch,
+    commit,
+    upstream,
+    aheadBehind,
+    porcelain,
+    shortStat,
+  ] =
     await Promise.all([
       runGit(cwd, ["branch", "--show-current"]),
+      runGit(cwd, ["branch", "--format=%(refname:short)"]),
+      runGit(cwd, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]),
       runGit(cwd, ["rev-parse", "--short", "HEAD"]),
       runGit(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]),
       runGit(cwd, ["rev-list", "--left-right", "--count", "HEAD...@{u}"]),
@@ -142,6 +183,7 @@ export async function readWorkspaceStatus(
     ]);
 
   if (!branch.ok) warnings.push("Unable to read current Git branch.");
+  if (!branches.ok) warnings.push("Unable to read Git branches.");
   if (!commit.ok) warnings.push("Unable to read current Git commit.");
   if (!upstream.ok) warnings.push("No upstream branch is configured.");
   if (!aheadBehind.ok && upstream.ok) {
@@ -164,6 +206,12 @@ export async function readWorkspaceStatus(
     cwd,
     isGitRepository: true,
     branch: branch.ok && branch.stdout ? branch.stdout : "detached",
+    branches: branches.ok
+      ? orderBranches(
+          parseBranches(branches.stdout),
+          defaultBranch.ok ? parseRemoteDefaultBranch(defaultBranch.stdout) : null,
+        )
+      : [],
     upstream: upstream.ok && upstream.stdout ? upstream.stdout : null,
     ahead: counts.ahead,
     behind: counts.behind,

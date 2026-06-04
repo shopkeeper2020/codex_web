@@ -9,7 +9,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { syncDesktopWorkspaceRoot } from "./desktopWorkspaceRoots.js";
+import {
+  readDesktopWorkspaceRoots,
+  syncDesktopWorkspaceRoot,
+} from "./desktopWorkspaceRoots.js";
 
 const roots: string[] = [];
 
@@ -48,6 +51,26 @@ afterEach(() => {
 });
 
 describe("desktop workspace root sync", () => {
+  it("reads Desktop saved workspace roots in project order", () => {
+    const codexHome = createCodexHome({
+      "electron-saved-workspace-roots": [
+        "C:\\Users\\user\\Desktop\\codex_web",
+        "C:\\Users\\user\\Desktop\\mcp_server",
+        "C:\\Users\\user\\Desktop\\Local Agent",
+      ],
+      "project-order": [
+        "C:\\Users\\user\\Desktop\\mcp_server",
+        "C:\\Users\\user\\Desktop\\codex_web",
+      ],
+    });
+
+    expect(readDesktopWorkspaceRoots({ codexHome })).toEqual([
+      "C:\\Users\\user\\Desktop\\mcp_server",
+      "C:\\Users\\user\\Desktop\\codex_web",
+      "C:\\Users\\user\\Desktop\\Local Agent",
+    ]);
+  });
+
   it("adds a Web project to Desktop saved roots without changing the active root", () => {
     const codexHome = createCodexHome({
       "electron-saved-workspace-roots": [

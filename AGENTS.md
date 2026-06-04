@@ -18,6 +18,7 @@
 - 官方 IPC 研究：`documentation/protocol/official_codex_ipc_sync.md`
 - 官方客户端交互改造方案：`docs/official_client_interaction_refactor_plan.md`
 - 官方客户端 runtime 证据：`documentation/protocol/official_client_runtime_evidence.md`
+- 官方优先实现准则：`docs/official_first_implementation.md`
 - 踩坑记录：`docs/pitfalls/README.md`
 
 ## 协作底线
@@ -28,6 +29,9 @@
 - owner/follower 只作为协议和诊断概念，不暴露给普通用户。
 - 破坏性操作必须走官方可验证路径，不能猜测本地文件结构直接修改。
 - 对接或修改 Codex app-server / official IPC / raw RPC 参数、request/notification shape 前，必须先阅读 OpenAI 官方 Codex app-server 文档，并核对官方 `codex-rs/app-server` 源码和 `app-server-protocol` schema；不得凭记忆、旧实现或 Desktop 私有包装字段猜接口。
+- 新增或修改功能必须优先按 `docs/official_first_implementation.md` 查找并接入官方接口；官方已有能力不得自行重写。
+- 官方已有数据必须优先通过官方接口获取，不写死、不影子存储到本地 SQLite；SQLite 仅用于官方没有覆盖的自定义扩展。
+- Web 复刻必须以 Codex Desktop 的实际展现逻辑、交互细节和数据行为为准，避免自行分叉。
 
 ## 默认运行配置
 

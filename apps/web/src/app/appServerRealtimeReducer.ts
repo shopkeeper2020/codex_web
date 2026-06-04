@@ -127,60 +127,19 @@ function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number
   });
 }
 
-function mergeTurnItems(
-  pendingItems: MessageItem[],
-  targetItems: MessageItem[],
-): MessageItem[] {
-  const merged = [...pendingItems];
-  for (const item of targetItems) {
-    const duplicateIndex = duplicateUserItemIndex(merged, item);
-    if (duplicateIndex >= 0) {
-      merged[duplicateIndex] = item;
-    } else {
-      merged.push(item);
-    }
-  }
-  return merged;
-}
-
 function adoptPendingTurn(
   turns: Turn[],
   targetTurnId: string,
   status: Turn["status"],
 ): Turn[] {
   if (!targetTurnId || isPendingTurnId(targetTurnId)) return turns;
-  const pendingTurns = turns.filter((turn) => isPendingTurnId(turn.id));
-  if (pendingTurns.length === 0) return turns;
-  const pendingItems = pendingTurns.flatMap((turn) => turn.items);
-  const targetIndex = turns.findIndex((turn) => turn.id === targetTurnId);
-  if (targetIndex >= 0) {
-    return turns.flatMap((turn) => {
-      if (isPendingTurnId(turn.id)) return [];
-      if (turn.id !== targetTurnId) return [turn];
-      return [
-        {
-          ...turn,
-          status: status === "unknown" ? turn.status : status,
-          items: mergeTurnItems(pendingItems, turn.items),
-        },
-      ];
-    });
-  }
-  const pendingToAdopt = pendingTurns.at(-1);
-  if (!pendingToAdopt) return turns;
-  let adopted = false;
-  return turns.flatMap((turn) => {
-    if (!isPendingTurnId(turn.id)) return [turn];
-    if (turn.id !== pendingToAdopt.id) return [];
-    adopted = true;
-    return [
-      {
-        ...turn,
-        id: targetTurnId,
-        status: status === "unknown" ? turn.status : status,
-      },
-    ];
-  }).concat(adopted ? [] : [{ id: targetTurnId, status, items: pendingItems }]);
+  return turns
+    .filter((turn) => !isPendingTurnId(turn.id))
+    .map((turn) =>
+      turn.id === targetTurnId && status !== "unknown"
+        ? { ...turn, status }
+        : turn,
+    );
 }
 
 function normalizeItem(value: unknown, fallbackId: string): MessageItem {

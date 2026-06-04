@@ -153,6 +153,48 @@ function applyExternalPartialActiveSnapshot(
   });
 }
 
+function applyPendingLocalTurnSnapshot(
+  officialIpc: OfficialIpcBridge,
+  threadId: string,
+): void {
+  (
+    officialIpc as unknown as {
+      handleFrame: (frame: Record<string, unknown>) => void;
+    }
+  ).handleFrame({
+    type: "broadcast",
+    method: "thread-stream-state-changed",
+    sourceClientId: "web-test",
+    params: {
+      hostId: "local",
+      conversationId: threadId,
+      change: {
+        type: "snapshot",
+        conversationState: {
+          id: threadId,
+          name: "Pending local snapshot",
+          threadRuntimeStatus: { type: "active" },
+          turns: [
+            {
+              id: "pending-client-user-1",
+              turnId: "pending-client-user-1",
+              status: "inProgress",
+              items: [
+                {
+                  type: "userMessage",
+                  id: "client-user-1",
+                  clientId: "client-user-1",
+                  content: [{ type: "text", text: "hello" }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  });
+}
+
 function applyExternalSparseItemSnapshot(
   officialIpc: OfficialIpcBridge,
   threadId: string,
@@ -261,6 +303,55 @@ describe("thread detail route", () => {
     expect(context.database.status().threadDetailCount).toBe(0);
   });
 
+  it("does not expose pending local turn snapshots as Web domain detail", async () => {
+    const officialIpc = createBridge();
+    applyPendingLocalTurnSnapshot(officialIpc, "thread-pending");
+    const { context, appServer } = await createHarness(officialIpc);
+    appServer.threadReadResult = {
+      thread: {
+        id: "thread-pending",
+        name: "App-server truth",
+        cwd: "C:\\workspace\\codex_web",
+        updatedAt: "2026-05-29T00:00:00.000Z",
+        turns: [
+          {
+            id: "turn-app-server",
+            status: "completed",
+            items: [{ type: "agentMessage", text: "persisted" }],
+          },
+        ],
+      },
+    };
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-pending",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "app-server",
+      data: {
+        thread: { id: "thread-pending" },
+        turns: [
+          {
+            id: "turn-app-server",
+            items: [{ type: "assistant", text: "persisted" }],
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(response.json().data.turns)).not.toContain(
+      "pending-client-user-1",
+    );
+    expect(appServer.calls).toEqual([
+      {
+        method: "thread/read",
+        params: { threadId: "thread-pending", includeTurns: true },
+      },
+    ]);
+  });
+
   it("drops sparse official turn item placeholders before response validation", async () => {
     const officialIpc = createBridge();
     applyExternalSparseItemSnapshot(officialIpc, "thread-sparse");
@@ -338,6 +429,7 @@ describe("thread detail route", () => {
           updatedAtIso: "2026-06-01T00:00:00.000Z",
           inProgress: false,
           pinned: false,
+          gitInfo: null,
           owner: null,
         },
         goal: null,

@@ -20,6 +20,7 @@ function detail(
       updatedAtIso: null,
       inProgress: input.inProgress ?? false,
       pinned: false,
+      gitInfo: null,
       owner: null,
     },
     goal: null,
@@ -190,5 +191,165 @@ describe('thread detail request ordering', () => {
     })
 
     expect(mergeThreadDetailWithLiveItems(current, incoming)).toBe(incoming)
+  })
+
+  it('drops current pending turns when the official turn arrives', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'pending-client-user-1',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'client-user-1', text: '帮我找一下OpenAI这两天的发布会的帖子或者视频。' },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-official',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'official-user-1', text: '帮我找一下OpenAI这两天的发布会的帖子或者视频。' },
+            { type: 'assistant', id: 'assistant-a', text: '我已定位到这两天最相关的是 OpenAI 6 月 2 日。' },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns).toEqual([
+      {
+        id: 'turn-official',
+        status: 'active',
+        items: [
+          { type: 'user', id: 'official-user-1', text: '帮我找一下OpenAI这两天的发布会的帖子或者视频。' },
+          { type: 'assistant', id: 'assistant-a', text: '我已定位到这两天最相关的是 OpenAI 6 月 2 日。' },
+        ],
+      },
+    ])
+  })
+
+  it('does not reintroduce a late pending snapshot after the official turn is live', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-official',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'official-user-1', text: '帮我找一下OpenAI这两天的发布会的帖子或者视频。' },
+            { type: 'assistant', id: 'assistant-a', text: '我已定位到这两天最相关的是 OpenAI 6 月 2 日。' },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'pending-client-user-1',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'client-user-1', text: '帮我找一下OpenAI这两天的发布会的帖子或者视频。' },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns).toEqual([
+      {
+        id: 'turn-official',
+        status: 'active',
+        items: [
+          { type: 'user', id: 'official-user-1', text: '帮我找一下OpenAI这两天的发布会的帖子或者视频。' },
+          { type: 'assistant', id: 'assistant-a', text: '我已定位到这两天最相关的是 OpenAI 6 月 2 日。' },
+        ],
+      },
+    ])
+  })
+
+  it('drops unmatched pending turns while waiting for official app-server items', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'pending-client-user-1',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'client-user-1', text: '等官方真实 turn。' },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-old',
+          status: 'completed',
+          items: [{ type: 'assistant', id: 'assistant-old', text: '上一轮' }],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns).toEqual([
+      {
+        id: 'turn-old',
+        status: 'completed',
+        items: [{ type: 'assistant', id: 'assistant-old', text: '上一轮' }],
+      },
+    ])
+  })
+
+  it('keeps repeated non-pending user turns distinct', () => {
+    const incoming = detail('thread-a', {
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'completed',
+          items: [{ type: 'user', id: 'user-a', text: '继续' }],
+        },
+        {
+          id: 'turn-b',
+          status: 'completed',
+          items: [{ type: 'user', id: 'user-b', text: '继续' }],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(null, incoming)?.turns).toHaveLength(2)
+  })
+
+  it('keeps repeated official user items in the same turn distinct', () => {
+    const current = detail('thread-a', {
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'user-b', text: '继续' },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'user-a', text: '继续' },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items).toEqual([
+      { type: 'user', id: 'user-a', text: '继续' },
+      { type: 'user', id: 'user-b', text: '继续' },
+    ])
   })
 })

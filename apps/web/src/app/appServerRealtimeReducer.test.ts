@@ -15,6 +15,7 @@ function createDetail(threadId = "thread-a"): ThreadDetail {
       updatedAtIso: null,
       inProgress: false,
       pinned: false,
+      gitInfo: null,
       owner: null,
     },
     goal: null,
@@ -194,7 +195,7 @@ describe("app-server realtime reducer", () => {
     ]);
   });
 
-  it("adopts pending user turns into the official active turn", () => {
+  it("waits for official user items instead of adopting pending turns", () => {
     const pendingDetail: ThreadDetail = {
       ...createDetail(),
       thread: { ...createDetail().thread, inProgress: true },
@@ -234,9 +235,7 @@ describe("app-server realtime reducer", () => {
       {
         id: "turn-official",
         status: "active",
-        items: [
-          { type: "user", id: "client-user-1", text: "再整理北京的。" },
-        ],
+        items: [],
       },
     ]);
     expect(userStarted?.turns).toEqual([

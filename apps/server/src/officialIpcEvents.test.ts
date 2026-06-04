@@ -387,6 +387,62 @@ describe("official IPC realtime events", () => {
     });
   });
 
+  it("does not publish pending-only local snapshots as domain thread detail", async () => {
+    const { appServer, context, officialIpc } = await createHarness();
+    const events: PublishedServerEvent[] = [];
+    const unsubscribe = context.bus.subscribe((event) => events.push(event));
+    officialIpc.streamStates.set("thread-pending", {
+      threadId: "thread-pending",
+      conversationId: "thread-pending",
+      hostId: "local",
+      ownerClientId: "web-test",
+      sourceClientId: "web-test",
+      conversationState: {
+        id: "thread-pending",
+        name: "Pending local snapshot",
+        threadRuntimeStatus: { type: "active" },
+        turns: [
+          {
+            id: "pending-client-user-1",
+            turnId: "pending-client-user-1",
+            status: "inProgress",
+            items: [
+              {
+                type: "userMessage",
+                id: "client-user-1",
+                clientId: "client-user-1",
+                content: [{ type: "text", text: "hello" }],
+              },
+            ],
+          },
+        ],
+      },
+      changeType: "snapshot",
+      cacheVersion: 43,
+      updatedAtIso: "2026-05-29T00:00:00.000Z",
+      isInProgress: true,
+      activeTurnId: "pending-client-user-1",
+    });
+
+    officialIpc.emit(OFFICIAL_THREAD_STREAM_CHANGED_METHOD, {
+      threadId: "thread-pending",
+      cacheVersion: 43,
+      isInProgress: true,
+    });
+    unsubscribe();
+
+    expect(appServer.threadReadCalls).toEqual([]);
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "official.threadStreamStateChanged",
+        payload: expect.objectContaining({
+          threadId: "thread-pending",
+          cacheVersion: 43,
+        }),
+      }),
+    ]);
+  });
+
   it("hydrates the official stream cache when patches arrive without a snapshot", async () => {
     const { appServer, context, officialIpc } = await createHarness();
     const events: PublishedServerEvent[] = [];

@@ -11,7 +11,10 @@ type JsonBody = Record<string, unknown>;
 type ActiveTurnOption = boolean | (() => boolean);
 type ComposerRuntimeMockOptions = {
   activeTurn?: ActiveTurnOption;
+  completedTurnWhenIdle?: boolean;
+  projects?: JsonBody[];
   runtimeOptions?: JsonBody;
+  onWorkspaceBranch?: (body: JsonBody) => void;
   threadInProgress?: ActiveTurnOption;
   onThreadStopBackground?: (body: JsonBody) => void;
 };
@@ -45,17 +48,18 @@ async function installComposerRuntimeMocks(
   await page.route("**/api/domain/threads**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
-    const currentActiveTurnId = activeTurnId();
     const currentThreadInProgress = isThreadInProgress();
     await fulfillJson(route, {
       data: {
         projects: [
-          {
-            id: projectRoot,
-            name: "codex_web",
-            path: projectRoot,
-            source: "official",
-          },
+          ...(options.projects ?? [
+            {
+              id: projectRoot,
+              name: "codex_web",
+              path: projectRoot,
+              source: "official",
+            },
+          ]),
         ],
         threads: archived
           ? []
@@ -80,6 +84,9 @@ async function installComposerRuntimeMocks(
   await page.route("**/api/domain/thread-detail**", async (route) => {
     const currentActiveTurnId = activeTurnId();
     const currentThreadInProgress = isThreadInProgress();
+    const idleTurns = options.completedTurnWhenIdle
+      ? [{ id: "turn-active-runtime-e2e", status: "completed", items: [] }]
+      : [];
     await fulfillJson(route, {
       data: {
         thread: {
@@ -94,7 +101,7 @@ async function installComposerRuntimeMocks(
         },
         turns: currentActiveTurnId
           ? [{ id: currentActiveTurnId, status: "active", items: [] }]
-          : [],
+          : idleTurns,
       },
       source: "e2e-mock",
     });
@@ -214,6 +221,62 @@ async function installComposerRuntimeMocks(
     });
   });
 
+  await page.route("**/api/workspace/status**", async (route) => {
+    const url = new URL(route.request().url());
+    const cwd = url.searchParams.get("cwd") ?? projectRoot;
+    await fulfillJson(route, {
+      data: {
+        cwd,
+        isGitRepository: true,
+        branch: "hk",
+        branches: ["master", "hk"],
+        upstream: "origin/hk",
+        ahead: 0,
+        behind: 0,
+        commit: "abcdef1234567890",
+        changedFiles: 1,
+        additions: 12,
+        deletions: 3,
+        hasUntracked: false,
+        githubCli: {
+          available: true,
+          authenticated: true,
+          status: "available",
+        },
+        warnings: [],
+      },
+    });
+  });
+
+  await page.route("**/api/workspace/branch", async (route) => {
+    const body = route.request().postDataJSON() as JsonBody;
+    options.onWorkspaceBranch?.(body);
+    const branch = String(body.branch ?? "hk");
+    const cwd = String(body.cwd ?? projectRoot);
+    await fulfillJson(route, {
+      data: {
+        cwd,
+        isGitRepository: true,
+        branch,
+        branches: ["master", "hk"],
+        upstream: `origin/${branch}`,
+        ahead: 0,
+        behind: 0,
+        commit: "abcdef1234567890",
+        changedFiles: 1,
+        additions: 12,
+        deletions: 3,
+        hasUntracked: false,
+        githubCli: {
+          available: true,
+          authenticated: true,
+          status: "available",
+        },
+        warnings: [],
+      },
+    });
+  });
+
   await page.route("**/api/files/list**", async (route) => {
     await fulfillJson(route, {
       data: {
@@ -248,7 +311,9 @@ async function installComposerRuntimeMocks(
       data: {
         ok: true,
         interrupted: 1,
-        results: [{ turnId: "turn-from-official-stream", mode: "official-follower" }],
+        results: [
+          { turnId: "turn-from-official-stream", mode: "official-follower" },
+        ],
       },
     });
   });
@@ -274,6 +339,127 @@ test.describe("composer runtime options", () => {
     ).toBeVisible();
     await composer.getByRole("button", { name: "停止当前回复" }).click();
     await expect.poll(() => stopBody?.threadId).toBe(threadId);
+  });
+
+  test("shows project launch and branch controls only for draft threads", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "项目/启动/分支状态条只在桌面输入框显示",
+    );
+
+    await installComposerRuntimeMocks(page, () => undefined);
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const composer = page.getByRole("form", { name: "Composer" });
+    await expect(composer.getByLabel("选择项目")).toHaveCount(0);
+    await expect(composer.getByLabel("启动模式")).toHaveCount(0);
+    await expect(composer.getByLabel("分支")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(composer.getByLabel("选择项目")).toBeVisible();
+    await expect(composer.getByLabel("启动模式")).toBeVisible();
+    await expect(composer.getByLabel("分支")).toBeVisible();
+  });
+
+  test("uses the selected project for draft thread creation and first turn", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "项目/启动/分支状态条只在桌面输入框显示",
+    );
+
+    const secondProjectRoot = "C:\\workspace\\mcp_server";
+    let threadCreateBody: JsonBody | null = null;
+    let turnStartBody: JsonBody | null = null;
+    await installComposerRuntimeMocks(
+      page,
+      (body) => {
+        turnStartBody = body;
+      },
+      {
+        projects: [
+          {
+            id: projectRoot,
+            name: "codex_web",
+            path: projectRoot,
+            source: "official",
+          },
+          {
+            id: secondProjectRoot,
+            name: "mcp_server",
+            path: secondProjectRoot,
+            source: "official",
+          },
+        ],
+      },
+    );
+    await page.route("**/api/domain/thread-create", async (route) => {
+      threadCreateBody = route.request().postDataJSON() as JsonBody;
+      const cwd = (threadCreateBody.cwd as string | null | undefined) ?? null;
+      await fulfillJson(route, {
+        data: {
+          thread: {
+            id: "thread-created-from-draft",
+            title: "Draft project selection",
+            projectId: cwd,
+            path: cwd,
+            updatedAtIso: "2026-05-29T00:00:00.000Z",
+            inProgress: false,
+            pinned: false,
+            owner: null,
+          },
+        },
+      });
+    });
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+
+    const composer = page.getByRole("form", { name: "Composer" });
+    const projectButton = composer.getByLabel("选择项目");
+    await expect(projectButton).toBeVisible();
+    await projectButton.click();
+    await page.getByRole("menuitemradio", { name: "mcp_server" }).click();
+    await expect(projectButton).toContainText("mcp_server");
+
+    await page.getByLabel("输入消息").fill("send from selected project");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    await expect.poll(() => threadCreateBody?.cwd).toBe(secondProjectRoot);
+    await expect.poll(() => turnStartBody?.cwd).toBe(secondProjectRoot);
+  });
+
+  test("switches the draft workspace branch through the workspace API", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "分支状态条只在桌面输入框显示",
+    );
+
+    let branchBody: JsonBody | null = null;
+    await installComposerRuntimeMocks(page, () => undefined, {
+      onWorkspaceBranch: (body) => {
+        branchBody = body;
+      },
+    });
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+
+    const composer = page.getByRole("form", { name: "Composer" });
+    const branchButton = composer.getByLabel("分支");
+    await expect(branchButton).toContainText("hk");
+    await branchButton.click();
+    await page.getByRole("menuitemradio", { name: "master" }).click();
+
+    await expect.poll(() => branchBody?.cwd).toBe(projectRoot);
+    await expect.poll(() => branchBody?.branch).toBe("master");
+    await expect(branchButton).toContainText("master");
   });
 
   test("renders Desktop-like native dictation controls while recording", async ({
@@ -749,7 +935,7 @@ test.describe("composer runtime options", () => {
       (body) => {
         capturedTurnStart = body;
       },
-      { activeTurn: () => activeTurn },
+      { activeTurn: () => activeTurn, completedTurnWhenIdle: true },
     );
     await page.route("**/api/domain/turn-steer", async (route) => {
       capturedTurnSteer = route.request().postDataJSON() as JsonBody;
@@ -799,10 +985,13 @@ test.describe("composer runtime options", () => {
 
     await page.getByLabel("输入消息").fill("当前结束后再发送");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(queueStrip.getByText("当前结束后再发送")).toBeVisible();
     activeTurn = false;
+    await expect(queueStrip.getByText("当前结束后再发送")).toBeVisible();
+    await page.getByRole("button", { name: "停止当前回复" }).click();
 
-    await expect.poll(() => capturedTurnStart, { timeout: 3500 }).not.toBeNull();
+    await expect
+      .poll(() => capturedTurnStart, { timeout: 3500 })
+      .not.toBeNull();
     expect(capturedTurnStart).toMatchObject({
       threadId,
       text: "当前结束后再发送",

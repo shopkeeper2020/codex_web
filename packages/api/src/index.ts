@@ -9,6 +9,7 @@ import type {
   Project,
   Thread,
   ThreadDetail,
+  ThreadGitInfo,
   ThreadGoal,
   ThreadList,
   ThreadSideConversation,
@@ -172,7 +173,13 @@ export const projectSchema: z.ZodType<Project> = z.object({
   id: z.string(),
   name: z.string(),
   path: z.string().nullable(),
-  source: z.enum(["official", "web-favorite"]),
+  source: z.enum(["official", "desktop-workspace", "web-favorite"]),
+});
+
+export const threadGitInfoSchema: z.ZodType<ThreadGitInfo> = z.object({
+  sha: z.string().nullable(),
+  branch: z.string().nullable(),
+  originUrl: z.string().nullable(),
 });
 
 export const threadSchema: z.ZodType<Thread> = z.object({
@@ -183,6 +190,7 @@ export const threadSchema: z.ZodType<Thread> = z.object({
   updatedAtIso: z.string().nullable(),
   inProgress: z.boolean(),
   pinned: z.boolean().default(false),
+  gitInfo: threadGitInfoSchema.nullable().default(null),
   owner: ownerSchema.nullable(),
 });
 
@@ -839,6 +847,7 @@ export const workspaceStatusSchema = z.object({
   cwd: z.string(),
   isGitRepository: z.boolean(),
   branch: z.string().nullable(),
+  branches: z.array(z.string()),
   upstream: z.string().nullable(),
   ahead: z.number().int().nonnegative().nullable(),
   behind: z.number().int().nonnegative().nullable(),
@@ -863,6 +872,13 @@ export const workspaceStatusSchema = z.object({
 export const workspaceStatusResponseSchema = z.object({
   data: workspaceStatusSchema,
 });
+
+export const workspaceBranchCheckoutRequestSchema = z.object({
+  cwd: nonEmptyString,
+  branch: nonEmptyString,
+});
+
+export const workspaceBranchCheckoutResponseSchema = workspaceStatusResponseSchema;
 
 export const approvalDecisionSchema = z.enum([
   "accept",
@@ -1497,6 +1513,12 @@ export type SkillsResponse = z.infer<typeof skillsResponseSchema>;
 export type WorkspaceStatus = z.infer<typeof workspaceStatusSchema>;
 export type WorkspaceStatusResponse = z.infer<
   typeof workspaceStatusResponseSchema
+>;
+export type WorkspaceBranchCheckoutRequest = z.infer<
+  typeof workspaceBranchCheckoutRequestSchema
+>;
+export type WorkspaceBranchCheckoutResponse = z.infer<
+  typeof workspaceBranchCheckoutResponseSchema
 >;
 export type LanAccessUrl = z.infer<typeof lanAccessUrlSchema>;
 export type LanAccess = z.infer<typeof lanAccessSchema>;

@@ -71,6 +71,45 @@ function appendPathIfMissing(values: unknown, path: string): {
   return { values: [...current, normalizedPath], changed: true };
 }
 
+function readPathList(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const path = normalizeProjectPath(value);
+    if (!path) continue;
+    const key = pathKey(path);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    paths.push(path);
+  }
+  return paths;
+}
+
+export function readDesktopWorkspaceRoots(
+  options: {
+    codexHome?: string | null;
+  } = {},
+): string[] {
+  const codexHome =
+    "codexHome" in options ? options.codexHome : resolveCodexHome();
+  const globalStatePath = codexHome ? join(codexHome, GLOBAL_STATE_FILE) : null;
+  if (!globalStatePath || !existsSync(globalStatePath)) return [];
+
+  const state = readGlobalState(globalStatePath);
+  const savedRoots = readPathList(state[DESKTOP_SAVED_ROOTS_KEY]);
+  const savedKeys = new Set(savedRoots.map(pathKey));
+  const orderedRoots = readPathList(state[DESKTOP_PROJECT_ORDER_KEY]).filter(
+    (path) => savedKeys.has(pathKey(path)),
+  );
+  const orderedKeys = new Set(orderedRoots.map(pathKey));
+  return [
+    ...orderedRoots,
+    ...savedRoots.filter((path) => !orderedKeys.has(pathKey(path))),
+  ];
+}
+
 function writeGlobalStateAtomically(path: string, state: DesktopGlobalState): void {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = `${path}.codex-web-sync-${timestamp}.bak`;

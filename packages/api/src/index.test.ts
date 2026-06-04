@@ -665,6 +665,7 @@ describe("API contract schemas", () => {
           cwd: "C:\\workspace\\codex_web",
           isGitRepository: true,
           branch: "main",
+          branches: ["main"],
           upstream: "origin/main",
           ahead: 1,
           behind: 0,

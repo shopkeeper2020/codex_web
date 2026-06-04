@@ -42,6 +42,7 @@ describe("workspace status", () => {
     expect(status.changedFiles).toBe(0);
     expect(status.hasUntracked).toBe(false);
     expect(status.branch).toBeNull();
+    expect(status.branches).toEqual([]);
   });
 
   (hasGit() ? it : it.skip)(
@@ -64,6 +65,7 @@ describe("workspace status", () => {
 
       expect(status.isGitRepository).toBe(true);
       expect(status.branch).toBeTruthy();
+      expect(status.branches).toContain(status.branch);
       expect(status.commit).toMatch(/^[0-9a-f]{7,}$/);
       expect(status.changedFiles).toBeGreaterThanOrEqual(2);
       expect(status.hasUntracked).toBe(true);

@@ -17,7 +17,13 @@ export type Project = {
   id: string
   name: string
   path: string | null
-  source: 'official' | 'web-favorite'
+  source: 'official' | 'desktop-workspace' | 'web-favorite'
+}
+
+export type ThreadGitInfo = {
+  sha: string | null
+  branch: string | null
+  originUrl: string | null
 }
 
 export type Thread = {
@@ -28,6 +34,7 @@ export type Thread = {
   updatedAtIso: string | null
   inProgress: boolean
   pinned: boolean
+  gitInfo: ThreadGitInfo | null
   owner: Owner | null
 }
 
@@ -229,6 +236,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function readThreadGitInfo(value: unknown): ThreadGitInfo | null {
+  const record = asRecord(value)
+  if (!record) return null
+  return {
+    sha: readString(record.sha) || null,
+    branch: readString(record.branch) || null,
+    originUrl: readString(record.originUrl) || null,
+  }
 }
 
 function readContentString(value: unknown): string {
@@ -1106,6 +1123,7 @@ export function normalizeOfficialThreadSummary(value: unknown, owner: Owner | nu
     updatedAtIso: readIsoFromTimestamp(record.updatedAt ?? record.updated_at ?? record.updatedAtMs),
     inProgress: readBooleanInProgress(record.status) || readBooleanInProgress(record.threadRuntimeStatus),
     pinned: readBoolean(record.pinned) || readBoolean(record.isPinned) || readBoolean(record.is_pinned),
+    gitInfo: readThreadGitInfo(record.gitInfo),
     owner,
   }
 }
@@ -1135,20 +1153,51 @@ export function projectFromPath(path: string, source: Project['source'] = 'web-f
   }
 }
 
-export function mergeThreadListProjects(list: ThreadList, favoriteProjectPaths: string[]): ThreadList {
+export function mergeThreadListProjects(
+  list: ThreadList,
+  favoriteProjectPaths: string[],
+  desktopWorkspaceRootPaths: string[] = [],
+): ThreadList {
+  if (desktopWorkspaceRootPaths.length > 0) {
+    const preferredProjectKeys = new Set<string>()
+    const preferredProjects: Project[] = []
+    const appendPreferredProject = (project: Project | null): void => {
+      if (!project) return
+      const key = projectKey(project.path ?? project.id)
+      if (preferredProjectKeys.has(key)) return
+      preferredProjectKeys.add(key)
+      preferredProjects.push(project)
+    }
+
+    for (const path of desktopWorkspaceRootPaths) {
+      appendPreferredProject(projectFromPath(path, 'desktop-workspace'))
+    }
+    for (const path of favoriteProjectPaths) {
+      appendPreferredProject(projectFromPath(path, 'web-favorite'))
+    }
+
+    return {
+      ...list,
+      projects: preferredProjects,
+    }
+  }
+
   const existingProjectKeys = new Set<string>()
   for (const project of list.projects) {
     const key = projectKey(project.path ?? project.id)
     if (key) existingProjectKeys.add(key)
   }
+
   const favoriteProjects: Project[] = []
-  for (const path of favoriteProjectPaths) {
-    const favorite = projectFromPath(path, 'web-favorite')
-    if (!favorite) continue
-    const key = projectKey(favorite.path ?? favorite.id)
-    if (existingProjectKeys.has(key)) continue
+  const appendFavoriteProject = (project: Project | null): void => {
+    if (!project) return
+    const key = projectKey(project.path ?? project.id)
+    if (existingProjectKeys.has(key)) return
     existingProjectKeys.add(key)
-    favoriteProjects.push(favorite)
+    favoriteProjects.push(project)
+  }
+  for (const path of favoriteProjectPaths) {
+    appendFavoriteProject(projectFromPath(path, 'web-favorite'))
   }
   return {
     ...list,
@@ -1212,6 +1261,7 @@ export function normalizeOfficialThreadDetail(input: {
     updatedAtIso: null,
     inProgress: false,
     pinned: false,
+    gitInfo: null,
     owner: input.owner,
   }
   const turnsRaw = Array.isArray(threadRecord.turns) ? threadRecord.turns : []

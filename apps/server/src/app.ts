@@ -61,6 +61,7 @@ import {
   turnInterruptRequestSchema,
   turnStartRequestSchema,
   turnSteerRequestSchema,
+  workspaceBranchCheckoutRequestSchema,
   workspaceStatusResponseSchema,
   type AccountStatusResponse,
 } from "@codex-web/api";
@@ -118,7 +119,10 @@ import type {
   TurnSteerParams,
 } from "./appServerProcess.js";
 import { Diagnostics } from "./diagnostics.js";
-import { syncDesktopWorkspaceRoot } from "./desktopWorkspaceRoots.js";
+import {
+  readDesktopWorkspaceRoots,
+  syncDesktopWorkspaceRoot,
+} from "./desktopWorkspaceRoots.js";
 import { buildSafeDiagnosticsExport } from "./diagnosticsExport.js";
 import { DatabaseStore } from "./db/index.js";
 import { EventBus } from "./events.js";
@@ -150,7 +154,10 @@ import {
 import { decideLocalTurnFallback } from "./turnFallback.js";
 import { buildProtocolCompatibility } from "./protocolCompatibility.js";
 import { buildSyncReadiness } from "./syncReadiness.js";
-import { readWorkspaceStatus } from "./workspaceStatus.js";
+import {
+  checkoutWorkspaceBranch,
+  readWorkspaceStatus,
+} from "./workspaceStatus.js";
 import { buildLanAccess } from "./lanAccess.js";
 import {
   NativeDictationError,
@@ -625,6 +632,24 @@ function detailHasEmptyActiveTurn(detail: ThreadDetail | null): boolean {
       (turn) => turn.status === "active" && turn.items.length === 0,
     ),
   );
+}
+
+function isPendingTurnId(turnId: string): boolean {
+  return turnId.startsWith("pending-");
+}
+
+function detailHasPendingTurn(detail: ThreadDetail | null): boolean {
+  return Boolean(detail?.turns.some((turn) => isPendingTurnId(turn.id)));
+}
+
+function stripPendingTurnsFromDetail(
+  detail: ThreadDetail | null,
+): ThreadDetail | null {
+  if (!detail || !detailHasPendingTurn(detail)) return detail;
+  return {
+    ...detail,
+    turns: detail.turns.filter((turn) => !isPendingTurnId(turn.id)),
+  };
 }
 
 function compactStatus(value: unknown): string {
@@ -1898,15 +1923,16 @@ export async function createServer(
       ),
       new Set(database.listPinnedThreadIds()),
     );
-    if (!detail) return null;
+    const webDetail = stripPendingTurnsFromDetail(detail);
+    if (!webDetail || webDetail.turns.length === 0) return null;
     return {
       type: "domain.threadDetailUpdated" as const,
-      threadId: detail.thread.id || threadId,
-      detail,
+      threadId: webDetail.thread.id || threadId,
+      detail: webDetail,
       source: state.isInProgress ? "official-ipc-live" : "official-ipc",
       cacheVersion: state.cacheVersion,
       isInProgress: state.isInProgress,
-      activeTurnId: state.activeTurnId,
+      activeTurnId: detailHasPendingTurn(detail) ? "" : state.activeTurnId,
     };
   };
 
@@ -1916,7 +1942,7 @@ export async function createServer(
     readInitialDetail: (threadId) => {
       const state = officialIpc.getThreadStreamState(threadId);
       if (state) {
-        const detail = hydratePinnedDetail(
+        const detail = stripPendingTurnsFromDetail(hydratePinnedDetail(
           hydrateSideConversations(
             threadId,
             normalizeOfficialConversationState({
@@ -1930,7 +1956,7 @@ export async function createServer(
             }),
           ),
           new Set(database.listPinnedThreadIds()),
-        );
+        ));
         if (detail) return detail;
       }
       return null;
@@ -2136,12 +2162,14 @@ export async function createServer(
     const root =
       normalizeProjectPath(rawRoot) || normalizeProjectPath(config.projectRoot);
     const configuredFavorites = readFavoriteProjectPaths(config);
+    const desktopWorkspaceRoots = readDesktopWorkspaceRoots();
     const knownProjectPaths = database
       .listProjects()
       .map((project) => project.path)
       .filter((path): path is string => Boolean(path));
     const allowedRoots = [
       config.projectRoot,
+      ...desktopWorkspaceRoots,
       ...configuredFavorites,
       ...knownProjectPaths,
     ];
@@ -2158,6 +2186,7 @@ export async function createServer(
 
   const allowedFilePreviewRoots = (extraRoot?: string | null): string[] => {
     const configuredFavorites = readFavoriteProjectPaths(config);
+    const desktopWorkspaceRoots = readDesktopWorkspaceRoots();
     const knownProjectPaths = database
       .listProjects()
       .map((project) => project.path)
@@ -2166,6 +2195,7 @@ export async function createServer(
       config.dataDir,
       config.projectRoot,
       ...(extraRoot ? [extraRoot] : []),
+      ...desktopWorkspaceRoots,
       ...configuredFavorites,
       ...knownProjectPaths,
     ];
@@ -2713,6 +2743,46 @@ export async function createServer(
           error instanceof Error
             ? error.message
             : "Failed to read workspace status",
+      });
+      return undefined;
+    }
+  });
+
+  app.post("/api/workspace/branch", async (request, reply) => {
+    const parsed = workspaceBranchCheckoutRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: formatZodError(parsed.error) });
+      return undefined;
+    }
+
+    try {
+      const cwd = resolveAllowedProjectRoot(parsed.data.cwd);
+      await checkoutWorkspaceBranch(cwd, parsed.data.branch);
+      const status = await readWorkspaceStatus(cwd);
+      const response = workspaceStatusResponseSchema.safeParse({
+        data: status,
+      });
+      if (!response.success) {
+        const error = formatZodError(response.error);
+        diagnostics.record(
+          "error",
+          "api",
+          "workspace-branch-response-validation-failed",
+          { error },
+        );
+        await reply.code(500).send({ error });
+        return undefined;
+      }
+      await reply.send(response.data);
+      return undefined;
+    } catch (error) {
+      const statusCode =
+        error instanceof FileBrowserError ? error.statusCode : 500;
+      await reply.code(statusCode).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to switch workspace branch",
       });
       return undefined;
     }
@@ -3276,6 +3346,7 @@ export async function createServer(
           mergeThreadListProjects(
             normalizeOfficialThreadList(result, ownerByThreadId),
             readFavoriteProjectPaths(config),
+            readDesktopWorkspaceRoots(),
           ),
           officialIpc,
         ),
@@ -3332,17 +3403,18 @@ export async function createServer(
       );
       const list = overlayPinnedThreads(
         overlayLiveStreamStateOnThreadList(
-          mergeThreadListProjects(
-            normalizeOfficialThreadList(
-              {
-                data: rawThreads,
-                nextCursor: result.nextCursor,
-                backwardsCursor: result.backwardsCursor,
-              },
-              ownerByThreadId,
+            mergeThreadListProjects(
+              normalizeOfficialThreadList(
+                {
+                  data: rawThreads,
+                  nextCursor: result.nextCursor,
+                  backwardsCursor: result.backwardsCursor,
+                },
+                ownerByThreadId,
+              ),
+              readFavoriteProjectPaths(config),
+              readDesktopWorkspaceRoots(),
             ),
-            readFavoriteProjectPaths(config),
-          ),
           officialIpc,
         ),
         new Set(database.listPinnedThreadIds()),
@@ -3422,7 +3494,7 @@ export async function createServer(
     const hasExternalOfficialState =
       state !== null && officialIpc.isExternallyOwnedConversation(threadId);
     if (state) {
-      const detail = await hydrateThreadGoal(
+      const officialDetail = await hydrateThreadGoal(
         threadId,
         hydratePinnedDetail(
           hydrateSideConversations(
@@ -3440,8 +3512,13 @@ export async function createServer(
           pinnedThreadIds,
         ),
       );
+      const detail = stripPendingTurnsFromDetail(officialDetail);
+      const hadPendingTurn = detailHasPendingTurn(officialDetail);
       const hasUsableOfficialDetail =
-        detail && detail.turns.length > 0 && !detailHasEmptyActiveTurn(detail);
+        detail &&
+        detail.turns.length > 0 &&
+        !hadPendingTurn &&
+        !detailHasEmptyActiveTurn(detail);
       if (hasUsableOfficialDetail) {
         const responseSource = state.isInProgress
           ? "official-ipc-live"
@@ -3473,11 +3550,13 @@ export async function createServer(
         hasDetail: Boolean(detail),
         isInProgress: state.isInProgress,
         activeTurnId: state.activeTurnId,
-        reason: state.isInProgress
-          ? "verify-active-state"
-          : detailHasEmptyActiveTurn(detail)
-            ? "empty-active-turn"
-            : "empty-detail",
+        reason: hadPendingTurn
+          ? "pending-local-turn"
+          : state.isInProgress
+            ? "verify-active-state"
+            : detailHasEmptyActiveTurn(detail)
+              ? "empty-active-turn"
+              : "empty-detail",
       });
     }
 

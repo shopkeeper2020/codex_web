@@ -1364,6 +1364,7 @@ test.describe("codex_web app shell", () => {
             cwd: "C:\\workspace\\codex_web",
             isGitRepository: true,
             branch: "feature/sync-panel",
+            branches: ["main", "feature/sync-panel"],
             upstream: "origin/feature/sync-panel",
             ahead: 1,
             behind: 2,
