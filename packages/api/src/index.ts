@@ -187,6 +187,7 @@ export const threadSchema: z.ZodType<Thread> = z.object({
   title: z.string(),
   projectId: z.string().nullable(),
   path: z.string().nullable(),
+  createdAtIso: z.string().nullable().optional(),
   updatedAtIso: z.string().nullable(),
   inProgress: z.boolean(),
   pinned: z.boolean().default(false),
@@ -338,6 +339,8 @@ export const turnSchema: z.ZodType<Turn> = z.object({
     "interrupted",
     "unknown",
   ]),
+  startedAtIso: z.string().nullable().optional(),
+  completedAtIso: z.string().nullable().optional(),
   items: z.array(messageItemSchema),
 });
 
@@ -376,6 +379,7 @@ export const threadDetailSchema = z
   .object({
     thread: threadSchema,
     goal: threadGoalSchema.nullable().optional(),
+    derivedFromThreadId: z.string().nullable().optional(),
     turns: z.array(turnSchema),
     subAgents: z.array(threadSubAgentSchema).optional(),
     sideConversations: z.array(threadSideConversationSchema).optional(),
@@ -383,6 +387,7 @@ export const threadDetailSchema = z
   .transform((value) => ({
     ...value,
     goal: value.goal ?? null,
+    derivedFromThreadId: value.derivedFromThreadId ?? null,
     subAgents: value.subAgents ?? [],
     sideConversations: value.sideConversations ?? [],
   })) satisfies z.ZodType<ThreadDetail>;
@@ -1041,13 +1046,47 @@ export const realtimeEventSchema = z.discriminatedUnion("type", [
     .catchall(z.unknown()),
 ]);
 
-export const threadCreateRequestSchema = z.object({
+export const threadStartRequestSchema = z.object({
   cwd: z.string().nullable().optional(),
 });
 
-export const threadCreateResponseSchema = z.object({
+export const threadStartResponseSchema = z.object({
   data: z.object({
     thread: threadSchema,
+    raw: z.unknown().optional(),
+  }),
+});
+
+export const threadForkRequestSchema = z
+  .object({
+    threadId: z.string().optional(),
+    conversationId: z.string().optional(),
+    cwd: z.string().nullable().optional(),
+    afterTurnId: z.string().nullable().optional(),
+  })
+  .strict()
+  .transform((value, context) => {
+    const threadId = (value.threadId ?? value.conversationId ?? "").trim();
+    if (!threadId) {
+      context.addIssue({
+        code: "custom",
+        path: ["threadId"],
+        message: "Missing threadId",
+      });
+    }
+    return {
+      ...value,
+      threadId,
+      conversationId: value.conversationId?.trim(),
+      cwd: value.cwd?.trim() || null,
+      afterTurnId: value.afterTurnId?.trim() || null,
+    };
+  });
+
+export const threadForkResponseSchema = z.object({
+  data: z.object({
+    thread: threadSchema,
+    derivedFromThreadId: z.string().nullable(),
     raw: z.unknown().optional(),
   }),
 });
@@ -1589,8 +1628,10 @@ export type ApprovalDecisionRequest = z.infer<
 export type ApprovalDecisionResponse = z.infer<
   typeof approvalDecisionResponseSchema
 >;
-export type ThreadCreateRequest = z.infer<typeof threadCreateRequestSchema>;
-export type ThreadCreateResponse = z.infer<typeof threadCreateResponseSchema>;
+export type ThreadStartRequest = z.infer<typeof threadStartRequestSchema>;
+export type ThreadStartResponse = z.infer<typeof threadStartResponseSchema>;
+export type ThreadForkRequest = z.infer<typeof threadForkRequestSchema>;
+export type ThreadForkResponse = z.infer<typeof threadForkResponseSchema>;
 export type SideConversationCreateRequest = z.infer<
   typeof sideConversationCreateRequestSchema
 >;

@@ -123,7 +123,7 @@ describe("thread goal route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-goal-set",
+      url: "/api/domain/thread/goal/set",
       payload: {
         threadId: "thread-goal",
         objective: "Keep Web and Desktop goals in sync",
@@ -168,7 +168,7 @@ describe("thread goal route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-goal-clear",
+      url: "/api/domain/thread/goal/clear",
       payload: { threadId: "thread-goal" },
     });
 

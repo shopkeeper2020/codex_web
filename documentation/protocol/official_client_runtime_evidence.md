@@ -234,7 +234,7 @@ VS Code `out/extension.js` 现场版本 `26.5527.31454` 中确认：
 
 ### 2026-06-02 Desktop renderer 与广播噪声
 
-现场新建天气会话 `019e886f-3dc1-7141-b1a2-db4f0be7222d` 后，Web server `/api/domain/thread-detail` 只有 200 轮询；VS Code 扩展此前的 `undefined.canHandle` 报错停止在 discovery shape 修复前。最新扩展日志主要剩余大量 `Received broadcast but no handler is configured method=thread-stream-state-changed`，说明重复 snapshot 广播会制造日志风暴，但不是 discovery 硬崩。
+现场新建天气会话 `019e886f-3dc1-7141-b1a2-db4f0be7222d` 后，Web server `/api/domain/thread/read` 只有 200 轮询；VS Code 扩展此前的 `undefined.canHandle` 报错停止在 discovery shape 修复前。最新扩展日志主要剩余大量 `Received broadcast but no handler is configured method=thread-stream-state-changed`，说明重复 snapshot 广播会制造日志风暴，但不是 discovery 硬崩。
 
 同一时间 Desktop Sentry 面包屑中，红屏前最后的明确 renderer 错误是 `Could not find the language 'powershell', did you forget to load/include a language module?`，且关联的是打开排障长会话时的渲染路径，不是天气会话的 raw app-server `thread/start` / `turn/start` 请求失败。Web 闪烁则来自前端实时 reducer 与 domain 归一化不一致：`item/started` 阶段的 `mcpToolOutput` / `webSearch` 先落到 unknown，后续 thread detail 轮询再变成折叠工具组。
 

@@ -43,8 +43,8 @@ async function fulfillJson(route: Route, body: JsonBody): Promise<void> {
 
 async function clearMockRoutes(page: Page): Promise<void> {
   for (const pattern of [
-    "**/api/domain/threads**",
-    "**/api/domain/thread-detail**",
+    "**/api/domain/thread/list**",
+    "**/api/domain/thread/read**",
     "**/api/runtime-options",
     "**/api/skills**",
     "**/api/files/list**",
@@ -80,7 +80,7 @@ export async function installApprovalCardMocks(page: Page): Promise<{
   });
   const decisionBodies: JsonBody[] = [];
 
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     await fulfillJson(route, {
@@ -100,7 +100,7 @@ export async function installApprovalCardMocks(page: Page): Promise<{
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     await fulfillJson(route, {
       data: {
         thread: approvalThread(),

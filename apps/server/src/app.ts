@@ -42,9 +42,11 @@ import {
   threadArchiveResponseSchema,
   threadCompactRequestSchema,
   threadCompactResponseSchema,
-  threadCreateRequestSchema,
-  threadCreateResponseSchema,
+  threadStartRequestSchema,
+  threadStartResponseSchema,
   threadDetailResponseSchema,
+  threadForkRequestSchema,
+  threadForkResponseSchema,
   threadGoalClearRequestSchema,
   threadGoalResponseSchema,
   threadGoalSetRequestSchema,
@@ -2027,21 +2029,23 @@ export async function createServer(
     readInitialDetail: (threadId) => {
       const state = officialIpc.getThreadStreamState(threadId);
       if (state) {
-        const detail = stripPendingTurnsFromDetail(hydratePinnedDetail(
-          hydrateSideConversations(
-            threadId,
-            normalizeOfficialConversationState({
+        const detail = stripPendingTurnsFromDetail(
+          hydratePinnedDetail(
+            hydrateSideConversations(
               threadId,
-              ownerClientId: state.ownerClientId,
-              cacheVersion: state.cacheVersion,
-              updatedAtIso: state.updatedAtIso,
-              isInProgress: state.isInProgress,
-              activeTurnId: state.activeTurnId,
-              conversationState: state.conversationState,
-            }),
+              normalizeOfficialConversationState({
+                threadId,
+                ownerClientId: state.ownerClientId,
+                cacheVersion: state.cacheVersion,
+                updatedAtIso: state.updatedAtIso,
+                isInProgress: state.isInProgress,
+                activeTurnId: state.activeTurnId,
+                conversationState: state.conversationState,
+              }),
+            ),
+            new Set(database.listPinnedThreadIds()),
           ),
-          new Set(database.listPinnedThreadIds()),
-        ));
+        );
         if (detail) return detail;
       }
       return null;
@@ -3395,7 +3399,7 @@ export async function createServer(
     }
   });
 
-  app.get("/api/domain/threads", async (request, reply) => {
+  app.get("/api/domain/thread/list", async (request, reply) => {
     const query = request.query as Record<string, unknown>;
     const limitValue = Number(query.limit ?? 50);
     const limit = Number.isFinite(limitValue)
@@ -3462,7 +3466,7 @@ export async function createServer(
     }
   });
 
-  app.get("/api/domain/thread-search", async (request, reply) => {
+  app.get("/api/domain/thread/search", async (request, reply) => {
     const query = request.query as Record<string, unknown>;
     const searchTerm = readString(query.searchTerm);
     if (!searchTerm) {
@@ -3565,7 +3569,7 @@ export async function createServer(
     await reply.send({ data: officialIpc.getThreadStreamState(threadId) });
   });
 
-  app.get("/api/domain/thread-detail", async (request, reply) => {
+  app.get("/api/domain/thread/read", async (request, reply) => {
     const threadId = readString(
       (request.query as Record<string, unknown>).threadId,
     );
@@ -3763,7 +3767,7 @@ export async function createServer(
     }
   });
 
-  app.post("/api/domain/turn-start", async (request, reply) => {
+  app.post("/api/domain/turn/start", async (request, reply) => {
     const parsed = turnStartRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
@@ -3962,7 +3966,7 @@ export async function createServer(
     }
   });
 
-  app.post("/api/domain/turn-steer", async (request, reply) => {
+  app.post("/api/domain/turn/steer", async (request, reply) => {
     const parsed = turnSteerRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
@@ -4101,8 +4105,8 @@ export async function createServer(
     }
   });
 
-  app.post("/api/domain/thread-create", async (request, reply) => {
-    const parsed = threadCreateRequestSchema.safeParse(request.body);
+  app.post("/api/domain/thread/start", async (request, reply) => {
+    const parsed = threadStartRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
       return;
@@ -4113,7 +4117,7 @@ export async function createServer(
       if (!officialIpc.canOwnConversations()) {
         diagnostics.record(
           "warn",
-          "thread-create",
+          "thread/start",
           "official-ipc-owner-not-ready",
         );
         await reply.code(503).send({ error: "official-ipc-owner-not-ready" });
@@ -4148,7 +4152,7 @@ export async function createServer(
       if (!broadcasted || !officialIpc.isOwnedConversation(detail.thread.id)) {
         diagnostics.record(
           "warn",
-          "thread-create",
+          "thread/start",
           "official-ipc-owner-not-established",
           { threadId: detail.thread.id },
         );
@@ -4157,7 +4161,7 @@ export async function createServer(
           .send({ error: "official-ipc-owner-not-established" });
         return;
       }
-      diagnostics.record("info", "thread-create", "idle-snapshot-broadcast", {
+      diagnostics.record("info", "thread/start", "idle-snapshot-broadcast", {
         threadId: detail.thread.id,
       });
       const refreshBroadcasted = officialIpc.broadcastThreadUnarchived(
@@ -4165,11 +4169,11 @@ export async function createServer(
       );
       diagnostics.record(
         refreshBroadcasted ? "info" : "warn",
-        "thread-create",
+        "thread/start",
         "recent-refresh-broadcast",
         { threadId: detail.thread.id, broadcasted: refreshBroadcasted },
       );
-      const response = threadCreateResponseSchema.safeParse({
+      const response = threadStartResponseSchema.safeParse({
         data: { thread: detail.thread, raw: result },
       });
       if (!response.success) {
@@ -4177,7 +4181,7 @@ export async function createServer(
         diagnostics.record(
           "error",
           "api",
-          "thread-create-response-validation-failed",
+          "thread-start-response-validation-failed",
           { error },
         );
         await reply.code(500).send({ error });
@@ -4188,6 +4192,170 @@ export async function createServer(
       await reply.code(502).send({
         error:
           error instanceof Error ? error.message : "Failed to create thread",
+      });
+    }
+  });
+
+  app.post("/api/domain/thread/fork", async (request, reply) => {
+    const parsed = threadForkRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: formatZodError(parsed.error) });
+      return;
+    }
+    const sourceThreadId = parsed.data.threadId;
+    const cwd = readString(parsed.data.cwd);
+    const afterTurnId = readString(parsed.data.afterTurnId);
+
+    try {
+      if (!officialIpc.canOwnConversations()) {
+        diagnostics.record(
+          "warn",
+          "thread/fork",
+          "official-ipc-owner-not-ready",
+          { sourceThreadId },
+        );
+        await reply.code(503).send({ error: "official-ipc-owner-not-ready" });
+        return;
+      }
+
+      let rollbackTurns = 0;
+      if (afterTurnId) {
+        const readResult = await appServer.threadRead({
+          threadId: sourceThreadId,
+          includeTurns: true,
+        });
+        const sourceThread =
+          asRecord(asRecord(readResult)?.thread) ?? asRecord(readResult);
+        const sourceDetail = sourceThread
+          ? normalizeOfficialThreadDetail({
+              thread: sourceThread,
+              owner: null,
+              fallbackThreadId: sourceThreadId,
+            })
+          : null;
+        if (!sourceDetail) {
+          throw new Error("Failed to read source thread history");
+        }
+        const targetTurnIndex = sourceDetail.turns.findIndex(
+          (turn) => turn.id === afterTurnId,
+        );
+        if (targetTurnIndex < 0) {
+          await reply.code(409).send({ error: "fork turn not found" });
+          return;
+        }
+        rollbackTurns = Math.max(
+          0,
+          sourceDetail.turns.length - targetTurnIndex - 1,
+        );
+      }
+
+      const result = await appServer.threadFork({
+        threadId: sourceThreadId,
+        ...(cwd ? { cwd } : {}),
+        threadSource: "user",
+      });
+      let rawResult = result;
+      let forkThread = asRecord(asRecord(result)?.thread) ?? asRecord(result);
+      const forkThreadId =
+        readString(forkThread?.id) ||
+        readString(forkThread?.sessionId) ||
+        readString(forkThread?.threadId);
+      if (!forkThread || !forkThreadId) {
+        throw new Error("Failed to normalize forked thread");
+      }
+      let detail = normalizeOfficialThreadDetail({
+        thread: forkThread,
+        owner: null,
+        fallbackThreadId: forkThreadId,
+      });
+      if (!detail) throw new Error("Failed to normalize forked thread detail");
+
+      if (rollbackTurns > 0) {
+        const rollbackResult = await appServer.threadRollback({
+          threadId: forkThreadId,
+          numTurns: rollbackTurns,
+        });
+        const rolledBackThread =
+          asRecord(asRecord(rollbackResult)?.thread) ?? asRecord(rollbackResult);
+        const rolledBackDetail = rolledBackThread
+          ? normalizeOfficialThreadDetail({
+              thread: rolledBackThread,
+              owner: null,
+              fallbackThreadId: forkThreadId,
+            })
+          : null;
+        if (!rolledBackThread || !rolledBackDetail) {
+          throw new Error("Failed to normalize rolled back fork");
+        }
+        rawResult = { fork: result, rollback: rollbackResult };
+        forkThread = rolledBackThread;
+        detail = rolledBackDetail;
+      }
+
+      const idleSnapshot = buildIdleLocalThreadSnapshot({
+        threadId: forkThreadId,
+        thread: forkThread,
+        detail,
+        fallbackCwd:
+          cwd ||
+          readString(forkThread.cwd) ||
+          readString(forkThread.path) ||
+          config.projectRoot,
+      });
+      const broadcasted = officialIpc.broadcastConversationSnapshot(
+        forkThreadId,
+        idleSnapshot,
+      );
+      if (!broadcasted || !officialIpc.isOwnedConversation(forkThreadId)) {
+        diagnostics.record(
+          "warn",
+          "thread/fork",
+          "official-ipc-owner-not-established",
+          { sourceThreadId, forkThreadId },
+        );
+        await reply
+          .code(503)
+          .send({ error: "official-ipc-owner-not-established" });
+        return;
+      }
+      const refreshBroadcasted = officialIpc.broadcastThreadUnarchived(
+        forkThreadId,
+      );
+      diagnostics.record(
+        refreshBroadcasted ? "info" : "warn",
+        "thread/fork",
+        "recent-refresh-broadcast",
+        {
+          sourceThreadId,
+          forkThreadId,
+          broadcasted: refreshBroadcasted,
+          afterTurnId: afterTurnId || null,
+          rollbackTurns,
+        },
+      );
+
+      const response = threadForkResponseSchema.safeParse({
+        data: {
+          thread: detail.thread,
+          derivedFromThreadId: detail.derivedFromThreadId ?? sourceThreadId,
+          raw: rawResult,
+        },
+      });
+      if (!response.success) {
+        const error = formatZodError(response.error);
+        diagnostics.record(
+          "error",
+          "api",
+          "thread-fork-response-validation-failed",
+          { sourceThreadId, forkThreadId, error },
+        );
+        await reply.code(500).send({ error });
+        return;
+      }
+      await reply.send(response.data);
+    } catch (error) {
+      await reply.code(502).send({
+        error: error instanceof Error ? error.message : "Failed to fork thread",
       });
     }
   });
@@ -4232,7 +4400,6 @@ export async function createServer(
         developerInstructions: SIDE_CONVERSATION_BOUNDARY_TEXT,
         excludeTurns: true,
         ephemeral: true,
-        persistExtendedHistory: false,
       });
       const forkThread =
         asRecord(asRecord(forkResult)?.thread) ?? asRecord(forkResult);
@@ -4382,7 +4549,7 @@ export async function createServer(
     await reply.send(response.data);
   });
 
-  app.post("/api/domain/thread-rename", async (request, reply) => {
+  app.post("/api/domain/thread/rename", async (request, reply) => {
     const parsed = threadRenameRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
@@ -4486,7 +4653,7 @@ export async function createServer(
     }
   });
 
-  app.post("/api/domain/thread-goal-set", async (request, reply) => {
+  app.post("/api/domain/thread/goal/set", async (request, reply) => {
     const parsed = threadGoalSetRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
@@ -4547,7 +4714,7 @@ export async function createServer(
     }
   });
 
-  app.post("/api/domain/thread-goal-clear", async (request, reply) => {
+  app.post("/api/domain/thread/goal/clear", async (request, reply) => {
     const parsed = threadGoalClearRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
@@ -4636,7 +4803,7 @@ export async function createServer(
     await reply.send(response.data);
   });
 
-  app.post("/api/domain/thread-archive", async (request, reply) => {
+  app.post("/api/domain/thread/archive", async (request, reply) => {
     const parsed = threadArchiveRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
@@ -4686,7 +4853,7 @@ export async function createServer(
     }
   });
 
-  app.post("/api/domain/thread-unarchive", async (request, reply) => {
+  app.post("/api/domain/thread/unarchive", async (request, reply) => {
     const parsed = threadUnarchiveRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
@@ -4741,7 +4908,7 @@ export async function createServer(
     }
   });
 
-  app.post("/api/domain/thread-compact", async (request, reply) => {
+  app.post("/api/domain/thread/compact/start", async (request, reply) => {
     const parsed = threadCompactRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });
@@ -4854,7 +5021,7 @@ export async function createServer(
     }
   });
 
-  app.post("/api/domain/turn-interrupt", async (request, reply) => {
+  app.post("/api/domain/turn/interrupt", async (request, reply) => {
     const parsed = turnInterruptRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       await reply.code(400).send({ error: formatZodError(parsed.error) });

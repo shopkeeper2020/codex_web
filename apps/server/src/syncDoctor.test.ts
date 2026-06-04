@@ -184,7 +184,7 @@ describe("sync doctor", () => {
           },
         });
       }
-      if (url.pathname === "/api/domain/turn-start") {
+      if (url.pathname === "/api/domain/turn/start") {
         return jsonResponse({ error: "official-owner-unavailable" }, 409);
       }
       return jsonResponse({ error: "unexpected poll" }, 500);
@@ -223,7 +223,7 @@ describe("sync doctor", () => {
       "GET /health",
       "GET /api/protocol/compatibility",
       "GET /api/sync/readiness",
-      "POST /api/domain/turn-start",
+      "POST /api/domain/turn/start",
     ]);
   });
 
@@ -257,7 +257,7 @@ describe("sync doctor", () => {
           },
         });
       }
-      if (url.pathname === "/api/domain/turn-start") {
+      if (url.pathname === "/api/domain/turn/start") {
         return jsonResponse({ data: { mode: "official-follower" } });
       }
       if (url.pathname === "/api/official-ipc/status") {
@@ -273,7 +273,7 @@ describe("sync doctor", () => {
           },
         });
       }
-      if (url.pathname === "/api/domain/thread-detail") {
+      if (url.pathname === "/api/domain/thread/read") {
         return jsonResponse({
           data: {
             turns: [{ items: [{ id: "u1", type: "user", text: "marker" }] }],
@@ -308,7 +308,7 @@ describe("sync doctor", () => {
       "codex_web sync doctor: PASS",
     );
     expect(calls.map((call) => `${call.method} ${call.path}`)).toContain(
-      "POST /api/domain/turn-start",
+      "POST /api/domain/turn/start",
     );
   });
 
@@ -354,7 +354,7 @@ describe("sync doctor", () => {
             },
           });
         }
-        if (url.pathname === "/api/domain/turn-start") {
+        if (url.pathname === "/api/domain/turn/start") {
           expect(JSON.parse(String(init?.body))).toMatchObject({
             text: "SECRET marker body should not be written to report",
           });
@@ -373,7 +373,7 @@ describe("sync doctor", () => {
             },
           });
         }
-        if (url.pathname === "/api/domain/thread-detail") {
+        if (url.pathname === "/api/domain/thread/read") {
           return jsonResponse({
             data: {
               turns: [
@@ -433,7 +433,7 @@ describe("sync doctor", () => {
           },
         });
       }
-      if (url.pathname === "/api/domain/turn-steer") {
+      if (url.pathname === "/api/domain/turn/steer") {
         return jsonResponse({ data: { mode: "official-follower" } });
       }
       if (url.pathname === "/api/official-ipc/status") {

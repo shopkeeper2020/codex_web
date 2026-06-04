@@ -79,14 +79,18 @@ export type ThreadResumeParams = {
 
 export type ThreadForkParams = {
   threadId: string;
-  path: string | null;
+  path?: string | null;
   cwd?: string | null;
   threadSource?: string;
   config?: Record<string, unknown>;
   developerInstructions?: string;
   excludeTurns?: boolean;
   ephemeral?: boolean;
-  persistExtendedHistory?: boolean;
+};
+
+export type ThreadRollbackParams = {
+  threadId: string;
+  numTurns: number;
 };
 
 export type ThreadInjectItemsParams = {
@@ -358,6 +362,10 @@ export class CodexAppServerProcess {
 
   async threadFork(params: ThreadForkParams): Promise<unknown> {
     return await this.rpc("thread/fork", params);
+  }
+
+  async threadRollback(params: ThreadRollbackParams): Promise<unknown> {
+    return await this.rpc("thread/rollback", params);
   }
 
   async threadInjectItems(params: ThreadInjectItemsParams): Promise<unknown> {

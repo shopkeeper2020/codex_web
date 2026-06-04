@@ -148,6 +148,37 @@ describe('domain normalization', () => {
     ])
   })
 
+  it('normalizes official fork source and turn timestamps', () => {
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-forked',
+      owner: null,
+      thread: {
+        id: 'thread-forked',
+        name: 'Forked',
+        forkedFromId: 'thread-source',
+        createdAt: '2026-06-04T04:01:00.000Z',
+        turns: [
+          {
+            id: 'turn-a',
+            status: 'completed',
+            startedAt: '2026-06-04T03:59:00.000Z',
+            completedAt: '2026-06-04T04:00:00.000Z',
+            items: [{ type: 'agentMessage', id: 'item-agent', text: 'done' }],
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.derivedFromThreadId).toBe('thread-source')
+    expect(normalized?.thread.createdAtIso).toBe('2026-06-04T04:01:00.000Z')
+    expect(normalized?.turns[0]?.startedAtIso).toBe(
+      '2026-06-04T03:59:00.000Z',
+    )
+    expect(normalized?.turns[0]?.completedAtIso).toBe(
+      '2026-06-04T04:00:00.000Z',
+    )
+  })
+
   it('preserves assistant markdown whitespace from live snapshots', () => {
     const markdown = [
       '天气如下：',

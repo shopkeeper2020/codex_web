@@ -292,7 +292,7 @@ Web-owned thread 收到 Desktop/扩展的 model/reasoning/collaboration follower
 
 ### 偏差 1：active detail 过度回读 app-server
 
-当前 `/api/domain/thread-detail` 在存在 official IPC state 时，只有非 active 且内容完整才直接返回 official cache。active 时经常继续读 `appServer.threadRead({ includeTurns: true })` 做校验/合并。
+当前 `/api/domain/thread/read` 在存在 official IPC state 时，只有非 active 且内容完整才直接返回 official cache。active 时经常继续读 `appServer.threadRead({ includeTurns: true })` 做校验/合并。
 
 这会造成：
 
@@ -303,7 +303,7 @@ Web-owned thread 收到 Desktop/扩展的 model/reasoning/collaboration follower
 
 ### 偏差 2：浏览器实时通道只推轻量事件，前端再拉详情
 
-当前后端已有 WebSocket `/api/realtime`，不是纯轮询。但它主要告诉前端“某 thread 变了”，前端随后调用 `/api/domain/thread-detail`。
+当前后端已有 WebSocket `/api/realtime`，不是纯轮询。但它主要告诉前端“某 thread 变了”，前端随后调用 `/api/domain/thread/read`。
 
 这比官方 Webview 直接消费本地 `AppServerManager` state 慢一层。若 detail 端又回读 app-server，延迟会叠加。
 
@@ -330,7 +330,7 @@ Web-owned thread 收到 Desktop/扩展的 model/reasoning/collaboration follower
 
 ### 偏差 5：某些 fallback 对“完美复刻”过于激进
 
-`turn-start` 在确认 thread 已空闲后本地接管是合理兜底。但 active `steer` 如果 owner 不可达，不应自动转成本地 `turn/start`，除非已经严格证明 owner turn 结束，并且用户动作语义也已经从“引导当前”变为“发送新一轮”。
+`turn/start` 在确认 thread 已空闲后本地接管是合理兜底。但 active `steer` 如果 owner 不可达，不应自动转成本地 `turn/start`，除非已经严格证明 owner turn 结束，并且用户动作语义也已经从“引导当前”变为“发送新一轮”。
 
 完美复刻优先级应是：
 
@@ -408,7 +408,7 @@ Desktop / VS Code official clients
 
 改造点：
 
-- `apps/server/src/app.ts` 的 `/api/domain/thread-detail` 增加 `official-active-fast-path`。
+- `apps/server/src/app.ts` 的 `/api/domain/thread/read` 增加 `official-active-fast-path`。
 - `normalizeOfficialConversationState` 输出应足够支持 active UI。
 - app-server hydrate 成功后只更新 official cache，不覆盖 active live source。
 - detail response 增加 source 标记，例如 `official-ipc-live`、`official-ipc-hydrated`、`app-server-cold`，用于诊断，不暴露普通 UI。
@@ -456,7 +456,7 @@ Desktop / VS Code official clients
 
 改造点：
 
-- 移除或收紧 `turn-steer-stale-active-fallback`。
+- 移除或收紧 `turn/steer-stale-active-fallback`。
 - 若 app-server 确认原 active turn 已结束，应返回“当前回复已结束，请作为新消息发送”的 domain error，由前端保留文本并允许用户再次发送。
 - 只有用户明确选择“排队/新一轮”时，才走 start 语义。
 
@@ -561,7 +561,7 @@ Web 成为 owner 时，Desktop/扩展看到的 stream 速度接近官方 owner�
 
 范围：
 
-- `/api/domain/thread-detail` 改为 domain projector 输出，不直接堆合并逻辑。
+- `/api/domain/thread/read` 改为 domain projector 输出，不直接堆合并逻辑。
 - official-owned active thread 使用 official IPC live cache fast path。
 - app-server `thread/read` 只用于 cold load、baseline hydrate、完成收敛、stale 判定。
 - `/api/realtime` 推 typed domain events，active stream 不再靠 detail refetch 驱动。
@@ -632,10 +632,10 @@ Web 成为 owner 时，Desktop/扩展看到的 stream 速度接近官方 owner�
 ## 建议优先修改文件
 
 - `apps/server/src/app.ts`
-  - `/api/domain/thread-detail`
-  - `/api/domain/turn-start`
-  - `/api/domain/turn-steer`
-  - `/api/domain/turn-interrupt`
+  - `/api/domain/thread/read`
+  - `/api/domain/turn/start`
+  - `/api/domain/turn/steer`
+  - `/api/domain/turn/interrupt`
   - `/api/realtime`
 
 - `apps/server/src/syncCoordinator.ts`

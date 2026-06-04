@@ -167,7 +167,7 @@ describe("thread rename route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-rename",
+      url: "/api/domain/thread/rename",
       payload: {
         threadId: "thread-official",
         title: "Renamed official thread",
@@ -221,7 +221,7 @@ describe("thread rename route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-rename",
+      url: "/api/domain/thread/rename",
       payload: {
         threadId: "thread-official",
         title: "Renamed official thread",
@@ -248,7 +248,7 @@ describe("thread rename route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-rename",
+      url: "/api/domain/thread/rename",
       payload: { threadId: "thread-web", title: "Renamed Web thread" },
     });
 
@@ -293,7 +293,7 @@ describe("thread rename route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-rename",
+      url: "/api/domain/thread/rename",
       payload: { threadId: "thread-web", title: "Renamed Web thread" },
     });
 

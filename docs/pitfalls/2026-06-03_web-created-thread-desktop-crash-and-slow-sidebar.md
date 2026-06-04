@@ -54,7 +54,7 @@
 - `apps/server/src/app.ts`
   - `buildIdleLocalThreadSnapshot(...)`
   - `buildPendingLocalTurnSnapshot(...)`
-  - `/api/domain/thread-create`
+  - `/api/domain/thread/start`
 
 ## 后续避免方式
 

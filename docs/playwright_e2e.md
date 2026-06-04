@@ -100,9 +100,9 @@ Remove-Item Env:\LIVE_SYNC_TEXT
 该测试只在 `desktop-chromium` 项目里执行一次，会检查：
 
 - `/api/protocol/compatibility` 中官方 IPC 已连接、app-server 已初始化。
-- `/api/domain/turn-start` 返回 `mode: official-follower`。
+- `/api/domain/turn/start` 返回 `mode: official-follower`。
 - `/api/official-ipc/status` 的 `recentFollowerRequests` 出现当前 thread 的 `thread-follower-start-turn success`。
-- `/api/domain/thread-detail` 中恰好出现一次本次发送的 marker 文本。
+- `/api/domain/thread/read` 中恰好出现一次本次发送的 marker 文本。
 
 active turn 的 steer/interrupt 也有 opt-in 测试：
 

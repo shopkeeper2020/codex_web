@@ -15,8 +15,8 @@ async function fulfillJson(route: Route, body: JsonBody): Promise<void> {
 
 async function clearMockRoutes(page: Page): Promise<void> {
   for (const pattern of [
-    "**/api/domain/threads**",
-    "**/api/domain/thread-detail**",
+    "**/api/domain/thread/list**",
+    "**/api/domain/thread/read**",
     "**/api/approvals",
   ]) {
     await page.unroute(pattern).catch(() => undefined);
@@ -36,7 +36,7 @@ export async function installEmptyThreadListMocks(
       })
     : Promise.resolve();
 
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     await threadListGate;
     await fulfillJson(route, {
       data: {
@@ -48,7 +48,7 @@ export async function installEmptyThreadListMocks(
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     await fulfillJson(route, {
       data: {
         thread: null,

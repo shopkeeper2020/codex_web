@@ -171,7 +171,7 @@ test.describe("codex_web UI fidelity baseline captures", () => {
     }
     await capture(page, testInfo, "message-blocks");
 
-    await page.route("**/api/domain/thread-search**", async (route) => {
+    await page.route("**/api/domain/thread/search**", async (route) => {
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({

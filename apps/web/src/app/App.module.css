@@ -1272,6 +1272,92 @@
   max-width: 100%;
 }
 
+.turnActionRow {
+  display: flex;
+  min-height: 28px;
+  margin: -10px 0 14px;
+  padding-left: 0;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.turnActionRow:hover,
+.turnActionRow:focus-within {
+  opacity: 1;
+}
+
+.turnActionControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.turnActionControls button {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+
+.turnActionControls button:hover:not(:disabled),
+.turnActionControls button:focus-visible:not(:disabled) {
+  background: #f1f2f4;
+  color: #4b5563;
+}
+
+.turnActionControls button:disabled {
+  color: #c7cbd1;
+  cursor: default;
+}
+
+.turnActionTime {
+  margin-left: 3px;
+  color: #9ca3af;
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.derivedFromThreadRow {
+  display: grid;
+  grid-template-columns: minmax(20px, 1fr) auto minmax(20px, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 24px;
+  color: #3b82f6;
+}
+
+.derivedFromThreadRow > span {
+  height: 1px;
+  background: #ececef;
+}
+
+.derivedFromThreadRow button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 8px;
+  background: transparent;
+  color: #2583ff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.derivedFromThreadRow button:hover,
+.derivedFromThreadRow button:focus-visible {
+  background: #eff6ff;
+}
+
 .messageAuthor {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);

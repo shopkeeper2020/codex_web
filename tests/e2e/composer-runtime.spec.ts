@@ -45,7 +45,7 @@ async function installComposerRuntimeMocks(
   const activeTurnId = (): string =>
     isActiveTurn() ? "turn-active-runtime-e2e" : "";
 
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     const currentThreadInProgress = isThreadInProgress();
@@ -81,7 +81,7 @@ async function installComposerRuntimeMocks(
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     const currentActiveTurnId = activeTurnId();
     const currentThreadInProgress = isThreadInProgress();
     const idleTurns = options.completedTurnWhenIdle
@@ -294,7 +294,7 @@ async function installComposerRuntimeMocks(
     await fulfillJson(route, { data: [] });
   });
 
-  await page.route("**/api/domain/turn-start", async (route) => {
+  await page.route("**/api/domain/turn/start", async (route) => {
     onTurnStart(route.request().postDataJSON() as JsonBody);
     await fulfillJson(route, {
       data: {
@@ -397,7 +397,7 @@ test.describe("composer runtime options", () => {
         ],
       },
     );
-    await page.route("**/api/domain/thread-create", async (route) => {
+    await page.route("**/api/domain/thread/start", async (route) => {
       threadCreateBody = route.request().postDataJSON() as JsonBody;
       const cwd = (threadCreateBody.cwd as string | null | undefined) ?? null;
       await fulfillJson(route, {
@@ -871,7 +871,7 @@ test.describe("composer runtime options", () => {
         },
       });
     });
-    await page.route("**/api/domain/turn-steer", async (route) => {
+    await page.route("**/api/domain/turn/steer", async (route) => {
       capturedTurnSteer = route.request().postDataJSON() as JsonBody;
       await fulfillJson(route, {
         data: {
@@ -937,7 +937,7 @@ test.describe("composer runtime options", () => {
       },
       { activeTurn: () => activeTurn, completedTurnWhenIdle: true },
     );
-    await page.route("**/api/domain/turn-steer", async (route) => {
+    await page.route("**/api/domain/turn/steer", async (route) => {
       capturedTurnSteer = route.request().postDataJSON() as JsonBody;
       await fulfillJson(route, {
         data: {
@@ -1168,7 +1168,7 @@ test.describe("composer runtime options", () => {
     });
   });
 
-  test("sends selected model, effort, plan mode, and skills to turn-start", async ({
+  test("sends selected model, effort, plan mode, and skills to turn/start", async ({
     page,
   }, testInfo) => {
     test.skip(

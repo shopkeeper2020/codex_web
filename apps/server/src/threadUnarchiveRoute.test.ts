@@ -132,7 +132,7 @@ describe("thread unarchive route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-unarchive",
+      url: "/api/domain/thread/unarchive",
       payload: { threadId: "thread-official" },
     });
 

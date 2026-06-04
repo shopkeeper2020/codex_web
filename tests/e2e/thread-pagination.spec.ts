@@ -32,7 +32,7 @@ async function installThreadPaginationMocks(page: Page): Promise<{
   const normalCursors: string[] = [];
   const archivedCursors: string[] = [];
 
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     const cursor = url.searchParams.get("cursor") ?? "";
@@ -65,7 +65,7 @@ async function installThreadPaginationMocks(page: Page): Promise<{
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     const url = new URL(route.request().url());
     const requestedThreadId =
       url.searchParams.get("threadId") || "thread-page-one";

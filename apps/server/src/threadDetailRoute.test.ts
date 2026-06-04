@@ -269,7 +269,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-official",
+      url: "/api/domain/thread/read?threadId=thread-official",
     });
 
     expect(response.statusCode).toBe(200);
@@ -325,7 +325,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-pending",
+      url: "/api/domain/thread/read?threadId=thread-pending",
     });
 
     expect(response.statusCode).toBe(200);
@@ -359,7 +359,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-sparse",
+      url: "/api/domain/thread/read?threadId=thread-sparse",
     });
 
     expect(response.statusCode).toBe(200);
@@ -392,7 +392,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-app-server",
+      url: "/api/domain/thread/read?threadId=thread-app-server",
     });
 
     expect(response.statusCode).toBe(200);
@@ -445,7 +445,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-created",
+      url: "/api/domain/thread/read?threadId=thread-created",
     });
 
     expect(response.statusCode).toBe(502);
@@ -467,7 +467,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-app-server",
+      url: "/api/domain/thread/read?threadId=thread-app-server",
     });
 
     expect(response.statusCode).toBe(200);
@@ -509,7 +509,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-active",
+      url: "/api/domain/thread/read?threadId=thread-active",
     });
 
     expect(response.statusCode).toBe(200);
@@ -583,7 +583,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-stale-active",
+      url: "/api/domain/thread/read?threadId=thread-stale-active",
     });
 
     expect(response.statusCode).toBe(200);
@@ -709,7 +709,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-merge-order",
+      url: "/api/domain/thread/read?threadId=thread-merge-order",
     });
 
     expect(response.statusCode).toBe(200);
@@ -810,7 +810,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-live-items",
+      url: "/api/domain/thread/read?threadId=thread-live-items",
     });
 
     expect(response.statusCode).toBe(200);
@@ -916,7 +916,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-live-text",
+      url: "/api/domain/thread/read?threadId=thread-live-text",
     });
 
     expect(response.statusCode).toBe(200);
@@ -1007,7 +1007,7 @@ describe("thread detail route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-detail?threadId=thread-stale-finished",
+      url: "/api/domain/thread/read?threadId=thread-stale-finished",
     });
 
     expect(response.statusCode).toBe(200);

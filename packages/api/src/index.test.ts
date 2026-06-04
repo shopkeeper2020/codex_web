@@ -43,8 +43,10 @@ import {
   skillsResponseSchema,
   threadArchiveRequestSchema,
   threadArchiveResponseSchema,
-  threadCreateRequestSchema,
-  threadCreateResponseSchema,
+  threadForkRequestSchema,
+  threadForkResponseSchema,
+  threadStartRequestSchema,
+  threadStartResponseSchema,
   threadDetailResponseSchema,
   threadListResponseSchema,
   threadRenameRequestSchema,
@@ -180,7 +182,7 @@ describe("API contract schemas", () => {
     },
   ];
 
-  it("normalizes a valid turn-start request", () => {
+  it("normalizes a valid turn/start request", () => {
     expect(
       turnStartRequestSchema.parse({
         conversationId: " thread-a ",
@@ -199,7 +201,7 @@ describe("API contract schemas", () => {
     });
   });
 
-  it("allows attachment-only turn-start requests", () => {
+  it("allows attachment-only turn/start requests", () => {
     expect(
       turnStartRequestSchema.parse({
         threadId: "thread-a",
@@ -213,7 +215,7 @@ describe("API contract schemas", () => {
     });
   });
 
-  it("allows skill-only turn-start requests", () => {
+  it("allows skill-only turn/start requests", () => {
     expect(
       turnStartRequestSchema.parse({
         threadId: "thread-a",
@@ -238,7 +240,7 @@ describe("API contract schemas", () => {
     }
   });
 
-  it("rejects raw turn-start attachments outside the managed attachmentIds flow", () => {
+  it("rejects raw turn/start attachments outside the managed attachmentIds flow", () => {
     const parsed = turnStartRequestSchema.safeParse({
       threadId: "thread-a",
       text: "hello",
@@ -973,18 +975,42 @@ describe("API contract schemas", () => {
     ).toBe(false);
   });
 
-  it("validates thread create, rename, archive, and unarchive contracts", () => {
+  it("validates thread start, rename, archive, and unarchive contracts", () => {
     expect(
-      threadCreateRequestSchema.parse({
+      threadStartRequestSchema.parse({
         cwd: "C:\\workspace\\project-a",
       }),
     ).toEqual({ cwd: "C:\\workspace\\project-a" });
 
     expect(
-      threadCreateResponseSchema.parse({
+      threadStartResponseSchema.parse({
         data: { thread, raw: { id: "thread-a" } },
       }).data.thread.id,
     ).toBe("thread-a");
+
+    expect(
+      threadForkRequestSchema.parse({
+        threadId: " thread-a ",
+        cwd: " C:\\workspace\\project-a ",
+        afterTurnId: " turn-a ",
+      }),
+    ).toMatchObject({
+      threadId: "thread-a",
+      cwd: "C:\\workspace\\project-a",
+      afterTurnId: "turn-a",
+    });
+
+    expect(
+      threadForkResponseSchema.parse({
+        data: {
+          thread,
+          derivedFromThreadId: "thread-source",
+          raw: { id: "thread-a" },
+        },
+      }).data,
+    ).toMatchObject({
+      derivedFromThreadId: "thread-source",
+    });
 
     expect(
       sideConversationCreateRequestSchema.parse({

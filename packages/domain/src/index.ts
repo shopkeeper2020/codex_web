@@ -31,6 +31,7 @@ export type Thread = {
   title: string
   projectId: string | null
   path: string | null
+  createdAtIso?: string | null
   updatedAtIso: string | null
   inProgress: boolean
   pinned: boolean
@@ -136,6 +137,8 @@ export type MessageItem =
 export type Turn = {
   id: string
   status: 'idle' | 'active' | 'completed' | 'failed' | 'interrupted' | 'unknown'
+  startedAtIso?: string | null
+  completedAtIso?: string | null
   items: MessageItem[]
 }
 
@@ -174,6 +177,7 @@ export type ThreadGoal = {
 export type ThreadDetail = {
   thread: Thread
   goal: ThreadGoal | null
+  derivedFromThreadId?: string | null
   turns: Turn[]
   subAgents: ThreadSubAgent[]
   sideConversations: ThreadSideConversation[]
@@ -389,6 +393,44 @@ function readThreadGoal(record: Record<string, unknown>): ThreadGoal | null {
     normalizeThreadGoal(runtimeStatus?.threadGoal) ||
     normalizeThreadGoal(conversationState?.goal) ||
     normalizeThreadGoal(conversationState?.threadGoal)
+  )
+}
+
+function readDerivedFromThreadId(record: Record<string, unknown>): string | null {
+  return (
+    readString(record.forkedFromId) ||
+    readString(record.forked_from_id) ||
+    readString(record.sourceThreadId) ||
+    readString(record.source_thread_id) ||
+    readString(record.sourceConversationId) ||
+    readString(record.source_conversation_id) ||
+    null
+  )
+}
+
+function readTurnStartedAtIso(record: Record<string, unknown> | null): string | null {
+  if (!record) return null
+  return (
+    readIsoFromTimestamp(record.startedAt) ||
+    readIsoFromTimestamp(record.started_at) ||
+    readIsoFromTimestamp(record.startedAtMs) ||
+    readIsoFromTimestamp(record.createdAt) ||
+    readIsoFromTimestamp(record.created_at) ||
+    null
+  )
+}
+
+function readTurnCompletedAtIso(record: Record<string, unknown> | null): string | null {
+  if (!record) return null
+  return (
+    readIsoFromTimestamp(record.completedAt) ||
+    readIsoFromTimestamp(record.completed_at) ||
+    readIsoFromTimestamp(record.completedAtMs) ||
+    readIsoFromTimestamp(record.finishedAt) ||
+    readIsoFromTimestamp(record.finished_at) ||
+    readIsoFromTimestamp(record.updatedAt) ||
+    readIsoFromTimestamp(record.updated_at) ||
+    null
   )
 }
 
@@ -1115,11 +1157,13 @@ export function normalizeOfficialThreadSummary(value: unknown, owner: Owner | nu
   const cwd = readString(record.cwd)
   const path = readString(record.path)
   const projectId = cwd || null
+  const createdAtIso = readIsoFromTimestamp(record.createdAt ?? record.created_at ?? record.createdAtMs)
   return {
     id,
     title,
     projectId,
     path: cwd || path || null,
+    ...(createdAtIso ? { createdAtIso } : {}),
     updatedAtIso: readIsoFromTimestamp(record.updatedAt ?? record.updated_at ?? record.updatedAtMs),
     inProgress: readBooleanInProgress(record.status) || readBooleanInProgress(record.threadRuntimeStatus),
     pinned: readBoolean(record.pinned) || readBoolean(record.isPinned) || readBoolean(record.is_pinned),
@@ -1268,14 +1312,19 @@ export function normalizeOfficialThreadDetail(input: {
   return {
     thread,
     goal: readThreadGoal(threadRecord),
+    derivedFromThreadId: readDerivedFromThreadId(threadRecord),
     subAgents: normalizeThreadSubAgents(threadRecord, input.source ?? 'app-server'),
     sideConversations: [],
     turns: mergePendingTurnShadows(turnsRaw.map((turnValue, turnIndex) => {
       const turn = asRecord(turnValue)
       const itemsRaw = Array.isArray(turn?.items) ? turn.items : []
+      const startedAtIso = readTurnStartedAtIso(turn)
+      const completedAtIso = readTurnCompletedAtIso(turn)
       return {
         id: readString(turn?.turnId) || readString(turn?.id) || `turn-${turnIndex}`,
         status: readTurnStatus(turn?.status),
+        ...(startedAtIso ? { startedAtIso } : {}),
+        ...(completedAtIso ? { completedAtIso } : {}),
         items: itemsRaw.flatMap((itemValue, itemIndex) =>
           itemValue == null ? [] : [normalizeMessageItem(itemValue, itemIndex)],
         ),

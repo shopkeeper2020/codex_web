@@ -6,9 +6,9 @@ Web 的 `/api/official-ipc/status` 显示 connected，`/api/official-thread-stre
 
 ## 根因
 
-官方 Desktop 某些 live snapshot 会把当前运行态放在 `threadRuntimeStatus` / active turn 元数据里，同时最后一个 active turn 的 `items` 暂时为空。旧的 `/api/domain/thread-detail` 只判断官方 detail 里历史 turns 非空，就直接返回 `official-ipc` 详情；结果 Web 拿到的是“有 active turn id、没有 active items”的半截尾巴，不再走 app-server `thread/read` 只读回读补齐。
+官方 Desktop 某些 live snapshot 会把当前运行态放在 `threadRuntimeStatus` / active turn 元数据里，同时最后一个 active turn 的 `items` 暂时为空。旧的 `/api/domain/thread/read` 只判断官方 detail 里历史 turns 非空，就直接返回 `official-ipc` 详情；结果 Web 拿到的是“有 active turn id、没有 active items”的半截尾巴，不再走 app-server `thread/read` 只读回读补齐。
 
-列表还有另一个独立问题：`/api/domain/threads` 主要来自 app-server 的 thread/list 投影，旧实现只补 owner，不用 official stream cache 覆盖 `inProgress`，所以详情已经 active 时列表行仍可能是完成态。
+列表还有另一个独立问题：`/api/domain/thread/list` 主要来自 app-server 的 thread/list 投影，旧实现只补 owner，不用 official stream cache 覆盖 `inProgress`，所以详情已经 active 时列表行仍可能是完成态。
 
 ## 影响范围
 

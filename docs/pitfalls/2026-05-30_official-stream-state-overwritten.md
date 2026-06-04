@@ -21,7 +21,7 @@ Web 已连接官方 IPC，`/api/official-ipc/status` 正常，但 Desktop 正在
 
 ## 最终解决方案
 
-- `thread-detail` 的 app-server 只读回填只补内容，不抹掉官方 live 状态。
+- `thread/read` 的 app-server 只读回填只补内容，不抹掉官方 live 状态。
 - 如果官方 IPC state 仍是 `isInProgress=true`，但 app-server 详情是旧状态，则在回灌前保留/恢复 `status: active`、`threadRuntimeStatus.type: active` 和 `activeTurnId` 对应 turn。
 - `patches-without-snapshot` 恢复时先解包 `{ thread: ... }`，只把真实 thread snapshot 注入官方流缓存。
 - WebSocket `connected` 后立即刷新 thread 列表、当前详情和审批状态，避免重连后页面停在旧状态。

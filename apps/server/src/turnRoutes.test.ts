@@ -335,22 +335,22 @@ afterEach(async () => {
 describe("turn HTTP routes", () => {
   it.each([
     {
-      route: "/api/domain/turn-start",
+      route: "/api/domain/turn/start",
       body: { threadId: "thread-a", text: "hello" },
       source: "turn-start",
     },
     {
-      route: "/api/domain/turn-steer",
+      route: "/api/domain/turn/steer",
       body: { threadId: "thread-a", expectedTurnId: "turn-a", text: "guide" },
       source: "turn-steer",
     },
     {
-      route: "/api/domain/turn-interrupt",
+      route: "/api/domain/turn/interrupt",
       body: { threadId: "thread-a", turnId: "turn-a" },
       source: "turn-interrupt",
     },
     {
-      route: "/api/domain/thread-compact",
+      route: "/api/domain/thread/compact/start",
       body: { threadId: "thread-a" },
       source: "thread-compact",
     },
@@ -396,7 +396,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-compact",
+      url: "/api/domain/thread/compact/start",
       payload: { threadId: "thread-a" },
     });
 
@@ -419,7 +419,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-compact",
+      url: "/api/domain/thread/compact/start",
       payload: { threadId: "thread-a" },
     });
 
@@ -456,7 +456,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: {
         threadId: "thread-a",
         text: "hello",
@@ -495,7 +495,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: {
         threadId: "thread-a",
         text: "",
@@ -568,7 +568,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-steer",
+      url: "/api/domain/turn/steer",
       payload: {
         threadId: "thread-a",
         expectedTurnId: "turn-active",
@@ -637,7 +637,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: {
         threadId: "thread-a",
         text: "hello",
@@ -689,7 +689,7 @@ describe("turn HTTP routes", () => {
 
     const startResponse = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: {
         threadId: "thread-a",
         text: "   ",
@@ -708,7 +708,7 @@ describe("turn HTTP routes", () => {
 
     const steerResponse = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-steer",
+      url: "/api/domain/turn/steer",
       payload: {
         threadId: "thread-a",
         expectedTurnId: "turn-active",
@@ -736,7 +736,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: {
         threadId: "thread-a",
         text: "hello",
@@ -769,7 +769,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: {
         threadId: "thread-a",
         text: "hello",
@@ -793,7 +793,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: { threadId: "thread-a", text: "hello" },
     });
 
@@ -813,7 +813,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: { threadId: "thread-a", text: "hello" },
     });
 
@@ -851,7 +851,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: { threadId: "thread-a", text: "hello" },
     });
 
@@ -876,7 +876,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-steer",
+      url: "/api/domain/turn/steer",
       payload: {
         threadId: "thread-a",
         expectedTurnId: "turn-stale",
@@ -915,7 +915,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: { threadId: "thread-a", text: "hello" },
     });
 
@@ -940,7 +940,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: { threadId: "thread-a", text: "hello" },
     });
 
@@ -997,7 +997,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: { threadId: "thread-a", text: "first message" },
     });
 
@@ -1029,7 +1029,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: {
         threadId: "thread-a",
         text: "hello",
@@ -1085,7 +1085,7 @@ describe("turn HTTP routes", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-steer",
+      url: "/api/domain/turn/steer",
       payload: {
         threadId: "thread-a",
         expectedTurnId: "turn-a",

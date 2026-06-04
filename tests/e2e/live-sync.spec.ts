@@ -126,7 +126,7 @@ test.describe("codex_web live sync smoke", () => {
 
     await expectCompatibilityReady(request);
 
-    const response = await request.post("/api/domain/turn-start", {
+    const response = await request.post("/api/domain/turn/start", {
       data: {
         threadId: liveThreadId,
         text: liveText,
@@ -145,7 +145,7 @@ test.describe("codex_web live sync smoke", () => {
       .poll(
         async () => {
           const detailResponse = await request.get(
-            `/api/domain/thread-detail?threadId=${encodeURIComponent(liveThreadId ?? "")}`,
+            `/api/domain/thread/read?threadId=${encodeURIComponent(liveThreadId ?? "")}`,
           );
           if (!detailResponse.ok()) return 0;
           const detail = await detailResponse.json();
@@ -178,7 +178,7 @@ test.describe("codex_web live sync smoke", () => {
 
     await expectCompatibilityReady(request);
     const activeTurnId = await readActiveTurnId(request, liveThreadId ?? "");
-    const response = await request.post("/api/domain/turn-steer", {
+    const response = await request.post("/api/domain/turn/steer", {
       data: {
         threadId: liveThreadId,
         expectedTurnId: activeTurnId,
@@ -213,7 +213,7 @@ test.describe("codex_web live sync smoke", () => {
 
     await expectCompatibilityReady(request);
     const activeTurnId = await readActiveTurnId(request, liveThreadId ?? "");
-    const response = await request.post("/api/domain/turn-interrupt", {
+    const response = await request.post("/api/domain/turn/interrupt", {
       data: {
         threadId: liveThreadId,
         turnId: activeTurnId,
@@ -275,7 +275,7 @@ test.describe("codex_web live sync smoke", () => {
     );
     expect(contentResponse.ok()).toBeTruthy();
 
-    const response = await request.post("/api/domain/turn-start", {
+    const response = await request.post("/api/domain/turn/start", {
       data: {
         threadId: liveThreadId,
         text: liveAttachmentText,
@@ -295,7 +295,7 @@ test.describe("codex_web live sync smoke", () => {
       .poll(
         async () => {
           const detailResponse = await request.get(
-            `/api/domain/thread-detail?threadId=${encodeURIComponent(liveThreadId ?? "")}`,
+            `/api/domain/thread/read?threadId=${encodeURIComponent(liveThreadId ?? "")}`,
           );
           if (!detailResponse.ok()) return 0;
           const detail = await detailResponse.json();

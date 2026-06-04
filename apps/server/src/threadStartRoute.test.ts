@@ -85,7 +85,7 @@ const harnesses: Harness[] = [];
 async function createHarness(
   input: { clientId?: string | null; broadcastResult?: boolean } = {},
 ): Promise<Harness> {
-  const root = mkdtempSync(join(tmpdir(), "codex-web-thread-create-"));
+  const root = mkdtempSync(join(tmpdir(), "codex-web-thread-start-"));
   const officialIpc = new OfficialIpcBridge("");
   if (input.clientId !== null) {
     (officialIpc as unknown as { clientId: string }).clientId =
@@ -138,15 +138,15 @@ afterEach(async () => {
   }
 });
 
-describe("thread create route", () => {
-  it("rejects thread creation before Web has an official IPC client id", async () => {
+describe("thread start route", () => {
+  it("rejects thread start before Web has an official IPC client id", async () => {
     const { context, officialIpc, appServer } = await createHarness({
       clientId: null,
     });
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-create",
+      url: "/api/domain/thread/start",
       payload: { cwd: "C:\\workspace\\codex_web" },
     });
 
@@ -164,7 +164,7 @@ describe("thread create route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-create",
+      url: "/api/domain/thread/start",
       payload: { cwd: "C:\\workspace\\codex_web" },
     });
 
@@ -224,14 +224,14 @@ describe("thread create route", () => {
     expect(recentRefreshBroadcasts).toEqual(["thread-web-created"]);
   });
 
-  it("rejects thread creation if the idle stream snapshot cannot be broadcast", async () => {
+  it("rejects thread start if the idle stream snapshot cannot be broadcast", async () => {
     const { context, officialIpc, appServer } = await createHarness({
       broadcastResult: false,
     });
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-create",
+      url: "/api/domain/thread/start",
       payload: { cwd: "C:\\workspace\\codex_web" },
     });
 
@@ -255,7 +255,7 @@ describe("thread create route", () => {
     });
     expect(context.diagnostics.list().at(-1)).toMatchObject({
       level: "warn",
-      source: "thread-create",
+      source: "thread/start",
       message: "official-ipc-owner-not-established",
       data: { threadId: "thread-web-created" },
     });

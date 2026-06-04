@@ -46,7 +46,7 @@ test.describe("codex_web app shell", () => {
     const threadRoutesReady = new Promise<void>((resolve) => {
       releaseThreadRoutes = resolve;
     });
-    await page.route("**/api/domain/threads**", async (route) => {
+    await page.route("**/api/domain/thread/list**", async (route) => {
       await threadRoutesReady;
       await route.fulfill({
         contentType: "application/json",
@@ -485,8 +485,8 @@ test.describe("codex_web app shell", () => {
       owner: null,
     };
 
-    await page.unroute("**/api/domain/threads**").catch(() => undefined);
-    await page.route("**/api/domain/threads**", async (route) => {
+    await page.unroute("**/api/domain/thread/list**").catch(() => undefined);
+    await page.route("**/api/domain/thread/list**", async (route) => {
       const url = new URL(route.request().url());
       const archived = url.searchParams.get("archived") === "true";
       await route.fulfill({
@@ -514,8 +514,8 @@ test.describe("codex_web app shell", () => {
         }),
       });
     });
-    await page.unroute("**/api/domain/thread-detail**").catch(() => undefined);
-    await page.route("**/api/domain/thread-detail**", async (route) => {
+    await page.unroute("**/api/domain/thread/read**").catch(() => undefined);
+    await page.route("**/api/domain/thread/read**", async (route) => {
       const url = new URL(route.request().url());
       const thread =
         url.searchParams.get("threadId") === mcpThread.id
@@ -638,7 +638,7 @@ test.describe("codex_web app shell", () => {
     let createCalled = 0;
     const turnStartBodies: Array<Record<string, unknown>> = [];
 
-    await page.route("**/api/domain/thread-create", async (route) => {
+    await page.route("**/api/domain/thread/start", async (route) => {
       createCalled += 1;
       await route.fulfill({
         status: 500,
@@ -647,7 +647,7 @@ test.describe("codex_web app shell", () => {
       });
     });
 
-    await page.route("**/api/domain/turn-start", async (route) => {
+    await page.route("**/api/domain/turn/start", async (route) => {
       turnStartBodies.push(
         route.request().postDataJSON() as Record<string, unknown>,
       );
@@ -865,7 +865,7 @@ test.describe("codex_web app shell", () => {
     await installActiveTurnMocks(page, {
       threadDetailOverrides: () => ({ goal }),
     });
-    await page.route("**/api/domain/thread-goal-set", async (route) => {
+    await page.route("**/api/domain/thread/goal/set", async (route) => {
       const body = route.request().postDataJSON() as Record<string, unknown>;
       setBodies.push(body);
       const nextObjective =
@@ -900,7 +900,7 @@ test.describe("codex_web app shell", () => {
         }),
       });
     });
-    await page.route("**/api/domain/thread-goal-clear", async (route) => {
+    await page.route("**/api/domain/thread/goal/clear", async (route) => {
       const body = route.request().postDataJSON() as Record<string, unknown>;
       clearBodies.push(body);
       goal = null;
@@ -1004,7 +1004,7 @@ test.describe("codex_web app shell", () => {
         }),
       });
     });
-    await page.route("**/api/domain/thread-archive", async (route) => {
+    await page.route("**/api/domain/thread/archive", async (route) => {
       const body = route.request().postDataJSON() as Record<string, unknown>;
       archived = true;
       archiveBodies.push(body);
@@ -1105,7 +1105,7 @@ test.describe("codex_web app shell", () => {
     page,
   }, testInfo) => {
     await installActiveTurnMocks(page);
-    await page.unroute("**/api/domain/thread-detail**").catch(() => undefined);
+    await page.unroute("**/api/domain/thread/read**").catch(() => undefined);
 
     const draftThreadId = "draft-thread-e2e";
     const draftThread = {
@@ -1126,7 +1126,7 @@ test.describe("codex_web app shell", () => {
       inProgress: true,
       owner: null,
     };
-    await page.route("**/api/domain/thread-detail**", async (route) => {
+    await page.route("**/api/domain/thread/read**", async (route) => {
       const url = new URL(route.request().url());
       const threadId = url.searchParams.get("threadId");
       await route.fulfill({
@@ -1177,7 +1177,7 @@ test.describe("codex_web app shell", () => {
     let capturedCreateThread: Record<string, unknown> | null = null;
     let capturedTurnStart: Record<string, unknown> | null = null;
     let capturedAttachmentThreadId: string | null | undefined;
-    await page.route("**/api/domain/thread-create", async (route) => {
+    await page.route("**/api/domain/thread/start", async (route) => {
       capturedCreateThread = route.request().postDataJSON() as Record<
         string,
         unknown
@@ -1187,7 +1187,7 @@ test.describe("codex_web app shell", () => {
         body: JSON.stringify({ data: { thread: draftThread, raw: {} } }),
       });
     });
-    await page.route("**/api/domain/turn-start", async (route) => {
+    await page.route("**/api/domain/turn/start", async (route) => {
       capturedTurnStart = route.request().postDataJSON() as Record<
         string,
         unknown
@@ -1463,7 +1463,7 @@ test.describe("codex_web app shell", () => {
     request,
   }) => {
     const response = await request.get(
-      "/api/domain/threads?limit=1&archived=false",
+      "/api/domain/thread/list?limit=1&archived=false",
     );
     const payload = (await response.json()) as {
       data?: { threads?: Array<{ id?: string }> };
@@ -1630,7 +1630,7 @@ test.describe("codex_web app shell", () => {
   test("opens global search from keyboard and mobile header", async ({
     page,
   }, testInfo) => {
-    await page.route("**/api/domain/thread-search**", async (route) => {
+    await page.route("**/api/domain/thread/search**", async (route) => {
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({

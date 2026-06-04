@@ -142,11 +142,11 @@ describe("thread list route", () => {
 
     const firstResponse = await context.app.inject({
       method: "GET",
-      url: "/api/domain/threads?limit=1&archived=false",
+      url: "/api/domain/thread/list?limit=1&archived=false",
     });
     const secondResponse = await context.app.inject({
       method: "GET",
-      url: "/api/domain/threads?limit=1&archived=false&cursor=cursor-1",
+      url: "/api/domain/thread/list?limit=1&archived=false&cursor=cursor-1",
     });
 
     expect(firstResponse.statusCode).toBe(200);
@@ -194,7 +194,7 @@ describe("thread list route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/threads?limit=1&archived=false",
+      url: "/api/domain/thread/list?limit=1&archived=false",
     });
 
     expect(response.statusCode, response.body).toBe(200);
@@ -221,7 +221,7 @@ describe("thread list route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/threads?limit=1&archived=false",
+      url: "/api/domain/thread/list?limit=1&archived=false",
     });
 
     expect(response.statusCode, response.body).toBe(200);
@@ -237,7 +237,7 @@ describe("thread list route", () => {
 
     const response = await context.app.inject({
       method: "GET",
-      url: "/api/domain/thread-search?searchTerm=weather&archived=false&limit=9",
+      url: "/api/domain/thread/search?searchTerm=weather&archived=false&limit=9",
     });
 
     expect(response.statusCode, response.body).toBe(200);

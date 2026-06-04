@@ -28,10 +28,10 @@ Desktop、VS Code 扩展或 `codex_web` 后端重启后，Web 侧仍能看到 th
 
 实测中也可能出现 direct target 和 discovery 都返回 generic `official-ipc-request-failed:thread-follower-*` 的情况。服务端 fallback policy 必须继续把它当作 owner/routing 不可用，而不是普通 502。
 
-当前例外只允许在 `turn-start` 上发生：如果 follower start 失败，后端会读 app-server 完整 thread 快照；只有确认该 thread 已空闲、没有 active turn 时，才退休旧外部 owner cache，claim local-only Web owner，并用本地 app-server 启动新的 turn。`turn-steer`、`turn-interrupt` 和 `thread-compact` 仍不得静默 fallback，因为这些操作针对正在运行的同一个 turn，owner 不可达时本地执行会造成分叉。
+当前例外只允许在 `turn/start` 上发生：如果 follower start 失败，后端会读 app-server 完整 thread 快照；只有确认该 thread 已空闲、没有 active turn 时，才退休旧外部 owner cache，claim local-only Web owner，并用本地 app-server 启动新的 turn。`turn/steer`、`turn/interrupt` 和 `thread/compact/start` 仍不得静默 fallback，因为这些操作针对正在运行的同一个 turn，owner 不可达时本地执行会造成分叉。
 
 ## 后续避免方式
 
 - 排查三端同步问题时先看 `/api/sync/readiness` 和 `/api/official-ipc/status.recentFollowerRequests`。
 - 如果看到先 error 后同 thread 的 discovery success，这通常表示旧 owner id 已被恢复，不应再按同步失败处理。
-- 如果 discovery 也失败，先确认 `/api/domain/thread-detail` 或 app-server 读回是否显示该 thread 已空闲；空闲的 `turn-start` 可以由 Web 接管，active turn 仍要求用户在 Desktop 或 VS Code 打开目标 thread，并检查协议版本、handler 注册状态和 `/api/official-ipc/status.recentFollowerRequests` 中的 error 形态。
+- 如果 discovery 也失败，先确认 `/api/domain/thread/read` 或 app-server 读回是否显示该 thread 已空闲；空闲的 `turn/start` 可以由 Web 接管，active turn 仍要求用户在 Desktop 或 VS Code 打开目标 thread，并检查协议版本、handler 注册状态和 `/api/official-ipc/status.recentFollowerRequests` 中的 error 形态。

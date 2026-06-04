@@ -82,6 +82,7 @@ export function App(): ReactElement {
     addFavoriteProjectFromPrompt,
     interruptSelectedTurn,
     compactSelectedThread,
+    forkThreadById,
     setThreadGoalById,
     clearThreadGoalById,
     decidePendingApproval,
@@ -447,6 +448,8 @@ export function App(): ReactElement {
             onSteerQueuedMessage={steerQueuedMessage}
             onSetThreadGoal={setThreadGoalById}
             onClearThreadGoal={clearThreadGoalById}
+            onForkThread={forkThreadById}
+            onSelectThread={selectThread}
             pinnedSummaryOpen={visiblePinnedSummaryOpen}
             rightSidebarOpen={visibleRightSidebarOpen}
             bottomTerminalOpen={visibleBottomTerminalOpen}

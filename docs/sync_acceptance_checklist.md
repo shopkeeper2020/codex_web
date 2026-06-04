@@ -174,10 +174,10 @@ report 只保存 compatibility、sync readiness、recent follower/handoff、mark
 - `/health`
 - `/api/protocol/compatibility`
 - `/api/sync/readiness?threadId=<thread-id>`
-- `/api/domain/turn-start` 的 `mode`
-- `/api/domain/turn-steer` 或 `/api/domain/turn-interrupt` 的 `mode`（仅显式 `--steer` / `--interrupt`）
+- `/api/domain/turn/start` 的 `mode`
+- `/api/domain/turn/steer` 或 `/api/domain/turn/interrupt` 的 `mode`（仅显式 `--steer` / `--interrupt`）
 - `/api/official-ipc/status` 中最近对应 `thread-follower-* success`
-- `/api/domain/thread-detail` 中 marker 是否只出现一次
+- `/api/domain/thread/read` 中 marker 是否只出现一次
 - `--report` 指定时，写出可复盘 JSON 证据包
 
 输出为 `PASS` 只代表 Web 侧 follower 路径、诊断状态和唯一性通过；Desktop 与 VS Code 是否实时可见仍必须按下面矩阵人工观察。
@@ -194,7 +194,7 @@ report 只保存 compatibility、sync readiness、recent follower/handoff、mark
 | --- | -------------------------------- | ----------------------- | ------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | S01 | Desktop 发起 official-owned turn | Desktop                 | VS Code + Web                   | 三端打开同一 thread，Desktop 发送 marker         | Web 实时显示同一消息和 stream，无重复                                                             |
 | S02 | VS Code 发起 official-owned turn | VS Code                 | Desktop + Web                   | 三端打开同一 thread，VS Code 发送 marker         | Web 实时显示同一消息和 stream，无重复                                                             |
-| S03 | Web 发送到 Desktop-owned thread  | Web                     | Desktop + VS Code               | Desktop 打开 thread 后 Web 发送 marker           | `/api/domain/turn-start` 返回 `official-follower`，`recentFollowerRequests` success，三端实时显示 |
+| S03 | Web 发送到 Desktop-owned thread  | Web                     | Desktop + VS Code               | Desktop 打开 thread 后 Web 发送 marker           | `/api/domain/turn/start` 返回 `official-follower`，`recentFollowerRequests` success，三端实时显示 |
 | S04 | Web 发送到 VS Code-owned thread  | Web                     | Desktop + VS Code               | VS Code 打开 thread 后 Web 发送 marker           | discovery 或 target owner 成功，三端实时显示                                                      |
 | S05 | Web active turn steer            | Web                     | Desktop + VS Code               | 在 active turn 中选择“引导当前”，发送补充指令    | `thread-follower-steer-turn` success，owner 继续同一 active turn                                  |
 | S06 | Web interrupt/stop               | Web                     | Desktop + VS Code               | active turn 中点击停止                           | `thread-follower-interrupt-turn` success，三端均停止同一 turn                                     |
@@ -217,6 +217,7 @@ report 只保存 compatibility、sync readiness、recent follower/handoff、mark
 | S23 | 搜索打开普通会话                 | Web                     | Desktop + VS Code               | 用官方 `thread/search` 搜索普通 thread 并打开结果 | 命中 snippet 正常展示；打开后 thread 可同步，列表状态一致                                         |
 | S24 | debug/diagnostics 可读           | Web                     | 验收记录                        | 打开 `/settings` Diagnostics 和 `/debug`         | compatibility、sync readiness、IPC、app-server、method map、导出信息可定位问题且脱敏              |
 | S25 | 追求目标状态同步                 | Web                     | Desktop + VS Code               | 在已有 goal 的 thread 上编辑、暂停/恢复、清除目标 | Web 调用 `thread/goal/*`，Desktop/Web 展示同一目标状态；plan/progress 与 Composer Plan 模式不混淆 |
+| S26 | 按历史 turn 分叉上下文           | Web                     | Web                             | 从 `turn-2` 的分叉按钮创建新 thread              | 调用 `thread/read -> thread/fork -> thread/rollback(numTurns: 1)`；仅分叉上下文，当前 cwd 文件状态保持不变 |
 
 ## 4. 详细人工步骤
 
@@ -253,7 +254,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:18930/api/official-ipc/status | ConvertT
 6. 查询 Web detail，确认 marker 只出现一次：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread-detail?threadId=<thread-id>" | ConvertTo-Json -Depth 12
+Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread/read?threadId=<thread-id>" | ConvertTo-Json -Depth 12
 ```
 
 ### 4.3 steer 与 interrupt
@@ -273,7 +274,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread-detail?threadId
 4. 查询 Web detail，确认 `goal.objective` 已更新：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread-detail?threadId=<thread-id>" | ConvertTo-Json -Depth 12
+Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread/read?threadId=<thread-id>" | ConvertTo-Json -Depth 12
 ```
 
 5. 在 Desktop/VS Code 观察同一 thread 的目标状态是否同步更新。
@@ -342,9 +343,9 @@ Remove-Item Env:\LIVE_SYNC_TEXT
 该测试覆盖 Web 侧自动检查：
 
 - `/api/protocol/compatibility` 中官方 IPC 已连接、app-server 已初始化。
-- `/api/domain/turn-start` 返回 `mode: official-follower`。
+- `/api/domain/turn/start` 返回 `mode: official-follower`。
 - `/api/official-ipc/status` 的 `recentFollowerRequests` 出现当前 thread 的 `thread-follower-start-turn success`。
-- `/api/domain/thread-detail` 中本次 marker 恰好出现一次。
+- `/api/domain/thread/read` 中本次 marker 恰好出现一次。
 
 它不能替代 Desktop 和 VS Code 的人工实时观察。
 
@@ -376,7 +377,7 @@ Remove-Item Env:\LIVE_SYNC_ATTACHMENT_TEXT
 Remove-Item Env:\LIVE_SYNC_THREAD_ID
 ```
 
-该测试会确认 Web 本地附件保存和内容读取可用、turn-start 返回预期 mode、最近 `thread-follower-start-turn success` 出现、Web detail 中 marker 只出现一次。官方 Desktop/VS Code 是否能复看附件仍按 S11/S12 人工观察。
+该测试会确认 Web 本地附件保存和内容读取可用、turn/start 返回预期 mode、最近 `thread-follower-start-turn success` 出现、Web detail 中 marker 只出现一次。官方 Desktop/VS Code 是否能复看附件仍按 S11/S12 人工观察。
 
 CLI 版同步验收助手适合人工验收现场反复运行：
 

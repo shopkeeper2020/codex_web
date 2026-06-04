@@ -32,7 +32,8 @@ import {
   syncReadinessResponseSchema,
   threadArchiveResponseSchema,
   threadCompactResponseSchema,
-  threadCreateResponseSchema,
+  threadForkResponseSchema,
+  threadStartResponseSchema,
   threadDetailResponseSchema,
   threadGoalResponseSchema,
   threadListResponseSchema,
@@ -536,7 +537,7 @@ export async function getDomainThreads(
   params.set("archived", archived ? "true" : "false");
   if (cursor) params.set("cursor", cursor);
   const payload = threadListResponseSchema.parse(
-    await readJson<unknown>(`/api/domain/threads?${params.toString()}`),
+    await readJson<unknown>(`/api/domain/thread/list?${params.toString()}`),
   );
   return payload.data;
 }
@@ -555,7 +556,7 @@ export async function searchThreads(input: {
   params.set("archived", input.archived ? "true" : "false");
   params.set("limit", String(input.limit));
   const payload = threadSearchResponseSchema.parse(
-    await readJson<unknown>(`/api/domain/thread-search?${params.toString()}`),
+    await readJson<unknown>(`/api/domain/thread/search?${params.toString()}`),
   );
   return payload.data;
 }
@@ -565,13 +566,13 @@ export async function getThreadDetail(
 ): Promise<ThreadDetail | null> {
   const payload = threadDetailResponseSchema.parse(
     await readJson<unknown>(
-      `/api/domain/thread-detail?threadId=${encodeURIComponent(threadId)}`,
+      `/api/domain/thread/read?threadId=${encodeURIComponent(threadId)}`,
     ),
   );
   return payload.data;
 }
 
-export async function startThreadTurn(
+export async function startTurn(
   input: Pick<
     TurnStartRequest,
     | "threadId"
@@ -586,23 +587,23 @@ export async function startThreadTurn(
   >,
 ): Promise<{ mode: string; result: unknown }> {
   const payload = await writeJson<{ data: { mode: string; result: unknown } }>(
-    "/api/domain/turn-start",
+    "/api/domain/turn/start",
     input,
   );
   return payload.data;
 }
 
-export async function interruptThreadTurn(
+export async function interruptTurn(
   input: Pick<TurnInterruptRequest, "threadId" | "turnId">,
 ): Promise<{ mode: string; result: unknown }> {
   const payload = await writeJson<{ data: { mode: string; result: unknown } }>(
-    "/api/domain/turn-interrupt",
+    "/api/domain/turn/interrupt",
     input,
   );
   return payload.data;
 }
 
-export async function steerThreadTurn(
+export async function steerTurn(
   input: Pick<
     TurnSteerRequest,
     | "threadId"
@@ -615,7 +616,7 @@ export async function steerThreadTurn(
   >,
 ): Promise<{ mode: string; result: unknown }> {
   const payload = await writeJson<{ data: { mode: string; result: unknown } }>(
-    "/api/domain/turn-steer",
+    "/api/domain/turn/steer",
     input,
   );
   return payload.data;
@@ -651,11 +652,22 @@ export function attachmentContentUrl(attachmentId: string): string {
   return `/api/attachments/${encodeURIComponent(attachmentId)}/content`;
 }
 
-export async function createThread(
+export async function startThread(
   input: { cwd?: string | null } = {},
 ): Promise<Thread> {
-  const payload = threadCreateResponseSchema.parse(
-    await writeJson<unknown>("/api/domain/thread-create", input),
+  const payload = threadStartResponseSchema.parse(
+    await writeJson<unknown>("/api/domain/thread/start", input),
+  );
+  return payload.data.thread;
+}
+
+export async function forkThread(input: {
+  threadId: string;
+  cwd?: string | null;
+  afterTurnId?: string | null;
+}): Promise<Thread> {
+  const payload = threadForkResponseSchema.parse(
+    await writeJson<unknown>("/api/domain/thread/fork", input),
   );
   return payload.data.thread;
 }
@@ -684,14 +696,14 @@ export async function renameThread(input: {
   title: string;
 }): Promise<Thread | null> {
   const payload = threadRenameResponseSchema.parse(
-    await writeJson<unknown>("/api/domain/thread-rename", input),
+    await writeJson<unknown>("/api/domain/thread/rename", input),
   );
   return payload.data.thread;
 }
 
 export async function archiveThread(threadId: string): Promise<void> {
   threadArchiveResponseSchema.parse(
-    await writeJson<unknown>("/api/domain/thread-archive", { threadId }),
+    await writeJson<unknown>("/api/domain/thread/archive", { threadId }),
   );
 }
 
@@ -699,7 +711,7 @@ export async function compactThread(
   threadId: string,
 ): Promise<{ mode: string; result: unknown }> {
   const payload = threadCompactResponseSchema.parse(
-    await writeJson<unknown>("/api/domain/thread-compact", { threadId }),
+    await writeJson<unknown>("/api/domain/thread/compact/start", { threadId }),
   );
   return {
     mode: payload.data.mode,
@@ -713,7 +725,7 @@ export async function setThreadGoal(input: {
   status?: "active" | "paused";
 }): Promise<{ goal: ThreadGoal | null; thread: Thread | null }> {
   const payload = threadGoalResponseSchema.parse(
-    await writeJson<unknown>("/api/domain/thread-goal-set", input),
+    await writeJson<unknown>("/api/domain/thread/goal/set", input),
   );
   return {
     goal: payload.data.goal,
@@ -725,7 +737,7 @@ export async function clearThreadGoal(
   threadId: string,
 ): Promise<{ goal: ThreadGoal | null; thread: Thread | null }> {
   const payload = threadGoalResponseSchema.parse(
-    await writeJson<unknown>("/api/domain/thread-goal-clear", { threadId }),
+    await writeJson<unknown>("/api/domain/thread/goal/clear", { threadId }),
   );
   return {
     goal: payload.data.goal,
@@ -756,7 +768,7 @@ export async function unarchiveThread(
   threadId: string,
 ): Promise<Thread | null> {
   const payload = threadUnarchiveResponseSchema.parse(
-    await writeJson<unknown>("/api/domain/thread-unarchive", { threadId }),
+    await writeJson<unknown>("/api/domain/thread/unarchive", { threadId }),
   );
   return payload.data.thread;
 }

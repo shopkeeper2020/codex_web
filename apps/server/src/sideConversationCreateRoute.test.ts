@@ -182,7 +182,6 @@ describe("side conversation create route", () => {
         threadSource: "user",
         excludeTurns: true,
         ephemeral: true,
-        persistExtendedHistory: false,
       },
     });
     expect(
@@ -251,7 +250,7 @@ describe("side conversation create route", () => {
 
     const turnResponse = await context.app.inject({
       method: "POST",
-      url: "/api/domain/turn-start",
+      url: "/api/domain/turn/start",
       payload: {
         threadId: "side-web-created",
         text: "继续问",

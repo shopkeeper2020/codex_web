@@ -8,6 +8,7 @@ import {
   ChevronUp,
   Clock3,
   Command,
+  Copy,
   FileDiff,
   FileText,
   Folder,
@@ -28,6 +29,8 @@ import {
   Sparkles,
   Target,
   TerminalSquare,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   X,
   Zap,
@@ -244,6 +247,169 @@ function formatTime(value: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(parsed);
+}
+
+function formatClockTime(value?: string | null): string {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function turnCopyText(turn: ThreadTurn): string {
+  const assistantText = turn.items
+    .filter((item): item is Extract<TurnItem, { type: "assistant" }> => item.type === "assistant")
+    .map((item) => item.text.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  if (assistantText) return assistantText;
+  return turn.items
+    .flatMap((item) => {
+      if (item.type === "user" || item.type === "reasoning" || item.type === "toolOutput")
+        return item.text.trim();
+      if (item.type === "plan") return item.steps.map((step) => step.text).join("\n");
+      if (item.type === "command") return item.output.trim();
+      if (item.type === "fileChange") return item.diff.trim();
+      if (item.type === "error") return item.message.trim();
+      return [];
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function hasTurnActionRow(turn: ThreadTurn): boolean {
+  return turn.status === "completed" && turn.items.some((item) => item.type !== "user");
+}
+
+function timestampMs(value?: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function forkDividerAfterTurnId(detail: ThreadDetail | null): string | null {
+  const sourceThreadId = detail?.derivedFromThreadId ?? null;
+  const forkCreatedAtMs = timestampMs(detail?.thread.createdAtIso);
+  if (!detail || !sourceThreadId || forkCreatedAtMs === null) return null;
+
+  let boundaryTurnId: string | null = null;
+  for (const turn of detail.turns) {
+    const turnTimeMs = timestampMs(turn.startedAtIso) ?? timestampMs(turn.completedAtIso);
+    if (turnTimeMs !== null && turnTimeMs < forkCreatedAtMs) {
+      boundaryTurnId = turn.id;
+      continue;
+    }
+    if (boundaryTurnId) break;
+  }
+  return boundaryTurnId;
+}
+
+function TurnActionRow({
+  turn,
+  threadId,
+  cwd,
+  onForkThread,
+}: {
+  turn: ThreadTurn;
+  threadId: string;
+  cwd: string | null;
+  onForkThread: (
+    threadId: string,
+    cwd?: string | null,
+    afterTurnId?: string | null,
+  ) => Promise<void>;
+}): ReactElement {
+  const [copied, setCopied] = useState(false);
+  const [forking, setForking] = useState(false);
+  const copyText = turnCopyText(turn);
+  const completedTime = formatClockTime(turn.completedAtIso);
+
+  const copy = useCallback(() => {
+    if (!copyText) return;
+    void writeClipboardText(copyText).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  }, [copyText]);
+
+  const fork = useCallback(() => {
+    if (!threadId || forking) return;
+    setForking(true);
+    void onForkThread(threadId, cwd, turn.id)
+      .catch(() => undefined)
+      .finally(() => setForking(false));
+  }, [cwd, forking, onForkThread, threadId, turn.id]);
+
+  return (
+    <div className={styles.turnActionRow} key={`turn-actions-${turn.id}`}>
+      <div className={styles.turnActionControls}>
+        <button
+          type="button"
+          aria-label="复制回复"
+          title="复制"
+          disabled={!copyText}
+          onClick={copy}
+        >
+          {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+        </button>
+        <button type="button" aria-label="喜欢回复" title="喜欢" disabled>
+          <ThumbsUp size={14} />
+        </button>
+        <button type="button" aria-label="不喜欢回复" title="不喜欢" disabled>
+          <ThumbsDown size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="从这里分叉上下文"
+          title="分叉"
+          disabled={!threadId || forking}
+          onClick={fork}
+        >
+          <GitBranch size={14} />
+        </button>
+        {completedTime ? (
+          <span className={styles.turnActionTime}>{completedTime}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DerivedFromThreadRow({
+  sourceThreadId,
+  onSelectThread,
+}: {
+  sourceThreadId: string;
+  onSelectThread: (threadId: string) => void;
+}): ReactElement {
+  return (
+    <div className={styles.derivedFromThreadRow}>
+      <span aria-hidden="true" />
+      <button type="button" onClick={() => onSelectThread(sourceThreadId)}>
+        <GitBranch size={14} />
+        从对话中派生
+      </button>
+      <span aria-hidden="true" />
+    </div>
+  );
 }
 
 function projectDisplayName(path: string): string {
@@ -2254,6 +2420,8 @@ export function ChatMain({
   onCloseSideChat,
   onSetThreadGoal,
   onClearThreadGoal,
+  onForkThread,
+  onSelectThread,
   composer,
 }: {
   config: AppConfig | null;
@@ -2292,6 +2460,12 @@ export function ChatMain({
     input: { objective?: string; status?: "active" | "paused" },
   ) => Promise<void>;
   onClearThreadGoal: (threadId: string) => Promise<void>;
+  onForkThread: (
+    threadId: string,
+    cwd?: string | null,
+    afterTurnId?: string | null,
+  ) => Promise<void>;
+  onSelectThread: (threadId: string) => void;
   composer: ReactNode;
 }): ReactElement {
   const { t } = useI18n();
@@ -2884,14 +3058,49 @@ export function ChatMain({
       );
     }
 
-    rows.push(
-      ...turns.flatMap((turn) =>
-        renderTurnItems(turn.items, turn.status, {
+    const derivedFromThreadId = threadDetail?.derivedFromThreadId ?? null;
+    const dividerAfterTurnId = forkDividerAfterTurnId(threadDetail);
+    const shouldShowDerivedFromRow = Boolean(
+      !isDraftThread &&
+        derivedFromThreadId &&
+        derivedFromThreadId !== selectedThreadId,
+    );
+    let renderedDerivedFromRow = false;
+
+    for (const turn of turns) {
+      rows.push(
+        ...renderTurnItems(turn.items, turn.status, {
           projectRoot,
           onOpenFileReference: handleOpenFileReference,
         }),
-      ),
-    );
+      );
+      if (hasTurnActionRow(turn)) {
+        rows.push(
+          <TurnActionRow
+            cwd={projectRoot}
+            key={`turn-actions-${turn.id}`}
+            onForkThread={onForkThread}
+            threadId={selectedThreadId}
+            turn={turn}
+          />,
+        );
+      }
+      if (
+        shouldShowDerivedFromRow &&
+        dividerAfterTurnId &&
+        turn.id === dividerAfterTurnId &&
+        derivedFromThreadId
+      ) {
+        rows.push(
+          <DerivedFromThreadRow
+            key="derived-from-thread"
+            onSelectThread={onSelectThread}
+            sourceThreadId={derivedFromThreadId}
+          />,
+        );
+        renderedDerivedFromRow = true;
+      }
+    }
 
     if (visibleApprovals.length > 0) {
       rows.push(
@@ -2914,6 +3123,21 @@ export function ChatMain({
       );
     }
 
+    if (
+      shouldShowDerivedFromRow &&
+      !renderedDerivedFromRow &&
+      turns.length === 0 &&
+      derivedFromThreadId
+    ) {
+      rows.push(
+        <DerivedFromThreadRow
+          key="derived-from-thread"
+          onSelectThread={onSelectThread}
+          sourceThreadId={derivedFromThreadId}
+        />,
+      );
+    }
+
     if (error) {
       rows.push(
         <div className={styles.errorBox} key="thread-error">
@@ -2930,10 +3154,14 @@ export function ChatMain({
     handleOpenFileReference,
     isDraftThread,
     onDecideApproval,
+    onForkThread,
+    onSelectThread,
     projectRoot,
     selectedThreadId,
     selectedThreadTitle,
     showInitialDetailLoading,
+    threadDetail?.derivedFromThreadId,
+    threadDetail?.thread.createdAtIso,
     threadListLoading,
     turns,
     visibleApprovalsKey,

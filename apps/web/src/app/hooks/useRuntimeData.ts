@@ -6,7 +6,8 @@ import {
   closeSideConversation,
   compactThread,
   createSideConversation,
-  createThread,
+  forkThread,
+  startThread,
   decideApproval,
   getAccountStatus,
   getAppServerStatus,
@@ -18,11 +19,11 @@ import {
   getProtocolCompatibility,
   getRuntimeOptions,
   getThreadDetail,
-  interruptThreadTurn,
+  interruptTurn,
   pinThread,
   renameThread,
-  startThreadTurn,
-  steerThreadTurn,
+  startTurn,
+  steerTurn,
   stopThreadBackground,
   setThreadGoal as setThreadGoalRequest,
   unarchiveThread,
@@ -192,6 +193,11 @@ type RuntimeData = {
   addFavoriteProjectFromPrompt: () => Promise<void>;
   interruptSelectedTurn: () => Promise<void>;
   compactSelectedThread: () => Promise<void>;
+  forkThreadById: (
+    threadId: string,
+    cwd?: string | null,
+    afterTurnId?: string | null,
+  ) => Promise<void>;
   setThreadGoalById: (
     threadId: string,
     input: { objective?: string; status?: "active" | "paused" },
@@ -261,6 +267,13 @@ function toQueuedMessageView(
     attachmentCount: message.attachmentCount,
     skillCount: message.skillCount,
     createdAtMs: message.createdAtMs,
+  };
+}
+
+function prependThread(list: ThreadList, thread: Thread): ThreadList {
+  return {
+    ...list,
+    threads: [thread, ...list.threads.filter((entry) => entry.id !== thread.id)],
   };
 }
 
@@ -983,7 +996,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           activeThread?.projectId ??
           threadList.projects[0]?.path ??
           null;
-        const thread = await createThread({ cwd });
+        const thread = await startThread({ cwd });
         selectThread(thread.id);
         const nextDetail = {
           thread,
@@ -1023,7 +1036,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       }
       setSending(true);
       try {
-        const thread = await createThread({ cwd });
+        const thread = await startThread({ cwd });
         selectThread(thread.id);
         const nextDetail = {
           thread,
@@ -1034,7 +1047,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         };
         threadDetailRef.current = nextDetail;
         setThreadDetail(nextDetail);
-        await startThreadTurn({
+        await startTurn({
           threadId: thread.id,
           text: text.trim(),
           cwd,
@@ -1058,6 +1071,37 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         throw unknownError;
       } finally {
         setSending(false);
+      }
+    },
+    [enabled, refreshThreadDetail, refreshThreads, selectThread],
+  );
+
+  const forkThreadById = useCallback(
+    async (
+      threadId: string,
+      cwd?: string | null,
+      afterTurnId?: string | null,
+    ) => {
+      if (!enabled || !threadId) return;
+      try {
+        const thread = await forkThread({ threadId, cwd, afterTurnId });
+        setThreadList((current) => prependThread(current, thread));
+        selectThread(thread.id);
+        const nextDetail: ThreadDetail = {
+          thread,
+          goal: null,
+          derivedFromThreadId: threadId,
+          turns: [],
+          subAgents: [],
+          sideConversations: [],
+        };
+        threadDetailRef.current = nextDetail;
+        setThreadDetail(nextDetail);
+        await Promise.all([refreshThreads(), refreshThreadDetail(thread.id)]);
+        setError("");
+      } catch (unknownError) {
+        setError(userFacingErrorMessage(unknownError, "fork thread failed"));
+        throw unknownError;
       }
     },
     [enabled, refreshThreadDetail, refreshThreads, selectThread],
@@ -1293,7 +1337,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       return;
     }
     try {
-      await interruptThreadTurn({
+      await interruptTurn({
         threadId: selectedThreadId,
         turnId: activeTurn,
       });
@@ -1446,7 +1490,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
 
   const startQueuedMessage = useCallback(
     async (threadId: string, message: QueuedThreadMessageInternal) => {
-      await startThreadTurn({
+      await startTurn({
         threadId,
         text: message.text,
         cwd: message.options.cwd,
@@ -1487,7 +1531,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       }
       setSending(true);
       try {
-        await steerThreadTurn({
+        await steerTurn({
           threadId,
           expectedTurnId: activeTurnId,
           text: message.text,
@@ -1540,7 +1584,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       setSending(true);
       try {
         if (options.mode === "steer" && activeTurnId) {
-          await steerThreadTurn({
+          await steerTurn({
             threadId: selectedThreadId,
             expectedTurnId: activeTurnId,
             text: trimmedText,
@@ -1550,7 +1594,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
             permissionMode: options.permissionMode,
           });
         } else {
-          await startThreadTurn({
+          await startTurn({
             threadId: selectedThreadId,
             text: trimmedText,
             cwd: options.cwd,
@@ -1641,7 +1685,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         return;
       setSending(true);
       try {
-        await startThreadTurn({
+        await startTurn({
           threadId: sideConversationId,
           text: trimmedText,
           cwd: options.cwd,
@@ -1820,6 +1864,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     addFavoriteProjectFromPrompt,
     interruptSelectedTurn,
     compactSelectedThread,
+    forkThreadById,
     setThreadGoalById,
     clearThreadGoalById,
     decidePendingApproval,

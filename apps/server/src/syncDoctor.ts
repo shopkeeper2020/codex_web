@@ -261,9 +261,9 @@ export function printSyncDoctorUsage(): string {
     "Options:",
     "  --url <base-url>       codex_web server URL. Default: http://127.0.0.1:18930",
     "  --thread <thread-id>   Thread to diagnose.",
-    "  --send                 Send the marker through /api/domain/turn-start.",
-    "  --steer                Send guidance through /api/domain/turn-steer.",
-    "  --interrupt            Interrupt the active turn through /api/domain/turn-interrupt.",
+    "  --send                 Send the marker through /api/domain/turn/start.",
+    "  --steer                Send guidance through /api/domain/turn/steer.",
+    "  --interrupt            Interrupt the active turn through /api/domain/turn/interrupt.",
     "  --turn <turn-id>       Turn id for steer/interrupt. Defaults to sync readiness activeTurnId.",
     "  --text <marker>        Marker or guidance text. Defaults to a timestamped marker.",
     "  --attachment <path>    Upload one local file and include it with --send.",
@@ -458,7 +458,7 @@ export async function runSyncDoctor(
           const detail = await requestJson(
             fetchImpl,
             options.baseUrl,
-            `/api/domain/thread-detail?threadId=${encodeURIComponent(
+            `/api/domain/thread/read?threadId=${encodeURIComponent(
               options.threadId ?? "",
             )}`,
           );
@@ -703,7 +703,7 @@ async function runAction(
     return await requestJson(
       fetchImpl,
       options.baseUrl,
-      "/api/domain/turn-start",
+      "/api/domain/turn/start",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -715,7 +715,7 @@ async function runAction(
     return await requestJson(
       fetchImpl,
       options.baseUrl,
-      "/api/domain/turn-steer",
+      "/api/domain/turn/steer",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -730,7 +730,7 @@ async function runAction(
   return await requestJson(
     fetchImpl,
     options.baseUrl,
-    "/api/domain/turn-interrupt",
+    "/api/domain/turn/interrupt",
     {
       method: "POST",
       headers: { "content-type": "application/json" },

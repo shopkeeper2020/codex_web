@@ -21,7 +21,7 @@ async function installOwnerFailureMocks(
   page: Page,
   onTurnStart: (body: JsonBody) => void,
 ): Promise<void> {
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     await fulfillJson(route, {
@@ -57,7 +57,7 @@ async function installOwnerFailureMocks(
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     await fulfillJson(route, {
       data: {
         thread: {
@@ -147,7 +147,7 @@ async function installOwnerFailureMocks(
     await fulfillJson(route, { data: [] });
   });
 
-  await page.route("**/api/domain/turn-start", async (route) => {
+  await page.route("**/api/domain/turn/start", async (route) => {
     onTurnStart(route.request().postDataJSON() as JsonBody);
     await fulfillJson(
       route,

@@ -29,7 +29,7 @@ async function installLongThreadListMocks(page: Page): Promise<void> {
     thread(index + 1),
   );
 
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     await fulfillJson(route, {
@@ -49,7 +49,7 @@ async function installLongThreadListMocks(page: Page): Promise<void> {
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     const requestedThreadId =
       new URL(route.request().url()).searchParams.get("threadId") ??
       "long-thread-1";
@@ -65,7 +65,7 @@ async function installLongThreadListMocks(page: Page): Promise<void> {
     });
   });
 
-  await page.route("**/api/domain/thread-search**", async (route) => {
+  await page.route("**/api/domain/thread/search**", async (route) => {
     const searchTerm =
       new URL(route.request().url()).searchParams.get("searchTerm") ?? "";
     const normalizedSearchTerm = searchTerm.toLocaleLowerCase();

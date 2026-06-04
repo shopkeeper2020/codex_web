@@ -143,7 +143,7 @@ describe("thread archive route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-archive",
+      url: "/api/domain/thread/archive",
       payload: { threadId: "thread-web" },
     });
 
@@ -175,7 +175,7 @@ describe("thread archive route", () => {
 
     const response = await context.app.inject({
       method: "POST",
-      url: "/api/domain/thread-archive",
+      url: "/api/domain/thread/archive",
       payload: { threadId: "thread-official" },
     });
 

@@ -20,9 +20,9 @@ async function fulfillJson(route: Route, body: JsonBody): Promise<void> {
 
 async function clearMockRoutes(page: Page): Promise<void> {
   for (const pattern of [
-    "**/api/domain/threads**",
-    "**/api/domain/thread-search**",
-    "**/api/domain/thread-detail**",
+    "**/api/domain/thread/list**",
+    "**/api/domain/thread/search**",
+    "**/api/domain/thread/read**",
     "**/api/domain/side-conversation-create",
     "**/api/domain/side-conversation-close",
     "**/api/runtime-options",
@@ -173,7 +173,7 @@ export async function installActiveTurnMocks(
   await clearMockRoutes(page);
   let sideConversations = activeSideConversations();
   let createdSideConversationCount = 0;
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     const isArchived = Boolean(options.isArchived?.());
@@ -200,7 +200,7 @@ export async function installActiveTurnMocks(
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     await fulfillJson(route, {
       data: {
         thread: activeThread(options),
@@ -212,7 +212,7 @@ export async function installActiveTurnMocks(
     });
   });
 
-  await page.route("**/api/domain/thread-search**", async (route) => {
+  await page.route("**/api/domain/thread/search**", async (route) => {
     const searchTerm =
       new URL(route.request().url()).searchParams.get("searchTerm") ?? "";
     const thread = activeThread(options);

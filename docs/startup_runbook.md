@@ -98,11 +98,11 @@ Web 会把消息里的本地图片路径和 file change 路径转换成受控预
 
 ## 侧边聊天同步检查
 
-`/api/domain/thread-detail` 会在普通 thread detail 里附带 `sideConversations[]`。该字段来自官方 IPC 的 `sideConversation` stream state，用于 Web 置顶摘要和真实右侧栏按 Desktop 当前侧聊标签数量/标题展示。
+`/api/domain/thread/read` 会在普通 thread detail 里附带 `sideConversations[]`。该字段来自官方 IPC 的 `sideConversation` stream state，用于 Web 置顶摘要和真实右侧栏按 Desktop 当前侧聊标签数量/标题展示。
 
 ```powershell
 $threadId = "<主会话 thread id>"
-$detail = Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread-detail?threadId=$threadId"
+$detail = Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread/read?threadId=$threadId"
 $detail.data.sideConversations | Select-Object id,title,turnCount,inProgress
 ```
 
@@ -187,7 +187,7 @@ Remove-Item Env:\LIVE_SYNC_ATTACHMENT_TEXT
 Remove-Item Env:\LIVE_SYNC_THREAD_ID
 ```
 
-该测试只证明 Web 上传、Web 本地附件内容读取、`attachmentIds` 进入 `/api/domain/turn-start`、官方 follower success 和 Web detail marker 唯一；Desktop/VS Code 是否能复看附件仍需人工观察。
+该测试只证明 Web 上传、Web 本地附件内容读取、`attachmentIds` 进入 `/api/domain/turn/start`、官方 follower success 和 Web detail marker 唯一；Desktop/VS Code 是否能复看附件仍需人工观察。
 
 也可以使用 CLI 验收助手。默认只做诊断，不会发送消息或控制 active turn：
 
@@ -202,7 +202,7 @@ pnpm sync:doctor -- --thread <thread-id>
 pnpm sync:doctor -- --thread <thread-id> --send --text "codex_web sync doctor $(Get-Date -Format o)"
 ```
 
-附件路径也可以走同一个验收助手；它会先上传本地文件，再把后端校验后的 `attachmentIds` 放进 `/api/domain/turn-start`：
+附件路径也可以走同一个验收助手；它会先上传本地文件，再把后端校验后的 `attachmentIds` 放进 `/api/domain/turn/start`：
 
 ```powershell
 pnpm sync:doctor -- --thread <thread-id> --send --text "codex_web sync attachment $(Get-Date -Format o)" --attachment "<无敏感测试文件路径>" --report data\tmp\sync-report-S11-attachment.json
@@ -215,7 +215,7 @@ pnpm sync:doctor -- --thread <thread-id> --steer --text "codex_web sync steer $(
 pnpm sync:doctor -- --thread <thread-id> --interrupt
 ```
 
-该命令会组合检查 `/health`、`/api/protocol/compatibility`、`/api/sync/readiness`、`/api/official-ipc/status` 和 `/api/domain/thread-detail`。带 `--send` 时，它会通过 `/api/domain/turn-start` 发送 marker，确认返回 `official-follower`、`recentFollowerRequests` 中有 `thread-follower-start-turn success`，并检查 Web thread detail 中 marker 只出现一次；带 `--attachment` 时，还会检查 Web 上传是否成功，并在 report 中只保留附件数量/字节数、不保存附件 id 或内容；带 `--steer` 或 `--interrupt` 时，它会检查对应 follower success。它仍不能替代 Desktop 和 VS Code 的人工实时观察。
+该命令会组合检查 `/health`、`/api/protocol/compatibility`、`/api/sync/readiness`、`/api/official-ipc/status` 和 `/api/domain/thread/read`。带 `--send` 时，它会通过 `/api/domain/turn/start` 发送 marker，确认返回 `official-follower`、`recentFollowerRequests` 中有 `thread-follower-start-turn success`，并检查 Web thread detail 中 marker 只出现一次；带 `--attachment` 时，还会检查 Web 上传是否成功，并在 report 中只保留附件数量/字节数、不保存附件 id 或内容；带 `--steer` 或 `--interrupt` 时，它会检查对应 follower success。它仍不能替代 Desktop 和 VS Code 的人工实时观察。
 
 同步或协议异常时，建议同时保存两份脱敏材料；完整清单见 `docs/troubleshooting_sync.md`。
 
@@ -472,13 +472,13 @@ Invoke-RestMethod -Uri http://127.0.0.1:18930/api/app-server/status
 当前删除语义按官方 Desktop 的归档处理，不做硬删除。归档列表：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/threads?limit=20&archived=true" | ConvertTo-Json -Depth 8
+Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/domain/thread/list?limit=20&archived=true" | ConvertTo-Json -Depth 8
 ```
 
 恢复归档会话：
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:18930/api/domain/thread-unarchive -ContentType application/json -Body '{"threadId":"<thread-id>"}'
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:18930/api/domain/thread/unarchive -ContentType application/json -Body '{"threadId":"<thread-id>"}'
 ```
 
 owner 边界：
@@ -551,14 +551,14 @@ Invoke-RestMethod -Uri $uri | ConvertTo-Json -Depth 10
 
 当当前会话存在 active turn 时，Composer 会出现两个发送模式：
 
-- `引导当前`：调用 `/api/domain/turn-steer`，后端优先通过官方 IPC `thread-follower-steer-turn` 转发给当前 owner。
-- `排队下一条`：仍调用 `/api/domain/turn-start`，由官方 owner 或 Web app-server 决定是否排队/启动。
+- `引导当前`：调用 `/api/domain/turn/steer`，后端优先通过官方 IPC `thread-follower-steer-turn` 转发给当前 owner。
+- `排队下一条`：仍调用 `/api/domain/turn/start`，由官方 owner 或 Web app-server 决定是否排队/启动。
 
-`turn-steer` 必须带 `expectedTurnId`，后端会用当前 Web domain detail 中的 active turn id 作为预条件。引导当前 turn 支持后端已管理的 `attachmentIds`；图片会以官方 `localImage` input 传入 app-server，并保留 `restoreMessage` 供官方 owner/UI 恢复预览，普通文件仍保留受控附件引用，发送成功后关联到当前 thread。
+`turn/steer` 必须带 `expectedTurnId`，后端会用当前 Web domain detail 中的 active turn id 作为预条件。引导当前 turn 支持后端已管理的 `attachmentIds`；图片会以官方 `localImage` input 传入 app-server，并保留 `restoreMessage` 供官方 owner/UI 恢复预览，普通文件仍保留受控附件引用，发送成功后关联到当前 thread。
 
 如果官方 owner 不可用、IPC 未连接或当前会话没有明确 Web-owned 标记，Web 通常会拒绝本地 app-server fallback，返回 409/503，并在 diagnostics 里记录 `official-follower-fallback-denied`。这是为了优先避免三端分叉。
 
-唯一自动接管例外是普通 `turn-start`：当 follower start 失败后，后端会读 app-server 完整 thread 快照；只有确认该会话已空闲、没有 active turn，才会退休旧外部 owner cache，claim local-only Web owner，并用 app-server 启动新的 turn。`引导当前`、停止和 compact 仍不会这样接管，因为它们必须作用于同一个 active turn。
+唯一自动接管例外是普通 `turn/start`：当 follower start 失败后，后端会读 app-server 完整 thread 快照；只有确认该会话已空闲、没有 active turn，才会退休旧外部 owner cache，claim local-only Web owner，并用 app-server 启动新的 turn。`引导当前`、停止和 compact 仍不会这样接管，因为它们必须作用于同一个 active turn。
 
 ## 实时刷新抗竞态
 
@@ -654,7 +654,7 @@ GET /api/attachments/<attachment-id>/content
 
 内容接口和清理接口都只允许操作 `data/attachments/` 下的持久化文件。发送消息前，后端会拒绝不存在的 attachment id 和已经绑定到其他 thread 的附件；发送成功后，原本孤立的附件会关联到当前 thread。清理接口只会删除 `thread_id`、`turn_id` 和 `official_reference_id` 都为空的孤立附件；已关联附件默认永久保留，便于后续在 Desktop/扩展/Web 中复看。Composer 会对图片附件显示缩略图，普通附件显示可打开链接。
 
-注意：附件发送到官方 app-server 的参数已经贯通，`turn-start` 和 `turn-steer` 都只接受后端已管理和校验归属的 `attachmentIds`；图片会补充为官方可见的 `localImage` input。官方对普通文件的最终持久引用格式仍需要在后续真实 turn 里继续验证。
+注意：附件发送到官方 app-server 的参数已经贯通，`turn/start` 和 `turn/steer` 都只接受后端已管理和校验归属的 `attachmentIds`；图片会补充为官方可见的 `localImage` input。官方对普通文件的最终持久引用格式仍需要在后续真实 turn 里继续验证。
 
 如果 `lastError` 指向 WindowsApps 中的 `codex.exe` 权限问题，优先阅读：
 

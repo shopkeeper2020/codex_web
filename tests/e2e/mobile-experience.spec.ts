@@ -83,7 +83,7 @@ function activeThread(): JsonBody {
 }
 
 async function installMobileFlowMocks(page: Page): Promise<void> {
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     await fulfillJson(route, {
@@ -103,7 +103,7 @@ async function installMobileFlowMocks(page: Page): Promise<void> {
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     await fulfillJson(route, {
       data: {
         thread: flowThread(),
@@ -130,7 +130,7 @@ async function installMobileFlowMocks(page: Page): Promise<void> {
     });
   });
 
-  await page.route("**/api/domain/thread-search**", async (route) => {
+  await page.route("**/api/domain/thread/search**", async (route) => {
     const searchTerm =
       new URL(route.request().url()).searchParams.get("searchTerm") ?? "";
     const thread = flowThread();
@@ -234,7 +234,7 @@ async function installActiveTurnMocks(
   page: Page,
   onInterrupt: (body: JsonBody) => void,
 ): Promise<void> {
-  await page.route("**/api/domain/threads**", async (route) => {
+  await page.route("**/api/domain/thread/list**", async (route) => {
     const url = new URL(route.request().url());
     const archived = url.searchParams.get("archived") === "true";
     await fulfillJson(route, {
@@ -254,7 +254,7 @@ async function installActiveTurnMocks(
     });
   });
 
-  await page.route("**/api/domain/thread-detail**", async (route) => {
+  await page.route("**/api/domain/thread/read**", async (route) => {
     await fulfillJson(route, {
       data: {
         thread: activeThread(),
@@ -339,7 +339,7 @@ async function installActiveTurnMocks(
     await fulfillJson(route, { data: [] });
   });
 
-  await page.route("**/api/domain/turn-interrupt", async (route) => {
+  await page.route("**/api/domain/turn/interrupt", async (route) => {
     onInterrupt(route.request().postDataJSON() as JsonBody);
     await fulfillJson(route, {
       data: { mode: "official-follower", result: { ok: true } },
