@@ -937,15 +937,6 @@ function readTurnItems(value: unknown): unknown[] {
   return Array.isArray(turn?.items) ? turn.items : [];
 }
 
-function turnItemsScore(value: unknown): number {
-  const items = readTurnItems(value);
-  try {
-    return JSON.stringify(items).length;
-  } catch {
-    return items.length;
-  }
-}
-
 const RICH_TEXT_ITEM_KEYS = new Set([
   "text",
   "message",
@@ -961,6 +952,7 @@ const RICH_TEXT_ITEM_KEYS = new Set([
   "stderrText",
   "diff",
   "patch",
+  "images",
 ]);
 
 function readItemRecordId(item: unknown): string {
@@ -972,6 +964,63 @@ function readItemRecordId(item: unknown): string {
     readString(record?.callId) ||
     readString(record?.call_id)
   );
+}
+
+function readItemCompactType(item: unknown): string {
+  const record = asRecord(item);
+  return readString(record?.type).toLowerCase().replace(/[-_\s]/g, "");
+}
+
+function readItemTextContent(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        const record = asRecord(entry);
+        return (
+          readItemTextContent(record?.text) ||
+          readItemTextContent(record?.content) ||
+          readItemTextContent(record?.input)
+        );
+      })
+      .join("");
+  }
+  const record = asRecord(value);
+  if (!record) return "";
+  return (
+    readString(record.text) ||
+    readItemTextContent(record.content) ||
+    readItemTextContent(record.input)
+  );
+}
+
+function normalizedUserItemText(item: unknown): string {
+  const record = asRecord(item);
+  const type = readItemCompactType(item);
+  if (!record || (type !== "user" && type !== "usermessage" && type !== "steeringusermessage")) {
+    return "";
+  }
+  const restoreMessage = asRecord(record.restoreMessage);
+  return (
+    readString(restoreMessage?.text) ||
+    readItemTextContent(record.content) ||
+    readItemTextContent(record.input) ||
+    readString(record.text)
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function duplicateRawUserItemIndex(item: unknown, items: unknown[]): number {
+  const text = normalizedUserItemText(item);
+  if (!text) return -1;
+  return items.findIndex((candidate) => {
+    const candidateText = normalizedUserItemText(candidate);
+    if (!candidateText) return false;
+    const id = readItemRecordId(item);
+    if (id && readItemRecordId(candidate) === id) return true;
+    return candidateText === text;
+  });
 }
 
 function jsonValueScore(value: unknown): number {
@@ -1014,6 +1063,41 @@ function mergeItemWithRicherText(
   return merged;
 }
 
+function mergeBaseItemWithOther(
+  baseItem: unknown,
+  otherItem: unknown,
+  prefer: "primary" | "live",
+): unknown {
+  return prefer === "primary"
+    ? mergeItemWithRicherText(baseItem, otherItem, prefer)
+    : mergeItemWithRicherText(otherItem, baseItem, prefer);
+}
+
+function mergedRawItemAnchorIndex(item: unknown, merged: unknown[]): number {
+  const id = readItemRecordId(item);
+  if (id) {
+    const idIndex = merged.findIndex((candidate) => readItemRecordId(candidate) === id);
+    if (idIndex >= 0) return idIndex;
+  }
+  return duplicateRawUserItemIndex(item, merged);
+}
+
+function rawItemInsertionIndex(
+  otherIndex: number,
+  otherItems: unknown[],
+  merged: unknown[],
+): number {
+  for (let index = otherIndex - 1; index >= 0; index -= 1) {
+    const anchorIndex = mergedRawItemAnchorIndex(otherItems[index], merged);
+    if (anchorIndex >= 0) return anchorIndex + 1;
+  }
+  for (let index = otherIndex + 1; index < otherItems.length; index += 1) {
+    const anchorIndex = mergedRawItemAnchorIndex(otherItems[index], merged);
+    if (anchorIndex >= 0) return anchorIndex;
+  }
+  return merged.length;
+}
+
 function mergeStableIdItems(
   baseItems: unknown[],
   otherItems: unknown[],
@@ -1031,15 +1115,23 @@ function mergeStableIdItems(
     const other = id ? otherById.get(id) : null;
     if (!id || !other) return item;
     usedOtherIds.add(id);
-    return prefer === "primary"
-      ? mergeItemWithRicherText(item, other, prefer)
-      : mergeItemWithRicherText(other, item, prefer);
+    return mergeBaseItemWithOther(item, other, prefer);
   });
 
-  for (const item of otherItems) {
+  for (let otherIndex = 0; otherIndex < otherItems.length; otherIndex += 1) {
+    const item = otherItems[otherIndex];
     const id = readItemRecordId(item);
     if (!id || usedOtherIds.has(id)) continue;
-    merged.push(item);
+    const duplicateUserIndex = duplicateRawUserItemIndex(item, merged);
+    if (duplicateUserIndex >= 0) {
+      merged[duplicateUserIndex] = mergeBaseItemWithOther(
+        merged[duplicateUserIndex],
+        item,
+        prefer,
+      );
+      continue;
+    }
+    merged.splice(rawItemInsertionIndex(otherIndex, otherItems, merged), 0, item);
   }
 
   return merged;
@@ -1051,14 +1143,7 @@ function mergeTurnWithRicherItems(primary: unknown, live: unknown): unknown {
   if (!primaryTurn || !liveTurn) return primary ?? live;
   const primaryItems = readTurnItems(primaryTurn);
   const liveItems = readTurnItems(liveTurn);
-  const liveIsRicher =
-    liveItems.length > primaryItems.length ||
-    (liveItems.length === primaryItems.length &&
-      liveItems.length > 0 &&
-      turnItemsScore(liveTurn) > turnItemsScore(primaryTurn));
-  const items = liveIsRicher
-    ? mergeStableIdItems(liveItems, primaryItems, "live")
-    : mergeStableIdItems(primaryItems, liveItems, "primary");
+  const items = mergeStableIdItems(primaryItems, liveItems, "primary");
   return {
     ...liveTurn,
     ...primaryTurn,

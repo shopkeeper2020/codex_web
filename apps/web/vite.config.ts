@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 18931,
+    allowedHosts: ['codex.19990417.xyz'],
     proxy: {
       '/health': {
         target: 'http://127.0.0.1:18930',

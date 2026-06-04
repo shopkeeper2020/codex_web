@@ -624,6 +624,137 @@ describe("thread detail route", () => {
     expect(context.database.status().threadDetailCount).toBe(0);
   });
 
+  it("keeps app-server item order while merging richer official live items", async () => {
+    const officialIpc = createBridge();
+    officialIpc.restoreThreadStreamState({
+      threadId: "thread-merge-order",
+      conversationId: "thread-merge-order",
+      hostId: "local",
+      ownerClientId: "desktop-client",
+      sourceClientId: "desktop-client",
+      conversationState: {
+        id: "thread-merge-order",
+        name: "Live merge order",
+        threadRuntimeStatus: { type: "active" },
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [
+              {
+                type: "userMessage",
+                id: "user-live",
+                content: [{ type: "text", text: "同一条用户输入为什么出现2次？" }],
+              },
+              {
+                type: "agentMessage",
+                id: "assistant-final",
+                text: "live partial",
+              },
+              {
+                type: "commandExecution",
+                id: "command-live",
+                command: "pnpm --filter @codex-web/web test",
+                status: "completed",
+                output: "ok",
+              },
+            ],
+          },
+          {
+            id: "turn-active-empty",
+            status: "active",
+            items: [],
+          },
+        ],
+      },
+      changeType: "snapshot",
+      cacheVersion: 14,
+      updatedAtIso: "2026-06-04T00:00:00.000Z",
+      isInProgress: true,
+      activeTurnId: "turn-active-empty",
+    });
+    const { context, appServer } = await createHarness(officialIpc);
+    appServer.threadReadResult = {
+      thread: {
+        id: "thread-merge-order",
+        name: "App-server merge order",
+        cwd: "C:\\workspace\\codex_web",
+        updatedAt: "2026-06-04T00:00:01.000Z",
+        status: "active",
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [
+              {
+                type: "userMessage",
+                id: "user-final",
+                content: [{ type: "text", text: "同一条用户输入为什么出现2次？" }],
+              },
+              {
+                type: "agentMessage",
+                id: "assistant-final",
+                text: "app-server final answer",
+              },
+            ],
+          },
+          {
+            id: "turn-active-empty",
+            status: "active",
+            items: [],
+          },
+        ],
+      },
+    };
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: "/api/domain/thread-detail?threadId=thread-merge-order",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "app-server-readonly",
+      data: {
+        turns: [
+          {
+            id: "turn-live",
+            status: "active",
+            items: [
+              {
+                type: "user",
+                id: "user-final",
+                text: "同一条用户输入为什么出现2次？",
+              },
+              {
+                type: "assistant",
+                id: "assistant-final",
+                text: "app-server final answer",
+              },
+              {
+                type: "command",
+                id: "command-live",
+                command: "pnpm --filter @codex-web/web test",
+                output: "ok",
+              },
+            ],
+          },
+          {
+            id: "turn-active-empty",
+            status: "active",
+            items: [],
+          },
+        ],
+      },
+    });
+    expect(appServer.calls).toEqual([
+      {
+        method: "thread/read",
+        params: { threadId: "thread-merge-order", includeTurns: true },
+      },
+    ]);
+  });
+
   it("preserves richer official stream turn items when reopening an active external thread", async () => {
     const officialIpc = createBridge();
     officialIpc.restoreThreadStreamState({

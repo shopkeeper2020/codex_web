@@ -427,6 +427,7 @@ export function Composer({
   const currentThreadIdRef = useRef(threadId);
   const textRef = useRef("");
   const attachmentsRef = useRef<Attachment[]>([]);
+  const submitInFlightRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const actionControlRef = useRef<HTMLDivElement>(null);
@@ -1375,6 +1376,7 @@ export function Composer({
     const trimmed = text.trim();
     if (slashMenuOpen && trimmed.startsWith("/")) return;
     if (!hasSubmitContent || disabled || sending || uploading) return;
+    if (submitInFlightRef.current) return;
     const collaborationMode = selectedCollaborationMode
       ? buildCollaborationModePayload(selectedCollaborationMode, model, effort)
       : undefined;
@@ -1383,24 +1385,29 @@ export function Composer({
       path: skill.path,
     }));
     const submitThreadId = currentThreadIdRef.current;
-    await onSend(
-      trimmed,
-      attachments.map((attachment) => attachment.id),
-      {
-        model,
-        effort,
-        mode: activeSteerMode ? "steer" : "start",
-        cwd,
-        skills: selectedSkills,
-        collaborationMode: activeSteerMode ? undefined : collaborationMode,
-        permissionMode,
-      },
-    );
-    setDraftText("", submitThreadId);
-    setDraftAttachments([], submitThreadId);
-    if (submitThreadId === currentThreadIdRef.current) {
-      setSelectedSkillIds([]);
-      setPreviewAttachment(null);
+    submitInFlightRef.current = true;
+    try {
+      await onSend(
+        trimmed,
+        attachments.map((attachment) => attachment.id),
+        {
+          model,
+          effort,
+          mode: activeSteerMode ? "steer" : "start",
+          cwd,
+          skills: selectedSkills,
+          collaborationMode: activeSteerMode ? undefined : collaborationMode,
+          permissionMode,
+        },
+      );
+      setDraftText("", submitThreadId);
+      setDraftAttachments([], submitThreadId);
+      if (submitThreadId === currentThreadIdRef.current) {
+        setSelectedSkillIds([]);
+        setPreviewAttachment(null);
+      }
+    } finally {
+      submitInFlightRef.current = false;
     }
   }
 

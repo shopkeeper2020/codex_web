@@ -1,5 +1,6 @@
 serverAddr = "frp.example.com"
 serverPort = 7000
+loginFailExit = false
 
 [auth]
 method = "token"
@@ -12,5 +13,5 @@ enable = true
 name = "codex_web_http"
 type = "http"
 localIP = "127.0.0.1"
-localPort = 18930
+localPort = 18931
 customDomains = ["codex.example.com"]

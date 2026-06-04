@@ -58,6 +58,7 @@ const RICH_ITEM_KEYS = [
   'command',
   'title',
   'path',
+  'images',
 ]
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -84,6 +85,61 @@ function richerValue(incomingValue: unknown, currentValue: unknown): unknown {
     : incomingValue
 }
 
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function itemDedupeSignature(item: MessageItem): string {
+  switch (item.type) {
+    case 'assistant':
+    case 'reasoning':
+    case 'toolOutput':
+    case 'plan':
+      return `${item.type}:${normalizeText(item.text)}`
+    case 'command':
+      return [
+        item.type,
+        item.command,
+        item.output,
+        item.stdout,
+        item.stderr,
+      ].map(normalizeText).join(':')
+    case 'fileChange':
+      return `${item.type}:${normalizeText(item.path)}:${normalizeText(item.diff)}`
+    default:
+      return ''
+  }
+}
+
+function userDedupeSignature(item: MessageItem): string {
+  return item.type === 'user' ? normalizeText(item.text) : ''
+}
+
+function duplicateUserItemIndex(item: MessageItem, items: MessageItem[]): number {
+  const signature = userDedupeSignature(item)
+  if (!signature) return -1
+  return items.findIndex((candidate) => {
+    if (candidate.type !== 'user') return false
+    if (candidate.id === item.id) return true
+    return userDedupeSignature(candidate) === signature
+  })
+}
+
+function duplicateOutputItemIndex(item: MessageItem, items: MessageItem[]): number {
+  if (item.type === 'user') return -1
+  const signature = itemDedupeSignature(item)
+  if (!signature) return -1
+  return items.findIndex((candidate) => {
+    if (candidate.id === item.id) return true
+    if (candidate.type !== item.type) return false
+    return itemDedupeSignature(candidate) === signature
+  })
+}
+
+function isDuplicateOutputItem(item: MessageItem, items: MessageItem[]): boolean {
+  return duplicateOutputItemIndex(item, items) >= 0
+}
+
 function mergeItemWithLiveData(incomingItem: MessageItem, currentItem: MessageItem): MessageItem {
   const incomingRecord = asRecord(incomingItem)
   const currentRecord = asRecord(currentItem)
@@ -105,12 +161,6 @@ function isPendingTurnId(turnId: string): boolean {
   return turnId.startsWith('pending-')
 }
 
-function turnItemsScore(turn: Turn): number {
-  const operationScore = turn.items.filter(isLiveOperationItem).length * 100_000
-  const itemCountScore = turn.items.length * 1_000
-  return operationScore + itemCountScore + jsonValueScore(turn.items)
-}
-
 function itemsById(items: MessageItem[]): Map<string, MessageItem> {
   const map = new Map<string, MessageItem>()
   for (const item of items) {
@@ -119,29 +169,68 @@ function itemsById(items: MessageItem[]): Map<string, MessageItem> {
   return map
 }
 
+function mergedAnchorIndexForCurrentItem(
+  item: MessageItem,
+  merged: MessageItem[],
+): number {
+  if (item.id) {
+    const idIndex = merged.findIndex((candidate) => candidate.id === item.id)
+    if (idIndex >= 0) return idIndex
+  }
+  const duplicateUserIndex = duplicateUserItemIndex(item, merged)
+  if (duplicateUserIndex >= 0) return duplicateUserIndex
+  return duplicateOutputItemIndex(item, merged)
+}
+
+function currentItemInsertionIndex(
+  currentIndex: number,
+  currentItems: MessageItem[],
+  merged: MessageItem[],
+): number {
+  for (let index = currentIndex - 1; index >= 0; index -= 1) {
+    const anchorIndex = mergedAnchorIndexForCurrentItem(currentItems[index]!, merged)
+    if (anchorIndex >= 0) return anchorIndex + 1
+  }
+  for (let index = currentIndex + 1; index < currentItems.length; index += 1) {
+    const anchorIndex = mergedAnchorIndexForCurrentItem(currentItems[index]!, merged)
+    if (anchorIndex >= 0) return anchorIndex
+  }
+  return merged.length
+}
+
 function mergeTurnItems(incomingTurn: Turn, currentTurn: Turn): MessageItem[] {
   const incomingById = itemsById(incomingTurn.items)
   const currentById = itemsById(currentTurn.items)
-  const preferCurrentOrder = turnItemsScore(currentTurn) > turnItemsScore(incomingTurn)
-  const baseItems = preferCurrentOrder ? currentTurn.items : incomingTurn.items
-  const otherItems = preferCurrentOrder ? incomingTurn.items : currentTurn.items
-  const usedOtherIds = new Set<string>()
+  const usedCurrentIds = new Set<string>()
 
-  const merged = baseItems.map((baseItem) => {
-    const otherItem = baseItem.id ? (preferCurrentOrder ? incomingById.get(baseItem.id) : currentById.get(baseItem.id)) : null
-    if (!otherItem) return baseItem
-    usedOtherIds.add(otherItem.id)
-    const incomingItem = incomingById.get(baseItem.id)
-    const currentItem = currentById.get(baseItem.id)
-    return incomingItem && currentItem
-      ? mergeItemWithLiveData(incomingItem, currentItem)
-      : baseItem
+  const merged = incomingTurn.items.map((incomingItem) => {
+    const currentItem = incomingItem.id ? currentById.get(incomingItem.id) : null
+    if (!currentItem) return incomingItem
+    usedCurrentIds.add(currentItem.id)
+    return mergeItemWithLiveData(incomingItem, currentItem)
   })
 
-  for (const otherItem of otherItems) {
-    if (!otherItem.id || usedOtherIds.has(otherItem.id)) continue
-    if (baseItems.some((baseItem) => baseItem.id === otherItem.id)) continue
-    merged.push(otherItem)
+  for (let currentIndex = 0; currentIndex < currentTurn.items.length; currentIndex += 1) {
+    const currentItem = currentTurn.items[currentIndex]!
+    if (!currentItem.id || usedCurrentIds.has(currentItem.id)) continue
+    if (incomingById.has(currentItem.id)) continue
+    const duplicateUserIndex = duplicateUserItemIndex(currentItem, merged)
+    if (duplicateUserIndex >= 0) {
+      const duplicateUserItem = merged[duplicateUserIndex]
+      if (duplicateUserItem) {
+        merged[duplicateUserIndex] = mergeItemWithLiveData(
+          duplicateUserItem,
+          currentItem,
+        )
+      }
+      continue
+    }
+    if (isDuplicateOutputItem(currentItem, merged)) continue
+    merged.splice(
+      currentItemInsertionIndex(currentIndex, currentTurn.items, merged),
+      0,
+      currentItem,
+    )
   }
   return merged
 }
@@ -154,12 +243,43 @@ function mergeTurnWithLiveItems(incomingTurn: Turn, currentTurn: Turn): Turn {
   }
 }
 
-function shouldCarryCurrentTurn(turn: Turn): boolean {
+function shouldCarryCurrentTurn(
+  turn: Turn,
+  preserveCurrentHistory: boolean,
+): boolean {
   if (isPendingTurnId(turn.id)) return false
-  return turn.status === 'active' || turn.items.some(isLiveOperationItem)
+  return (
+    turn.status === 'active' ||
+    turn.items.some(isLiveOperationItem) ||
+    (preserveCurrentHistory && turn.items.length > 0)
+  )
 }
 
-function mergeTurnsWithLiveItems(incomingTurns: Turn[], currentTurns: Turn[]): Turn[] {
+function mergedTurnAnchorIndex(turn: Turn, mergedTurns: Turn[]): number {
+  return mergedTurns.findIndex((candidate) => candidate.id === turn.id)
+}
+
+function currentTurnInsertionIndex(
+  currentIndex: number,
+  currentTurns: Turn[],
+  mergedTurns: Turn[],
+): number {
+  for (let index = currentIndex - 1; index >= 0; index -= 1) {
+    const anchorIndex = mergedTurnAnchorIndex(currentTurns[index]!, mergedTurns)
+    if (anchorIndex >= 0) return anchorIndex + 1
+  }
+  for (let index = currentIndex + 1; index < currentTurns.length; index += 1) {
+    const anchorIndex = mergedTurnAnchorIndex(currentTurns[index]!, mergedTurns)
+    if (anchorIndex >= 0) return anchorIndex
+  }
+  return mergedTurns.length
+}
+
+function mergeTurnsWithLiveItems(
+  incomingTurns: Turn[],
+  currentTurns: Turn[],
+  preserveCurrentHistory: boolean,
+): Turn[] {
   const visibleIncomingTurns = incomingTurns.filter((turn) => !isPendingTurnId(turn.id))
   const currentById = new Map(currentTurns.map((turn) => [turn.id, turn]))
   const usedCurrentTurnIds = new Set<string>()
@@ -170,10 +290,15 @@ function mergeTurnsWithLiveItems(incomingTurns: Turn[], currentTurns: Turn[]): T
     return mergeTurnWithLiveItems(incomingTurn, currentTurn)
   })
 
-  for (const currentTurn of currentTurns) {
+  for (let currentIndex = 0; currentIndex < currentTurns.length; currentIndex += 1) {
+    const currentTurn = currentTurns[currentIndex]!
     if (usedCurrentTurnIds.has(currentTurn.id)) continue
-    if (!shouldCarryCurrentTurn(currentTurn)) continue
-    mergedTurns.push(currentTurn)
+    if (!shouldCarryCurrentTurn(currentTurn, preserveCurrentHistory)) continue
+    mergedTurns.splice(
+      currentTurnInsertionIndex(currentIndex, currentTurns, mergedTurns),
+      0,
+      currentTurn,
+    )
   }
   return mergedTurns
 }
@@ -189,6 +314,10 @@ export function mergeThreadDetailWithLiveItems(
 
   return {
     ...incomingDetail,
-    turns: mergeTurnsWithLiveItems(incomingDetail.turns, currentDetail.turns),
+    turns: mergeTurnsWithLiveItems(
+      incomingDetail.turns,
+      currentDetail.turns,
+      incomingDetail.thread.inProgress || currentDetail.thread.inProgress,
+    ),
   }
 }

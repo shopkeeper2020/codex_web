@@ -1,5 +1,6 @@
 export type MinimalRealtimeEvent = {
   type?: string;
+  sequence?: unknown;
   payload?: unknown;
   params?: unknown;
   approval?: unknown;
@@ -16,6 +17,14 @@ export type RealtimeThreadEventDecision = {
   threadId: string;
   cacheVersion: number | null;
 };
+
+export type RealtimeSequenceTrackerState = {
+  serverInstance: string;
+  seenSequences: Set<number>;
+  sequenceOrder: number[];
+};
+
+const MAX_TRACKED_REALTIME_SEQUENCES = 2_000;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -87,6 +96,40 @@ export function updateRealtimeServerInstance(
     versionsByThreadId.clear();
   }
   return nextServerInstance;
+}
+
+export function createRealtimeSequenceTrackerState(): RealtimeSequenceTrackerState {
+  return {
+    serverInstance: "",
+    seenSequences: new Set<number>(),
+    sequenceOrder: [],
+  };
+}
+
+export function acceptRealtimeEventSequence(
+  state: RealtimeSequenceTrackerState,
+  event: MinimalRealtimeEvent,
+): boolean {
+  const nextServerInstance = readRealtimeServerInstance(event);
+  if (nextServerInstance && nextServerInstance !== state.serverInstance) {
+    state.serverInstance = nextServerInstance;
+    state.seenSequences.clear();
+    state.sequenceOrder = [];
+  }
+
+  const sequence = readFiniteNumber(event.sequence);
+  if (sequence === null || !Number.isInteger(sequence) || sequence <= 0) {
+    return true;
+  }
+  if (state.seenSequences.has(sequence)) return false;
+
+  state.seenSequences.add(sequence);
+  state.sequenceOrder.push(sequence);
+  while (state.sequenceOrder.length > MAX_TRACKED_REALTIME_SEQUENCES) {
+    const expired = state.sequenceOrder.shift();
+    if (expired !== undefined) state.seenSequences.delete(expired);
+  }
+  return true;
 }
 
 export function acceptRealtimeThreadEvent(

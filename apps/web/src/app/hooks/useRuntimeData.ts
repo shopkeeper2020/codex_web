@@ -46,7 +46,9 @@ import {
   readAppServerNotificationThreadId,
 } from "../appServerRealtimeReducer";
 import {
+  acceptRealtimeEventSequence,
   acceptRealtimeThreadEvent,
+  createRealtimeSequenceTrackerState,
   readRealtimeThreadId,
   updateRealtimeServerInstance,
 } from "../realtimeState";
@@ -295,6 +297,9 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   >({});
   const [realtimeEvents, setRealtimeEvents] = useState<RealtimeEvent[]>([]);
   const realtimeVersionsRef = useRef(new Map<string, number>());
+  const realtimeSequenceTrackerRef = useRef(
+    createRealtimeSequenceTrackerState(),
+  );
   const realtimeServerInstanceRef = useRef("");
   const lastRealtimeDetailAtRef = useRef(0);
   const threadListHydratedRef = useRef(false);
@@ -399,17 +404,17 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
 
   const refreshThreadDetail = useCallback(
     async (threadId: string, options: RefreshThreadDetailOptions = {}) => {
-      const request = beginThreadDetailRequest(
-        detailRequestStateRef.current,
-        threadId,
-      );
-      detailRequestStateRef.current = request.state;
       if (!enabled || !threadId) {
         setThreadDetail(null);
         setDetailLoading(false);
         return;
       }
       const currentDetail = threadDetailRef.current;
+      const request = beginThreadDetailRequest(
+        detailRequestStateRef.current,
+        threadId,
+      );
+      detailRequestStateRef.current = request.state;
       const shouldShowLoading =
         !options.silent || currentDetail?.thread.id !== threadId;
       if (shouldShowLoading) setDetailLoading(true);
@@ -777,12 +782,21 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     };
 
     const handleMessage = (messageEvent: MessageEvent) => {
+      if (disposed || socket !== messageEvent.currentTarget) return;
       try {
         const parsed = realtimeEventSchema.safeParse(
           JSON.parse(messageEvent.data as string),
         );
         if (!parsed.success) throw parsed.error;
         const payload = parsed.data;
+        if (
+          !acceptRealtimeEventSequence(
+            realtimeSequenceTrackerRef.current,
+            payload,
+          )
+        ) {
+          return;
+        }
         if (
           !(
             payload.type === "appServer.notification" &&
@@ -941,6 +955,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         appServerRealtimeFrame = null;
       }
       pendingAppServerRealtimeNotifications.length = 0;
+      socket?.removeEventListener("message", handleMessage);
       socket?.close();
     };
   }, [

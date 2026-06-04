@@ -170,6 +170,196 @@ describe('thread detail request ordering', () => {
     })
   })
 
+  it('does not duplicate same streamed assistant output when ids differ', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            { type: 'assistant', id: 'assistant-live', text: 'streamed answer' },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: false,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'completed',
+          items: [
+            { type: 'assistant', id: 'assistant-final', text: 'streamed answer' },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items).toEqual([
+      { type: 'assistant', id: 'assistant-final', text: 'streamed answer' },
+    ])
+  })
+
+  it('does not duplicate same streamed command output when ids differ', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            {
+              type: 'command',
+              id: 'command-live',
+              command: 'pnpm test',
+              status: 'active',
+              output: 'ok',
+              stdout: 'ok',
+              stderr: '',
+              cwd: null,
+              durationMs: null,
+              exitCode: null,
+            },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: false,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'completed',
+          items: [
+            {
+              type: 'command',
+              id: 'command-final',
+              command: 'pnpm test',
+              status: 'completed',
+              output: 'ok',
+              stdout: 'ok',
+              stderr: '',
+              cwd: null,
+              durationMs: 100,
+              exitCode: 0,
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items).toEqual([
+      {
+        type: 'command',
+        id: 'command-final',
+        command: 'pnpm test',
+        status: 'completed',
+        output: 'ok',
+        stdout: 'ok',
+        stderr: '',
+        cwd: null,
+        durationMs: 100,
+        exitCode: 0,
+      },
+    ])
+  })
+
+  it('does not duplicate the same user item when live and detail ids differ', () => {
+    const image = {
+      url: null,
+      path: 'E:\\cache\\Desktop\\screenshot.png',
+      mimeType: 'image/png',
+      alt: null,
+    }
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'user-live', text: '同一条用户输入为什么出现2次？', images: [image] },
+            { type: 'assistant', id: 'assistant-a', text: '我来检查。' },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'user-final', text: '同一条用户输入为什么出现2次？' },
+            { type: 'assistant', id: 'assistant-a', text: '我来检查。' },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items).toEqual([
+      { type: 'user', id: 'user-final', text: '同一条用户输入为什么出现2次？', images: [image] },
+      { type: 'assistant', id: 'assistant-a', text: '我来检查。' },
+    ])
+  })
+
+  it('preserves existing history when an in-progress detail snapshot only has the active turn', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-previous',
+          status: 'completed',
+          items: [
+            { type: 'user', id: 'user-previous', text: '帮我进行修复。' },
+            { type: 'assistant', id: 'assistant-previous', text: '已完成修复。' },
+          ],
+        },
+        {
+          id: 'turn-active',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'user-active-live', text: '同一条用户输入为什么出现2次？' },
+            { type: 'assistant', id: 'assistant-active', text: '我来检查。' },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-active',
+          status: 'active',
+          items: [
+            { type: 'assistant', id: 'assistant-active', text: '我来检查。' },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns).toEqual([
+      {
+        id: 'turn-previous',
+        status: 'completed',
+        items: [
+          { type: 'user', id: 'user-previous', text: '帮我进行修复。' },
+          { type: 'assistant', id: 'assistant-previous', text: '已完成修复。' },
+        ],
+      },
+      {
+        id: 'turn-active',
+        status: 'active',
+        items: [
+          { type: 'user', id: 'user-active-live', text: '同一条用户输入为什么出现2次？' },
+          { type: 'assistant', id: 'assistant-active', text: '我来检查。' },
+        ],
+      },
+    ])
+  })
+
   it('does not merge details from a different thread', () => {
     const current = detail('thread-a', {
       turns: [
@@ -323,14 +513,14 @@ describe('thread detail request ordering', () => {
     expect(mergeThreadDetailWithLiveItems(null, incoming)?.turns).toHaveLength(2)
   })
 
-  it('keeps repeated official user items in the same turn distinct', () => {
+  it('keeps distinct official user items in the same turn distinct', () => {
     const current = detail('thread-a', {
       turns: [
         {
           id: 'turn-a',
           status: 'active',
           items: [
-            { type: 'user', id: 'user-b', text: '继续' },
+            { type: 'user', id: 'user-b', text: '继续分析' },
           ],
         },
       ],
@@ -349,7 +539,7 @@ describe('thread detail request ordering', () => {
 
     expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items).toEqual([
       { type: 'user', id: 'user-a', text: '继续' },
-      { type: 'user', id: 'user-b', text: '继续' },
+      { type: 'user', id: 'user-b', text: '继续分析' },
     ])
   })
 })

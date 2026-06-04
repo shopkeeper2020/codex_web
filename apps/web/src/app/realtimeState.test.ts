@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  acceptRealtimeEventSequence,
   acceptRealtimeThreadEvent,
+  createRealtimeSequenceTrackerState,
   readRealtimeCacheVersion,
   readRealtimeServerInstance,
   readRealtimeThreadId,
@@ -145,5 +147,57 @@ describe("realtime state helpers", () => {
         payload: { threadId: "thread-a", cacheVersion: 1 },
       }),
     ).toMatchObject({ accepted: true, cacheVersion: 1 });
+  });
+
+  it("rejects duplicate realtime event sequences from overlapping sockets", () => {
+    const state = createRealtimeSequenceTrackerState();
+
+    expect(
+      acceptRealtimeEventSequence(state, {
+        type: "connected",
+        atIso: "2026-05-29T00:00:00.000Z",
+        serverInstanceId: "server-a",
+        serverStartedAtIso: "2026-05-29T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      acceptRealtimeEventSequence(state, {
+        type: "appServer.notification",
+        sequence: 10,
+      }),
+    ).toBe(true);
+    expect(
+      acceptRealtimeEventSequence(state, {
+        type: "appServer.notification",
+        sequence: 10,
+      }),
+    ).toBe(false);
+    expect(
+      acceptRealtimeEventSequence(state, {
+        type: "appServer.notification",
+        sequence: 11,
+      }),
+    ).toBe(true);
+  });
+
+  it("resets sequence dedupe when the backend websocket instance changes", () => {
+    const state = createRealtimeSequenceTrackerState();
+
+    acceptRealtimeEventSequence(state, {
+      type: "connected",
+      atIso: "2026-05-29T00:00:00.000Z",
+      serverInstanceId: "server-a",
+      serverStartedAtIso: "2026-05-29T00:00:00.000Z",
+    });
+    expect(acceptRealtimeEventSequence(state, { sequence: 1 })).toBe(true);
+    expect(acceptRealtimeEventSequence(state, { sequence: 1 })).toBe(false);
+
+    acceptRealtimeEventSequence(state, {
+      type: "connected",
+      atIso: "2026-05-29T00:01:00.000Z",
+      serverInstanceId: "server-b",
+      serverStartedAtIso: "2026-05-29T00:01:00.000Z",
+    });
+    expect(acceptRealtimeEventSequence(state, { sequence: 1 })).toBe(true);
   });
 });
