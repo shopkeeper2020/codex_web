@@ -118,6 +118,39 @@ describe("LocalLiveThreadStore", () => {
     ]);
   });
 
+  it("preserves markdown table line breaks from assistant content arrays", () => {
+    const store = new LocalLiveThreadStore({
+      isLocalOwner: (threadId) => threadId === "thread-1",
+      readInitialDetail: () => initialDetail,
+      readOwner: () => null,
+    });
+
+    const completed = store.handle({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "agentMessage",
+          id: "assistant-1",
+          content: [
+            { type: "text", text: "| 日期 | 北京 |" },
+            { type: "text", text: "| --- | --- |" },
+            { type: "text", text: "| 6月4日 | 多云 |" },
+          ],
+        },
+      },
+    });
+
+    expect(completed?.detail.turns[0]?.items).toEqual([
+      {
+        type: "assistant",
+        id: "assistant-1",
+        text: "| 日期 | 北京 |\n| --- | --- |\n| 6月4日 | 多云 |",
+      },
+    ]);
+  });
+
   it("normalizes live web search items instead of unknown placeholders", () => {
     const store = new LocalLiveThreadStore({
       isLocalOwner: (threadId) => threadId === "thread-1",
@@ -207,6 +240,71 @@ describe("LocalLiveThreadStore", () => {
         items: [
           { type: "user", id: "official-user-1", text: "再整理北京的。" },
         ],
+      },
+    ]);
+  });
+
+  it("drops stale live state after an edit rollback clear", () => {
+    const store = new LocalLiveThreadStore({
+      isLocalOwner: (threadId) => threadId === "thread-1",
+      readInitialDetail: () => ({
+        ...initialDetail,
+        turns: [
+          {
+            id: "turn-before",
+            status: "completed",
+            items: [{ type: "user", id: "user-before", text: "北京的呢？" }],
+          },
+        ],
+      }),
+      readOwner: () => null,
+    });
+
+    store.handle({
+      method: "turn/started",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "turn-old", status: "inProgress" },
+      },
+    });
+    store.handle({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-old",
+        item: {
+          type: "userMessage",
+          id: "user-old",
+          content: [{ type: "text", text: "上海的呢？" }],
+        },
+      },
+    });
+
+    store.clear("thread-1");
+
+    const replacement = store.handle({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-new",
+        item: {
+          type: "userMessage",
+          id: "user-new",
+          content: [{ type: "text", text: "新疆的呢？" }],
+        },
+      },
+    });
+
+    expect(replacement?.detail.turns).toEqual([
+      {
+        id: "turn-before",
+        status: "completed",
+        items: [{ type: "user", id: "user-before", text: "北京的呢？" }],
+      },
+      {
+        id: "turn-new",
+        status: "active",
+        items: [{ type: "user", id: "user-new", text: "新疆的呢？" }],
       },
     ]);
   });

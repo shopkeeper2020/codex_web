@@ -131,6 +131,59 @@ export const turnSteerRequestSchema = z
     };
   });
 
+export const turnEditLastUserRequestSchema = z
+  .object({
+    threadId: z.string().optional(),
+    conversationId: z.string().optional(),
+    expectedTurnId: z.string().optional(),
+    turnId: z.string().optional(),
+    turn_id: z.string().optional(),
+    text: z.string(),
+    cwd: z.string().nullable().optional(),
+    model: z.string().optional(),
+    effort: z.string().optional(),
+    skills: z.array(skillInputSchema).optional(),
+    collaborationMode: z.record(z.string(), z.unknown()).optional(),
+    permissionMode: permissionModeSchema.optional(),
+  })
+  .strict()
+  .transform((value, context) => {
+    const threadId = (value.threadId ?? value.conversationId ?? "").trim();
+    const expectedTurnId = (
+      value.expectedTurnId ??
+      value.turnId ??
+      value.turn_id ??
+      ""
+    ).trim();
+    if (!threadId) {
+      context.addIssue({
+        code: "custom",
+        path: ["threadId"],
+        message: "Missing threadId",
+      });
+    }
+    if (!expectedTurnId) {
+      context.addIssue({
+        code: "custom",
+        path: ["expectedTurnId"],
+        message: "Missing expectedTurnId",
+      });
+    }
+    if (value.text.trim().length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["text"],
+        message: "Missing text",
+      });
+    }
+    return {
+      ...value,
+      threadId,
+      conversationId: value.conversationId?.trim(),
+      expectedTurnId,
+    };
+  });
+
 export const turnInterruptRequestSchema = z
   .object({
     threadId: z.string().optional(),
@@ -240,6 +293,7 @@ export const messageItemSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("user"),
     ...textMessageItemFields,
+    intent: z.enum(["message", "guidance"]).optional(),
   }),
   z.object({
     type: z.literal("assistant"),
@@ -1234,6 +1288,13 @@ export const threadCompactResponseSchema = z.object({
   }),
 });
 
+export const turnEditLastUserResponseSchema = z.object({
+  data: z.object({
+    mode: z.enum(["official-follower", "app-server"]),
+    result: z.unknown().optional(),
+  }),
+});
+
 export const threadGoalSetRequestSchema = z
   .object({
     threadId: z.string().optional(),
@@ -1517,6 +1578,9 @@ export type SkillInput = z.infer<typeof skillInputSchema>;
 export type PermissionMode = z.infer<typeof permissionModeSchema>;
 export type TurnStartRequest = z.infer<typeof turnStartRequestSchema>;
 export type TurnSteerRequest = z.infer<typeof turnSteerRequestSchema>;
+export type TurnEditLastUserRequest = z.infer<
+  typeof turnEditLastUserRequestSchema
+>;
 export type TurnInterruptRequest = z.infer<typeof turnInterruptRequestSchema>;
 export type RealtimeEvent = z.infer<typeof realtimeEventSchema>;
 export type AttachmentStorageStatus = z.infer<
@@ -1650,6 +1714,9 @@ export type ThreadArchiveRequest = z.infer<typeof threadArchiveRequestSchema>;
 export type ThreadArchiveResponse = z.infer<typeof threadArchiveResponseSchema>;
 export type ThreadCompactRequest = z.infer<typeof threadCompactRequestSchema>;
 export type ThreadCompactResponse = z.infer<typeof threadCompactResponseSchema>;
+export type TurnEditLastUserResponse = z.infer<
+  typeof turnEditLastUserResponseSchema
+>;
 export type ThreadGoalSetRequest = z.infer<typeof threadGoalSetRequestSchema>;
 export type ThreadGoalClearRequest = z.infer<
   typeof threadGoalClearRequestSchema

@@ -88,6 +88,34 @@ describe("app-server realtime reducer", () => {
     ]);
   });
 
+  it("preserves markdown table line breaks from live assistant content arrays", () => {
+    const detail = applyAppServerRealtimeNotification(
+      createDetail(),
+      "item/completed",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "agentMessage",
+          id: "assistant-a",
+          content: [
+            { type: "text", text: "| 日期 | 北京 |" },
+            { type: "text", text: "| --- | --- |" },
+            { type: "text", text: "| 6月4日 | 多云 |" },
+          ],
+        },
+      },
+    );
+
+    expect(detail?.turns[0]?.items).toEqual([
+      {
+        type: "assistant",
+        id: "assistant-a",
+        text: "| 日期 | 北京 |\n| --- | --- |\n| 6月4日 | 多云 |",
+      },
+    ]);
+  });
+
   it("uses completed assistant items as the authoritative final text", () => {
     const streamed = applyAppServerRealtimeNotification(
       createDetail(),

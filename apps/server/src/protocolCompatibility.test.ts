@@ -12,6 +12,7 @@ const connectedIpc = {
   pipePath: "\\\\.\\pipe\\codex-ipc",
   registeredRequestHandlers: [
     { method: "thread-follower-compact-thread", version: 1 },
+    { method: "thread-follower-edit-last-user-turn", version: 1 },
     { method: "thread-follower-interrupt-turn", version: 1 },
     { method: "thread-follower-set-collaboration-mode", version: 1 },
     { method: "thread-follower-set-model-and-reasoning", version: 1 },
@@ -23,7 +24,6 @@ const connectedIpc = {
 
 const expectedUnregisteredFollowerMethods = [
   "thread-follower-command-approval-decision",
-  "thread-follower-edit-last-user-turn",
   "thread-follower-file-approval-decision",
   "thread-follower-permissions-request-approval-response",
   "thread-follower-set-queued-follow-ups-state",
@@ -85,8 +85,9 @@ describe("protocol compatibility snapshot", () => {
         }),
         expect.objectContaining({
           method: "thread-follower-edit-last-user-turn",
-          supportLevel: "risky",
-          safeToImplement: false,
+          localHandlerRegistered: true,
+          supportLevel: "implemented",
+          safeToImplement: true,
           appServerRpcMapping: "thread/rollback + turn/start",
         }),
         expect.objectContaining({
@@ -108,7 +109,7 @@ describe("protocol compatibility snapshot", () => {
       state: "compatible",
       reason: null,
       methodCount: Object.keys(IPC_METHOD_VERSIONS).length,
-      registeredHandlerCount: 6,
+      registeredHandlerCount: 7,
     });
   });
 

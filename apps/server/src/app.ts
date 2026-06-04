@@ -61,6 +61,8 @@ import {
   threadUnarchiveRequestSchema,
   threadUnarchiveResponseSchema,
   turnInterruptRequestSchema,
+  turnEditLastUserRequestSchema,
+  turnEditLastUserResponseSchema,
   turnStartRequestSchema,
   turnSteerRequestSchema,
   workspaceBranchCheckoutRequestSchema,
@@ -128,7 +130,12 @@ import {
 import { buildSafeDiagnosticsExport } from "./diagnosticsExport.js";
 import { DatabaseStore } from "./db/index.js";
 import { EventBus } from "./events.js";
-import { archiveThreadWithRecovery, startLocalTurn } from "./threadActions.js";
+import {
+  archiveThreadWithRecovery,
+  buildEditedLastUserTurnStartParams,
+  resumeLocalThreadForTurn,
+  startLocalTurn,
+} from "./threadActions.js";
 import { toOfficialTurnSteerParams } from "./appServerParams.js";
 import { cleanupUnassociatedAttachments } from "./attachmentCleanup.js";
 import {
@@ -4101,6 +4108,188 @@ export async function createServer(
     } catch (error) {
       await reply.code(502).send({
         error: error instanceof Error ? error.message : "Failed to steer turn",
+      });
+    }
+  });
+
+  app.post("/api/domain/turn/edit-last-user", async (request, reply) => {
+    const parsed = turnEditLastUserRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: formatZodError(parsed.error) });
+      return;
+    }
+    const body = parsed.data;
+    const threadId = body.threadId;
+    const turnId = body.expectedTurnId;
+    const message = body.text.trim();
+
+    try {
+      const result = await officialIpc.sendThreadFollowerEditLastUserTurn(
+        threadId,
+        {
+          turnId,
+          message,
+        },
+      );
+      const response = turnEditLastUserResponseSchema.safeParse({
+        data: { mode: "official-follower", result },
+      });
+      if (!response.success) {
+        const error = formatZodError(response.error);
+        diagnostics.record(
+          "error",
+          "api",
+          "turn-edit-last-user-response-validation-failed",
+          { threadId, turnId, error },
+        );
+        await reply.code(500).send({ error });
+        return;
+      }
+      await reply.send(response.data);
+      return;
+    } catch (error) {
+      const errorText =
+        error instanceof Error ? error.message : "official edit failed";
+      const fallback = decideLocalTurnFallback({
+        action: "edit",
+        threadId,
+        errorMessage: errorText,
+        officialIpc,
+      });
+      if (!fallback.allow) {
+        diagnostics.record(
+          "warn",
+          "turn-edit-last-user",
+          "official-follower-fallback-denied",
+          {
+            threadId,
+            turnId,
+            error: errorText,
+            reason: fallback.reason,
+          },
+        );
+        await reply.code(fallback.statusCode).send({ error: fallback.error });
+        return;
+      }
+      diagnostics.record(
+        "warn",
+        "turn-edit-last-user",
+        "official-follower-fallback",
+        {
+          threadId,
+          turnId,
+          error: errorText,
+          reason: fallback.reason,
+        },
+      );
+    }
+
+    let localEditStep = "promote-owner";
+    try {
+      localEditStep = "promote-owner";
+      if (!promoteLocalOwnerConversation(threadId, "turn-edit-last-user")) {
+        await reply
+          .code(503)
+          .send({ error: "official-ipc-owner-not-broadcastable" });
+        return;
+      }
+      localEditStep = "read-thread-state";
+      const streamState = officialIpc.getThreadStreamState(threadId);
+      const readResult = streamState
+        ? null
+        : await appServer.threadRead({ threadId, includeTurns: true });
+      const conversationState =
+        streamState?.conversationState ??
+        asRecord(readResult)?.thread ??
+        readResult;
+      const cwd =
+        readString(body.cwd) ||
+        readString(asRecord(conversationState)?.cwd) ||
+        readString(asRecord(conversationState)?.projectId) ||
+        undefined;
+      const model = readString(body.model);
+      const effort = readString(body.effort);
+      const collaborationMode = asRecord(body.collaborationMode);
+      const overrides: Partial<TurnStartParams> & Record<string, unknown> = {
+        ...(cwd ? { cwd } : {}),
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+        ...(collaborationMode ? { collaborationMode } : {}),
+        ...buildPermissionOverrides(body.permissionMode),
+      };
+      localEditStep = "build-replacement-turn";
+      const params = buildEditedLastUserTurnStartParams({
+        threadId,
+        turnId,
+        message,
+        conversationState,
+        overrides,
+      });
+      localEditStep = "resume-thread";
+      await resumeLocalThreadForTurn(appServer, params);
+      localEditStep = "rollback-last-turn";
+      const rollbackResult = await appServer.threadRollback({
+        threadId,
+        numTurns: 1,
+      });
+      localLiveThreads.clear(threadId);
+      localEditStep = "broadcast-pending-turn";
+      const pendingSnapshotBroadcasted =
+        await broadcastPendingLocalTurnSnapshot(
+          threadId,
+          params,
+          "local-turn-edit-last-user",
+        );
+      if (!pendingSnapshotBroadcasted) {
+        diagnostics.record(
+          "warn",
+          "turn-edit-last-user",
+          "pending-turn-snapshot-failed",
+          { threadId, turnId },
+        );
+      }
+      localEditStep = "start-replacement-turn";
+      const result = await startLocalTurn(appServer, params, {
+        skipResume: true,
+      });
+      void broadcastOwnedAppServerSnapshot(threadId, "local-turn-edit-last-user");
+      localEditStep = "validate-response";
+      const response = turnEditLastUserResponseSchema.safeParse({
+        data: {
+          mode: "app-server",
+          result: { rollback: rollbackResult, start: result },
+        },
+      });
+      if (!response.success) {
+        const error = formatZodError(response.error);
+        diagnostics.record(
+          "error",
+          "api",
+          "turn-edit-last-user-response-validation-failed",
+          { threadId, turnId, error },
+        );
+        await reply.code(500).send({ error });
+        return;
+      }
+      await reply.send(response.data);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to edit last user message";
+      diagnostics.record(
+        "error",
+        "turn-edit-last-user",
+        "local-edit-failed",
+        {
+          threadId,
+          turnId,
+          step: localEditStep,
+          error: errorMessage,
+        },
+      );
+      await reply.code(502).send({
+        error: `edit-last-user-failed:${localEditStep}:${errorMessage}`,
       });
     }
   });

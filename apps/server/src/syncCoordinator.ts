@@ -3,6 +3,7 @@ import type {
   ThreadCompactStartParams,
   ThreadReadParams,
   ThreadResumeParams,
+  ThreadRollbackParams,
   ThreadTurnsListParams,
   ThreadSettingsUpdateParams,
   TurnInterruptParams,
@@ -11,7 +12,7 @@ import type {
 } from "./appServerProcess.js";
 import { IMPORTANT_APP_SERVER_NOTIFICATION_METHODS } from "@codex-web/protocol";
 import { toOfficialTurnSteerParams } from "./appServerParams.js";
-import { startLocalTurn } from "./threadActions.js";
+import { editLocalLastUserTurn, startLocalTurn } from "./threadActions.js";
 
 type RequestHandler = {
   canHandle?: (params: unknown) => boolean | Promise<boolean>;
@@ -43,6 +44,7 @@ export type LocalOwnerAppServer = {
   threadCompactStart(params: ThreadCompactStartParams): Promise<unknown>;
   threadSettingsUpdate(params: ThreadSettingsUpdateParams): Promise<unknown>;
   threadResume(params: ThreadResumeParams): Promise<unknown>;
+  threadRollback(params: ThreadRollbackParams): Promise<unknown>;
   turnStart(params: TurnStartParams): Promise<unknown>;
   turnSteer(params: TurnSteerParams): Promise<unknown>;
   turnInterrupt(params: TurnInterruptParams): Promise<unknown>;
@@ -369,6 +371,36 @@ export function installLocalOwnerSnapshotSync(input: {
       return result;
     },
   });
+
+  input.officialIpc.registerRequestHandler(
+    "thread-follower-edit-last-user-turn",
+    {
+      canHandle: (params) => isLocalOwner(readOfficialConversationId(params)),
+      handle: async (params) => {
+        const record = asRecord(params);
+        const threadId = readOfficialConversationId(record);
+        if (!threadId) throw new Error("Missing conversationId");
+        if (!isLocalOwner(threadId)) throw new Error("no-local-owner");
+        const turnId = readString(record?.turnId) || readString(record?.turn_id);
+        const message = readString(record?.message);
+        if (!turnId) throw new Error("Missing turnId");
+        if (!message) throw new Error("Missing message");
+        const streamState = input.officialIpc.getThreadStreamState?.(threadId);
+        const conversationState =
+          streamState?.conversationState ??
+          asRecord(await input.appServer.threadRead({ threadId, includeTurns: true }))
+            ?.thread;
+        const result = await editLocalLastUserTurn(input.appServer, {
+          threadId,
+          turnId,
+          message,
+          conversationState,
+        });
+        schedule(threadId);
+        return result;
+      },
+    },
+  );
 
   function isLocalOwner(threadId: string): boolean {
     return input.officialIpc.isOwnedConversation(threadId);

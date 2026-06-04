@@ -360,6 +360,70 @@ describe('thread detail request ordering', () => {
     ])
   })
 
+  it('does not reinsert turns pruned by an edit rollback before the replacement turn', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-before',
+          status: 'completed',
+          items: [
+            { type: 'user', id: 'user-before', text: '北京未来一周天气怎样？' },
+            { type: 'assistant', id: 'assistant-before', text: '北京这周前冷后暖。' },
+          ],
+        },
+        {
+          id: 'turn-edited-away',
+          status: 'completed',
+          items: [
+            { type: 'user', id: 'user-old', text: '上海的呢？' },
+            { type: 'assistant', id: 'assistant-old', text: '上海整体舒适。' },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-before',
+          status: 'completed',
+          items: [
+            { type: 'user', id: 'user-before', text: '北京未来一周天气怎样？' },
+            { type: 'assistant', id: 'assistant-before', text: '北京这周前冷后暖。' },
+          ],
+        },
+        {
+          id: 'turn-replacement',
+          status: 'active',
+          items: [
+            { type: 'user', id: 'user-new', text: '新疆的呢？' },
+            { type: 'assistant', id: 'assistant-new', text: '新疆昼夜温差明显。' },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns).toEqual([
+      {
+        id: 'turn-before',
+        status: 'completed',
+        items: [
+          { type: 'user', id: 'user-before', text: '北京未来一周天气怎样？' },
+          { type: 'assistant', id: 'assistant-before', text: '北京这周前冷后暖。' },
+        ],
+      },
+      {
+        id: 'turn-replacement',
+        status: 'active',
+        items: [
+          { type: 'user', id: 'user-new', text: '新疆的呢？' },
+          { type: 'assistant', id: 'assistant-new', text: '新疆昼夜温差明显。' },
+        ],
+      },
+    ])
+  })
+
   it('does not merge details from a different thread', () => {
     const current = detail('thread-a', {
       turns: [

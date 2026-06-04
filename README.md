@@ -6,6 +6,10 @@
 
 项目面向本机运行和局域网访问，不是云端托管服务。后端运行在你的电脑上，负责连接官方 Codex IPC、app-server、本地 SQLite、附件存储和浏览器 Web UI。
 
+## 界面展示
+
+![codex_web Web 界面展示](./docs/assets/readme-ui-showcase.png)
+
 ## 项目目标
 
 Codex Desktop 很适合在电脑上工作，但它不是一个天然的浏览器/LAN/手机入口。`codex_web` 的目标是在不把会话搬到云端的前提下，把本机 Codex 工作流扩展到更多屏幕和更多操作方式：

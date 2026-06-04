@@ -2,6 +2,7 @@ import type {
   ThreadCompactStartParams,
   ThreadReadParams,
   ThreadResumeParams,
+  ThreadRollbackParams,
   TurnInterruptParams,
   TurnStartParams,
   TurnSteerParams,
@@ -107,6 +108,11 @@ class FakeAppServer implements LocalOwnerAppServer {
 
   async threadResume(params: ThreadResumeParams): Promise<unknown> {
     this.calls.push({ method: "thread/resume", params });
+    return {};
+  }
+
+  async threadRollback(params: ThreadRollbackParams): Promise<unknown> {
+    this.calls.push({ method: "thread/rollback", params });
     return {};
   }
 
@@ -265,6 +271,71 @@ describe("local owner sync coordinator", () => {
           method: "thread/compact/start",
           params: {
             threadId: "thread-1",
+          },
+        },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("relays edit-last-user-turn through rollback and replacement start", async () => {
+    const { officialIpc, appServer, dispose } = installFakes();
+    officialIpc.ownedThreads.add("thread-1");
+    officialIpc.streamStates.set("thread-1", {
+      conversationState: {
+        id: "thread-1",
+        turns: [
+          {
+            turnId: "turn-last",
+            status: "completed",
+            params: {
+              input: [
+                { type: "text", text: "original", text_elements: [] },
+                { type: "skill", name: "docs", path: "C:\\skill\\SKILL.md" },
+              ],
+              model: "gpt-test",
+            },
+          },
+        ],
+      },
+    });
+    try {
+      const editHandler = officialIpc.handlers.get(
+        "thread-follower-edit-last-user-turn",
+      );
+
+      expect(editHandler).toBeTruthy();
+      expect(
+        await editHandler?.canHandle?.({ conversationId: "thread-1" }),
+      ).toBe(true);
+      await expect(
+        editHandler?.handle({
+          conversationId: "thread-1",
+          turnId: "turn-last",
+          message: "edited",
+        }),
+      ).resolves.toEqual({ started: true });
+
+      expect(appServer.calls).toEqual([
+        {
+          method: "thread/resume",
+          params: { threadId: "thread-1" },
+        },
+        {
+          method: "thread/rollback",
+          params: { threadId: "thread-1", numTurns: 1 },
+        },
+        {
+          method: "turn/start",
+          params: {
+            clientUserMessageId: expect.any(String),
+            threadId: "thread-1",
+            input: [
+              { type: "text", text: "edited", text_elements: [] },
+              { type: "skill", name: "docs", path: "C:\\skill\\SKILL.md" },
+            ],
+            model: "gpt-test",
           },
         },
       ]);

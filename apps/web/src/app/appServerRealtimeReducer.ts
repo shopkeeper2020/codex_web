@@ -20,9 +20,18 @@ function readTextContent(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
     return value
-      .map((entry) => readString(asRecord(entry)?.text))
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        const record = asRecord(entry);
+        return (
+          readString(record?.text) ||
+          readString(record?.content) ||
+          readString(record?.value) ||
+          readTextContent(record?.content)
+        );
+      })
       .filter(Boolean)
-      .join("");
+      .join("\n");
   }
   const record = asRecord(value);
   if (!record) return "";
@@ -149,10 +158,12 @@ function normalizeItem(value: unknown, fallbackId: string): MessageItem {
   const id = readString(record?.id) || fallbackId;
 
   if (type === "usermessage" || type === "user") {
+    const intent = readString(record?.intent);
     return {
       type: "user",
       id,
       text: readTextContent(record?.content) || readString(record?.text),
+      ...(intent === "guidance" ? { intent } : {}),
     };
   }
   if (type === "agentmessage" || type === "assistantmessage" || type === "assistant") {

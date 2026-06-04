@@ -1761,6 +1761,34 @@ export class OfficialIpcBridge {
     );
   }
 
+  async sendThreadFollowerEditLastUserTurn(
+    threadId: string,
+    params: {
+      turnId: string;
+      message: string;
+      agentMode?: unknown;
+      serviceTier?: unknown;
+    },
+  ): Promise<unknown> {
+    if (this.isOwnedConversation(threadId))
+      throw new Error("no-official-owner");
+    const ownerClientId = this.getExternalOwnerClientId(threadId) || undefined;
+    return await this.sendFollowerRequestWithDiscoveryRetry(
+      "thread-follower-edit-last-user-turn",
+      threadId,
+      {
+        conversationId: threadId,
+        turnId: params.turnId,
+        message: params.message,
+        ...(params.agentMode !== undefined ? { agentMode: params.agentMode } : {}),
+        ...(params.serviceTier !== undefined
+          ? { serviceTier: params.serviceTier }
+          : {}),
+      },
+      ownerClientId,
+    );
+  }
+
   private buildThreadFollowerSteerParams(
     threadId: string,
     turnSteerParams: unknown,

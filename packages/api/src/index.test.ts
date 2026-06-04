@@ -54,6 +54,7 @@ import {
   threadUnarchiveRequestSchema,
   threadUnarchiveResponseSchema,
   turnInterruptRequestSchema,
+  turnEditLastUserRequestSchema,
   turnStartRequestSchema,
   turnSteerRequestSchema,
   workspaceStatusResponseSchema,
@@ -301,6 +302,34 @@ describe("API contract schemas", () => {
       threadId: "thread-a",
       turnId: "turn-a",
     });
+  });
+
+  it("normalizes edit-last-user request aliases", () => {
+    expect(
+      turnEditLastUserRequestSchema.parse({
+        conversationId: " thread-a ",
+        turn_id: " turn-last ",
+        text: "edited",
+        cwd: "C:\\workspace\\codex_web",
+        permissionMode: "auto-review",
+      }),
+    ).toMatchObject({
+      threadId: "thread-a",
+      expectedTurnId: "turn-last",
+      text: "edited",
+      cwd: "C:\\workspace\\codex_web",
+      permissionMode: "auto-review",
+    });
+
+    const parsed = turnEditLastUserRequestSchema.safeParse({
+      threadId: "thread-a",
+      expectedTurnId: "turn-last",
+      text: "   ",
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(formatZodError(parsed.error)).toContain("Missing text");
+    }
   });
 
   it("accepts realtime events with extension fields", () => {
@@ -1132,6 +1161,12 @@ describe("API contract schemas", () => {
 
     const validItems = [
       { type: "user" as const, id: "user-a", text: "hello", images: [image] },
+      {
+        type: "user" as const,
+        id: "user-guidance",
+        text: "guide current turn",
+        intent: "guidance" as const,
+      },
       {
         type: "assistant" as const,
         id: "assistant-a",

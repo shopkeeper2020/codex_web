@@ -255,6 +255,10 @@ function shouldCarryCurrentTurn(
   )
 }
 
+function hasLiveCarryReason(turn: Turn): boolean {
+  return turn.status === 'active' || turn.items.some(isLiveOperationItem)
+}
+
 function mergedTurnAnchorIndex(turn: Turn, mergedTurns: Turn[]): number {
   return mergedTurns.findIndex((candidate) => candidate.id === turn.id)
 }
@@ -283,10 +287,13 @@ function mergeTurnsWithLiveItems(
   const visibleIncomingTurns = incomingTurns.filter((turn) => !isPendingTurnId(turn.id))
   const currentById = new Map(currentTurns.map((turn) => [turn.id, turn]))
   const usedCurrentTurnIds = new Set<string>()
+  let lastCommonCurrentIndex = -1
   const mergedTurns = visibleIncomingTurns.map((incomingTurn) => {
     const currentTurn = currentById.get(incomingTurn.id)
     if (!currentTurn) return incomingTurn
     usedCurrentTurnIds.add(currentTurn.id)
+    const currentIndex = currentTurns.findIndex((turn) => turn.id === currentTurn.id)
+    if (currentIndex > lastCommonCurrentIndex) lastCommonCurrentIndex = currentIndex
     return mergeTurnWithLiveItems(incomingTurn, currentTurn)
   })
 
@@ -294,6 +301,14 @@ function mergeTurnsWithLiveItems(
     const currentTurn = currentTurns[currentIndex]!
     if (usedCurrentTurnIds.has(currentTurn.id)) continue
     if (!shouldCarryCurrentTurn(currentTurn, preserveCurrentHistory)) continue
+    if (
+      preserveCurrentHistory &&
+      !hasLiveCarryReason(currentTurn) &&
+      lastCommonCurrentIndex >= 0 &&
+      currentIndex > lastCommonCurrentIndex
+    ) {
+      continue
+    }
     mergedTurns.splice(
       currentTurnInsertionIndex(currentIndex, currentTurns, mergedTurns),
       0,

@@ -116,7 +116,7 @@ Do not assume every follower method is a one-hop app-server JSON-RPC call. The c
 | `thread-follower-compact-thread`          | Yes         | Yes                         | Start compaction on the owner                       | `thread/compact/start`           | `implemented` | Implemented only for Web-owned conversations and guarded by owner checks. |
 | `thread-follower-set-model-and-reasoning` | Yes         | Yes                         | Update owner local latest model/reasoning state     | Owner-state, not app-server RPC  | `implemented` | Implemented as Web-owned runtime state consumed by later follower starts. |
 | `thread-follower-set-collaboration-mode`  | Yes         | Yes                         | Update owner local latest collaboration mode state  | Owner-state, not app-server RPC  | `implemented` | Implemented as Web-owned runtime state consumed by later follower starts. |
-| `thread-follower-edit-last-user-turn`     | No          | Yes                         | Roll back the last turn and start a replacement one | `thread/rollback` + `turn/start` | `risky`       | Do not implement casually; rollback does not restore local file changes.  |
+| `thread-follower-edit-last-user-turn`     | Yes         | Yes                         | Roll back the last turn and start a replacement one | `thread/rollback` + `turn/start` | `implemented` | Guarded to the latest completed turn; rollback still does not restore local file changes. |
 
 Important consequences:
 
@@ -124,7 +124,7 @@ Important consequences:
 - `start` / `steer` / `interrupt` are the required first-version realtime set.
 - `compact` is implemented for Web-owned conversations because the official owner mapping is direct. It is still a thread-mutating operation, so public UI should keep an explicit confirmation path if exposed later.
 - `set-model-and-reasoning` and `set-collaboration-mode` are owner-state updates in official clients. The Web implementation stores equivalent Web-owned runtime state and applies it to later follower `turn/start` requests when those params are omitted.
-- `edit-last-user-turn` needs a separate design because `thread/rollback` can leave local file changes in place and replacement turn params must be reconstructed exactly.
+- `edit-last-user-turn` is implemented through the official owner-aware path. External-owned threads receive `conversationId + turnId + message` via `thread-follower-edit-last-user-turn`; Web-owned threads reconstruct replacement params from the original turn, then call `thread/rollback` and `turn/start`.
 
 ## Owner/Follower Model
 

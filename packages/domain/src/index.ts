@@ -83,7 +83,7 @@ export type AgentTask = {
 }
 
 export type MessageItem =
-  | { type: 'user'; id: string; text: string; images?: MessageImageContent[] }
+  | { type: 'user'; id: string; text: string; images?: MessageImageContent[]; intent?: 'message' | 'guidance' }
   | { type: 'assistant'; id: string; text: string; images?: MessageImageContent[] }
   | { type: 'reasoning'; id: string; text: string; collapsed: boolean; status: string | null }
   | {
@@ -800,6 +800,7 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
       type: 'user',
       id,
       text,
+      intent: 'guidance',
       ...(images.length ? { images } : {}),
     }
   }

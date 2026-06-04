@@ -26,6 +26,8 @@ class FakeOfficialIpc {
     [];
   readonly followerSteerCalls: Array<{ threadId: string; params: unknown }> =
     [];
+  readonly followerEditCalls: Array<{ threadId: string; params: unknown }> =
+    [];
   readonly followerCompactCalls: Array<{ threadId: string }> = [];
   readonly snapshots: Array<{ threadId: string; state: unknown }> = [];
   readonly streamStates = new Map<string, Record<string, unknown>>();
@@ -203,6 +205,16 @@ class FakeOfficialIpc {
     throw new Error(this.options.errorMessage);
   }
 
+  async sendThreadFollowerEditLastUserTurn(
+    threadId: string,
+    params: unknown,
+  ): Promise<unknown> {
+    this.followerEditCalls.push({ threadId, params });
+    if (this.options.webOwned) throw new Error("no-official-owner");
+    if (!this.options.errorMessage) return { ok: true };
+    throw new Error(this.options.errorMessage);
+  }
+
   async sendThreadFollowerInterruptTurn(): Promise<unknown> {
     throw new Error(this.options.errorMessage);
   }
@@ -236,6 +248,7 @@ class FakeOfficialIpc {
 
 class FakeAppServer {
   readonly calls: Array<{ method: string; params?: unknown }> = [];
+  rollbackError: string | null = null;
 
   onNotification(): () => void {
     return () => undefined;
@@ -259,6 +272,18 @@ class FakeAppServer {
   async threadResume(params: ThreadResumeParams): Promise<unknown> {
     this.calls.push({ method: "thread/resume", params });
     return { ok: true };
+  }
+
+  async threadRollback(params: Record<string, unknown>): Promise<unknown> {
+    this.calls.push({ method: "thread/rollback", params });
+    if (this.rollbackError) throw new Error(this.rollbackError);
+    return {
+      thread: {
+        id: "thread-a",
+        cwd: "C:\\workspace\\codex_web",
+        turns: [],
+      },
+    };
   }
 
   async turnStart(params: TurnStartParams): Promise<unknown> {
@@ -350,6 +375,15 @@ describe("turn HTTP routes", () => {
       source: "turn-interrupt",
     },
     {
+      route: "/api/domain/turn/edit-last-user",
+      body: {
+        threadId: "thread-a",
+        expectedTurnId: "turn-active",
+        text: "edited",
+      },
+      source: "turn-edit-last-user",
+    },
+    {
       route: "/api/domain/thread/compact/start",
       body: { threadId: "thread-a" },
       source: "thread-compact",
@@ -408,6 +442,124 @@ describe("turn HTTP routes", () => {
       { threadId: "thread-a" },
     ]);
     expect(appServer.calls).toEqual([]);
+  });
+
+  it("routes edit-last-user through the official owner when available", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "",
+      hasOfficialState: true,
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn/edit-last-user",
+      payload: {
+        threadId: "thread-a",
+        expectedTurnId: "turn-completed",
+        text: "edited message",
+      },
+    });
+
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { mode: "official-follower", result: { ok: true } },
+    });
+    expect(officialIpc.followerEditCalls).toEqual([
+      {
+        threadId: "thread-a",
+        params: { turnId: "turn-completed", message: "edited message" },
+      },
+    ]);
+    expect(appServer.calls).toEqual([]);
+  });
+
+  it("edits the last user message locally for a Web-owned thread", async () => {
+    const { context, appServer } = await createHarness({
+      errorMessage: "",
+      hasOfficialState: true,
+      officialState: "idle",
+      webOwned: true,
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn/edit-last-user",
+      payload: {
+        threadId: "thread-a",
+        expectedTurnId: "turn-completed",
+        text: "edited message",
+      },
+    });
+
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { mode: "app-server" },
+    });
+    expect(appServer.calls.map((call) => call.method)).toEqual([
+      "thread/resume",
+      "thread/rollback",
+      "turn/start",
+    ]);
+    expect(appServer.calls[0]).toMatchObject({
+      method: "thread/resume",
+      params: { threadId: "thread-a" },
+    });
+    expect(appServer.calls[1]).toMatchObject({
+      method: "thread/rollback",
+      params: { threadId: "thread-a", numTurns: 1 },
+    });
+    expect(appServer.calls[2]).toMatchObject({
+      method: "turn/start",
+      params: {
+        threadId: "thread-a",
+        input: [{ type: "text", text: "edited message", text_elements: [] }],
+      },
+    });
+  });
+
+  it("records the local edit step when app-server rollback fails", async () => {
+    const { context, appServer } = await createHarness({
+      errorMessage: "",
+      hasOfficialState: true,
+      officialState: "idle",
+      webOwned: true,
+    });
+    appServer.rollbackError = "thread not found: thread-a";
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn/edit-last-user",
+      payload: {
+        threadId: "thread-a",
+        expectedTurnId: "turn-completed",
+        text: "edited message",
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      error: expect.stringContaining(
+        "edit-last-user-failed:rollback-last-turn:thread not found: thread-a",
+      ),
+    });
+    expect(appServer.calls.map((call) => call.method)).toEqual([
+      "thread/resume",
+      "thread/rollback",
+    ]);
+    expect(context.diagnostics.list()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "turn-edit-last-user",
+          message: "local-edit-failed",
+          data: expect.objectContaining({
+            threadId: "thread-a",
+            turnId: "turn-completed",
+            step: "rollback-last-turn",
+            error: "thread not found: thread-a",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("compacts a Web-owned thread locally and refreshes its snapshot", async () => {

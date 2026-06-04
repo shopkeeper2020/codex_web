@@ -6,6 +6,10 @@
 
 The project is designed for local execution and LAN access, not as a hosted cloud service. The backend runs on your machine and bridges the official Codex IPC layer, app-server, local SQLite data, attachment storage, and the browser UI.
 
+## Interface Preview
+
+![codex_web web interface preview](./docs/assets/readme-ui-showcase.png)
+
 ## Project Goals
 
 Codex Desktop is good for working on one computer, but it is not a browser, LAN, or phone-first entry point. `codex_web` extends local Codex workflows to more screens and interaction styles without moving conversations to a hosted cloud service:

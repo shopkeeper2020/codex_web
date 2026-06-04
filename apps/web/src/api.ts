@@ -32,6 +32,7 @@ import {
   syncReadinessResponseSchema,
   threadArchiveResponseSchema,
   threadCompactResponseSchema,
+  turnEditLastUserResponseSchema,
   threadForkResponseSchema,
   threadStartResponseSchema,
   threadDetailResponseSchema,
@@ -71,6 +72,7 @@ import {
   type SyncReadiness,
   type ThreadSearchResult,
   type TurnInterruptRequest,
+  type TurnEditLastUserRequest,
   type TurnStartRequest,
   type TurnSteerRequest,
   type WorkspaceStatus,
@@ -620,6 +622,26 @@ export async function steerTurn(
     input,
   );
   return payload.data;
+}
+
+export async function editLastUserTurn(
+  input: Pick<
+    TurnEditLastUserRequest,
+    | "threadId"
+    | "expectedTurnId"
+    | "text"
+    | "cwd"
+    | "model"
+    | "effort"
+    | "skills"
+    | "collaborationMode"
+    | "permissionMode"
+  >,
+): Promise<{ mode: string; result: unknown }> {
+  const payload = turnEditLastUserResponseSchema.parse(
+    await writeJson<unknown>("/api/domain/turn/edit-last-user", input),
+  );
+  return { mode: payload.data.mode, result: payload.data.result };
 }
 
 export async function uploadAttachment(input: {

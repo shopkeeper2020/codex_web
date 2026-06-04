@@ -1379,6 +1379,100 @@
   gap: 8px;
 }
 
+.userMessageActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 22px;
+  color: #9ca3af;
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.userMessageActions button {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+
+.userMessageActions button:hover:not(:disabled),
+.userMessageActions button:focus-visible:not(:disabled) {
+  background: #f1f2f4;
+  color: #4b5563;
+}
+
+.userMessageActions button:disabled {
+  color: #c7cbd1;
+  cursor: default;
+}
+
+.userMessageEditor {
+  display: grid;
+  gap: 8px;
+  width: min(72%, 620px);
+  min-width: min(100%, 420px);
+  border-radius: 18px;
+  padding: 10px 12px 8px;
+  background: #f0f1f3;
+}
+
+.userMessageEditor textarea {
+  width: 100%;
+  min-height: 26px;
+  max-height: 260px;
+  border: 0;
+  padding: 0;
+  resize: none;
+  background: transparent;
+  color: #111827;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.48;
+  outline: none;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.userMessageEditorActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.userMessageEditorActions button {
+  min-width: 44px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.userMessageEditorActions button:first-child {
+  background: #ffffff;
+  color: #374151;
+}
+
+.userMessageEditorActions button:last-child {
+  background: #2f3137;
+  color: #ffffff;
+}
+
+.userMessageEditorActions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .markdownBody {
   color: var(--color-text-primary);
   font-size: 14px;

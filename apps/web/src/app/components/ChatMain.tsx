@@ -80,6 +80,17 @@ export type RightSidebarTab =
   | "review"
   | "terminal";
 
+export type UserMessageEditRequest = {
+  threadId: string;
+  cwd: string | null;
+  turnId: string;
+  text: string;
+};
+
+type EditingUserMessage = UserMessageEditRequest & {
+  itemId: string;
+};
+
 type RightSidebarTabInstance = {
   id: string;
   type: RightSidebarTab;
@@ -101,6 +112,7 @@ type DraftThreadView = {
 type ThreadTurn = ThreadDetail["turns"][number];
 type SideConversation = ThreadDetail["sideConversations"][number];
 type TurnItem = ThreadTurn["items"][number];
+type UserMessageItem = Extract<TurnItem, { type: "user" }>;
 type CommandMessageItem = Extract<TurnItem, { type: "command" }>;
 type FileChangeMessageItem = Extract<TurnItem, { type: "fileChange" }>;
 type PlanMessageItem = Extract<TurnItem, { type: "plan" }>;
@@ -297,6 +309,14 @@ function turnCopyText(turn: ThreadTurn): string {
 
 function hasTurnActionRow(turn: ThreadTurn): boolean {
   return turn.status === "completed" && turn.items.some((item) => item.type !== "user");
+}
+
+function isTerminalTurnStatus(status: ThreadTurn["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "interrupted";
+}
+
+function isOrdinaryUserMessageItem(item: TurnItem): item is UserMessageItem {
+  return item.type === "user" && item.intent !== "guidance";
 }
 
 function timestampMs(value?: string | null): number | null {
@@ -2421,6 +2441,7 @@ export function ChatMain({
   onSetThreadGoal,
   onClearThreadGoal,
   onForkThread,
+  onEditLastUserMessage,
   onSelectThread,
   composer,
 }: {
@@ -2465,6 +2486,7 @@ export function ChatMain({
     cwd?: string | null,
     afterTurnId?: string | null,
   ) => Promise<void>;
+  onEditLastUserMessage: (input: UserMessageEditRequest) => Promise<void>;
   onSelectThread: (threadId: string) => void;
   composer: ReactNode;
 }): ReactElement {
@@ -2473,6 +2495,8 @@ export function ChatMain({
   const turns = threadDetail?.turns ?? [];
   const selectedThreadId = selectedThread?.id ?? "";
   const selectedThreadTitle = selectedThread?.title ?? "";
+  const [editingUserMessage, setEditingUserMessage] =
+    useState<EditingUserMessage | null>(null);
   const visibleApprovals = selectedThreadId
     ? approvals.filter(
         (approval) =>
@@ -2487,15 +2511,107 @@ export function ChatMain({
         (project) => project.id === selectedThread.projectId,
       ) ?? null)
     : null;
-  const canSteerQueuedMessages = turns.some((turn) =>
-    isActiveStatus(turn.status),
-  );
   const projectRoot =
     draftThread?.cwd ??
     selectedThread?.projectId ??
     selectedThread?.path ??
     selectedProject?.path ??
     null;
+  const canSteerQueuedMessages = turns.some((turn) =>
+    isActiveStatus(turn.status),
+  );
+  const threadHasActiveTurn =
+    turns.some((turn) => isActiveStatus(turn.status)) ||
+    Boolean(threadDetail?.thread.inProgress || selectedThread?.inProgress);
+  const lastEditableUserItemId = useMemo(() => {
+    if (threadHasActiveTurn) return null;
+    for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+      const turn = turns[turnIndex];
+      if (!turn || !isTerminalTurnStatus(turn.status)) continue;
+      for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+        const item = turn.items[itemIndex];
+        if (!item || item.type !== "user") continue;
+        return item.intent === "guidance" ? null : item.id;
+      }
+    }
+    return null;
+  }, [threadHasActiveTurn, turns]);
+  useEffect(() => {
+    if (!editingUserMessage) return;
+    if (
+      editingUserMessage.threadId !== selectedThreadId ||
+      editingUserMessage.itemId !== lastEditableUserItemId
+    ) {
+      setEditingUserMessage(null);
+    }
+  }, [editingUserMessage, lastEditableUserItemId, selectedThreadId]);
+  const userMessageActionById = useMemo(() => {
+    const actions = new Map<
+      string,
+      {
+        timeLabel?: string;
+        canEdit?: boolean;
+        onEdit?: () => void;
+        isEditing?: boolean;
+        editText?: string;
+        onCancelEdit?: () => void;
+        onSubmitEdit?: (text: string) => Promise<void>;
+      }
+    >();
+    for (const turn of turns) {
+      const timeLabel = formatClockTime(turn.startedAtIso ?? turn.completedAtIso);
+      for (const item of turn.items) {
+        if (!isOrdinaryUserMessageItem(item)) continue;
+        const canEdit =
+          Boolean(selectedThreadId) &&
+          item.id === lastEditableUserItemId &&
+          item.text.trim().length > 0;
+        const isEditing = editingUserMessage?.itemId === item.id;
+        actions.set(item.id, {
+          timeLabel,
+          canEdit,
+          ...(canEdit
+            ? {
+                onEdit: () =>
+                  setEditingUserMessage({
+                    itemId: item.id,
+                    threadId: selectedThreadId,
+                    cwd: projectRoot,
+                    turnId: turn.id,
+                    text: item.text,
+                  }),
+              }
+            : {}),
+          ...(isEditing && editingUserMessage
+            ? {
+                isEditing: true,
+                editText: editingUserMessage.text,
+                onCancelEdit: () => setEditingUserMessage(null),
+                onSubmitEdit: async (text: string) => {
+                  await onEditLastUserMessage({
+                    threadId: editingUserMessage.threadId,
+                    cwd: editingUserMessage.cwd,
+                    turnId: editingUserMessage.turnId,
+                    text,
+                  });
+                  setEditingUserMessage((current) =>
+                    current?.itemId === item.id ? null : current,
+                  );
+                },
+              }
+            : {}),
+        });
+      }
+    }
+    return actions;
+  }, [
+    editingUserMessage,
+    lastEditableUserItemId,
+    onEditLastUserMessage,
+    projectRoot,
+    selectedThreadId,
+    turns,
+  ]);
   const draftProjectLabel = draftThread?.projectName ?? "当前工作区";
   const chatLayoutRef = useRef<HTMLDivElement | null>(null);
   const chatColumnRef = useRef<HTMLDivElement | null>(null);
@@ -3072,6 +3188,8 @@ export function ChatMain({
         ...renderTurnItems(turn.items, turn.status, {
           projectRoot,
           onOpenFileReference: handleOpenFileReference,
+          getUserMessageActions: (item) =>
+            userMessageActionById.get(item.id) ?? null,
         }),
       );
       if (hasTurnActionRow(turn)) {
@@ -3154,6 +3272,7 @@ export function ChatMain({
     handleOpenFileReference,
     isDraftThread,
     onDecideApproval,
+    onEditLastUserMessage,
     onForkThread,
     onSelectThread,
     projectRoot,
@@ -3164,6 +3283,7 @@ export function ChatMain({
     threadDetail?.thread.createdAtIso,
     threadListLoading,
     turns,
+    userMessageActionById,
     visibleApprovalsKey,
   ]);
   const messageScrollSignature = useMemo(

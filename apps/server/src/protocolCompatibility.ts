@@ -141,9 +141,9 @@ const FOLLOWER_METHOD_CAPABILITY_DEFINITIONS: FollowerMethodCapabilityDefinition
       ownerBehavior:
         "owner performs thread/rollback then starts a replacement turn",
       appServerRpcMapping: "thread/rollback + turn/start",
-      supportLevel: "risky",
-      safeToImplement: false,
-      note: "Rollback does not restore local file changes and requires exact turn params, attachments and approval policy reconstruction.",
+      supportLevel: "implemented",
+      safeToImplement: true,
+      note: "Implemented with last-turn and active-turn guards; rollback does not restore local file changes.",
     },
     {
       method: "thread-follower-command-approval-decision",

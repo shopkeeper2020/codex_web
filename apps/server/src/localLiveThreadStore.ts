@@ -57,11 +57,17 @@ function readTextContent(value: unknown): string {
   if (Array.isArray(value)) {
     return value
       .map((entry) => {
+        if (typeof entry === "string") return entry;
         const record = asRecord(entry);
-        return readString(record?.text);
+        return (
+          readString(record?.text) ||
+          readString(record?.content) ||
+          readString(record?.value) ||
+          readTextContent(record?.content)
+        );
       })
       .filter(Boolean)
-      .join("");
+      .join("\n");
   }
   const record = asRecord(value);
   if (!record) return "";
@@ -123,7 +129,13 @@ function normalizeLiveItem(value: unknown, fallbackId: string): MessageItem {
   const id = readString(record?.id) || fallbackId;
 
   if (type === "usermessage" || type === "user") {
-    return { type: "user", id, text: readTextContent(record?.content) };
+    const intent = readString(record?.intent);
+    return {
+      type: "user",
+      id,
+      text: readTextContent(record?.content),
+      ...(intent === "guidance" ? { intent } : {}),
+    };
   }
   if (type === "agentmessage" || type === "assistantmessage" || type === "assistant") {
     return {
@@ -240,6 +252,10 @@ export class LocalLiveThreadStore {
   private readonly states = new Map<string, LiveThreadState>();
 
   constructor(private readonly options: LocalLiveThreadStoreOptions) {}
+
+  clear(threadId: string): void {
+    this.states.delete(threadId);
+  }
 
   handle(notification: AppServerNotificationLike): LocalLiveThreadUpdate | null {
     const threadId = readThreadIdFromParams(notification.params);

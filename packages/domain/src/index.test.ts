@@ -547,6 +547,7 @@ describe('domain normalization', () => {
       type: 'user',
       id: 'steer-user-a',
       text: '这里是不是少了一部分东西？',
+      intent: 'guidance',
       images: [
         { url: 'data:image/png;base64,one', path: null },
         { url: 'data:image/png;base64,two', path: null, alt: 'image.png' },
@@ -556,6 +557,7 @@ describe('domain normalization', () => {
       type: 'user',
       id: 'legacy-steer-user',
       text: '旧缓存里的引导消息',
+      intent: 'guidance',
       images: [
         { url: 'data:image/png;base64,legacy', path: null, alt: 'legacy.png' },
       ],

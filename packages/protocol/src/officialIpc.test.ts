@@ -1644,6 +1644,71 @@ describe("official IPC helpers", () => {
     }
   });
 
+  it("uses framed IPC to send follower edit-last-user-turn to the current official owner", async () => {
+    const peer = new FakeOfficialIpcPeer();
+    await peer.start();
+    const bridge = new OfficialIpcBridge(peer.pipePath);
+
+    try {
+      bridge.start();
+      await waitUntil(
+        () =>
+          (bridge.getStatus() as { clientId?: string | null }).clientId ===
+          "web-client",
+      );
+
+      sendExternalOwnerSnapshot(peer, "thread-edit");
+      await waitUntil(
+        () =>
+          bridge.getThreadStreamState("thread-edit")?.ownerClientId ===
+          "desktop-client",
+      );
+
+      const resultPromise = bridge.sendThreadFollowerEditLastUserTurn(
+        "thread-edit",
+        {
+          turnId: "turn-last",
+          message: "edited message",
+        },
+      );
+      const request = await peer.waitForFrame(
+        (frame) =>
+          frame.type === "request" &&
+          frame.method === "thread-follower-edit-last-user-turn",
+      );
+      await expect(resultPromise).resolves.toEqual({ ok: true });
+
+      expect(request).toMatchObject({
+        type: "request",
+        method: "thread-follower-edit-last-user-turn",
+        targetClientId: "desktop-client",
+        sourceClientId: "web-client",
+      });
+      expect(request.params).toMatchObject({
+        conversationId: "thread-edit",
+        turnId: "turn-last",
+        message: "edited message",
+      });
+      expect(
+        (
+          bridge.getStatus() as {
+            recentFollowerRequests?: Array<Record<string, unknown>>;
+          }
+        ).recentFollowerRequests?.at(-1),
+      ).toMatchObject({
+        method: "thread-follower-edit-last-user-turn",
+        threadId: "thread-edit",
+        targetClientId: "desktop-client",
+        usedDiscovery: false,
+        result: "success",
+        handledByClientId: "desktop-client",
+      });
+    } finally {
+      bridge.dispose();
+      await peer.stop();
+    }
+  });
+
   it("uses discovery when follower start-turn has no cached official owner", async () => {
     const peer = new FakeOfficialIpcPeer();
     await peer.start();

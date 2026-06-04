@@ -6,6 +6,7 @@ import {
   closeSideConversation,
   compactThread,
   createSideConversation,
+  editLastUserTurn,
   forkThread,
   startThread,
   decideApproval,
@@ -198,6 +199,13 @@ type RuntimeData = {
     cwd?: string | null,
     afterTurnId?: string | null,
   ) => Promise<void>;
+  editLastUserMessage: (input: {
+    threadId: string;
+    cwd?: string | null;
+    expectedTurnId: string;
+    text: string;
+    options?: SendOptions;
+  }) => Promise<string | null>;
   setThreadGoalById: (
     threadId: string,
     input: { objective?: string; status?: "active" | "paused" },
@@ -1107,6 +1115,51 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     [enabled, refreshThreadDetail, refreshThreads, selectThread],
   );
 
+  const editLastUserMessage = useCallback(
+    async (input: {
+      threadId: string;
+      cwd?: string | null;
+      expectedTurnId: string;
+      text: string;
+      options?: SendOptions;
+    }) => {
+      const options = input.options ?? {};
+      if (!enabled || !input.threadId || !input.expectedTurnId || !input.text.trim()) {
+        return null;
+      }
+
+      setSending(true);
+      try {
+        const cwd = options.cwd ?? input.cwd ?? null;
+        await editLastUserTurn({
+          threadId: input.threadId,
+          expectedTurnId: input.expectedTurnId,
+          text: input.text.trim(),
+          cwd,
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.effort ? { effort: options.effort } : {}),
+          skills: options.skills,
+          collaborationMode: options.collaborationMode,
+          permissionMode: options.permissionMode,
+        });
+        setError("");
+        window.setTimeout(() => {
+          void refreshThreads().catch(() => undefined);
+          void refreshThreadDetail(input.threadId, { silent: true }).catch(
+            () => undefined,
+          );
+        }, 600);
+        return input.threadId;
+      } catch (unknownError) {
+        setError(userFacingErrorMessage(unknownError, "edit message failed"));
+        throw unknownError;
+      } finally {
+        setSending(false);
+      }
+    },
+    [enabled, refreshThreadDetail, refreshThreads],
+  );
+
   const loadMoreThreads = useCallback(async () => {
     if (!enabled || !threadList.nextCursor || loadingMoreThreads) return;
     setLoadingMoreThreads(true);
@@ -1865,6 +1918,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     interruptSelectedTurn,
     compactSelectedThread,
     forkThreadById,
+    editLastUserMessage,
     setThreadGoalById,
     clearThreadGoalById,
     decidePendingApproval,

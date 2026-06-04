@@ -1,4 +1,4 @@
-type FallbackAction = "start" | "steer" | "interrupt" | "compact";
+type FallbackAction = "start" | "steer" | "interrupt" | "compact" | "edit";
 
 type IpcOwnershipReader = {
   isOwnedConversation: (threadId: string) => boolean;

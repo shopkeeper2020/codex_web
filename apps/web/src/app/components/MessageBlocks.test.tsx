@@ -8,6 +8,77 @@ vi.mock("../../i18n/useI18n", () => ({
 }));
 
 describe("MessageBlocks file references", () => {
+  it("renders user message actions for ordinary user messages", () => {
+    const item: MessageItem = {
+      type: "user",
+      id: "user-action",
+      text: "hello",
+    };
+
+    const html = renderToStaticMarkup(
+      renderMessageItem(item, "completed", {
+        getUserMessageActions: () => ({
+          timeLabel: "15:31",
+          canEdit: true,
+          onEdit: () => undefined,
+        }),
+      })!,
+    );
+
+    expect(html).toContain('data-testid="user-message-actions"');
+    expect(html).toContain("15:31");
+    expect(html).toContain("复制用户消息");
+    expect(html).toContain("编辑用户消息");
+  });
+
+  it("keeps steering guidance messages without user action rows", () => {
+    const item: MessageItem = {
+      type: "user",
+      id: "user-guidance",
+      text: "guide current turn",
+      intent: "guidance",
+    };
+
+    const html = renderToStaticMarkup(
+      renderMessageItem(item, "completed", {
+        getUserMessageActions: () => ({
+          timeLabel: "15:31",
+          canEdit: true,
+          onEdit: () => undefined,
+        }),
+      })!,
+    );
+
+    expect(html).not.toContain('data-testid="user-message-actions"');
+    expect(html).not.toContain("复制用户消息");
+    expect(html).not.toContain("编辑用户消息");
+  });
+
+  it("renders inline editing controls inside the user message bubble", () => {
+    const item: MessageItem = {
+      type: "user",
+      id: "user-editing",
+      text: "hello",
+    };
+
+    const html = renderToStaticMarkup(
+      renderMessageItem(item, "completed", {
+        getUserMessageActions: () => ({
+          isEditing: true,
+          editText: "edited in place",
+          onCancelEdit: () => undefined,
+          onSubmitEdit: () => undefined,
+        }),
+      })!,
+    );
+
+    expect(html).toContain('data-testid="user-message-editor"');
+    expect(html).toContain("edited in place");
+    expect(html).toContain("取消");
+    expect(html).toContain("发送");
+    expect(html).not.toContain('data-testid="user-message-actions"');
+  });
+
   it("keeps Windows absolute markdown link targets for local file references", () => {
     const item: MessageItem = {
       type: "assistant",

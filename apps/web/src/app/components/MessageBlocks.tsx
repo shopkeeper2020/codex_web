@@ -14,6 +14,7 @@ import {
   Minimize2,
   PanelRightOpen,
   Paperclip,
+  Pencil,
   ShieldCheck,
   TerminalSquare,
   X,
@@ -44,11 +45,22 @@ type AgentTaskEntry = AgentTaskItem['agents'][number]
 type ReasoningItem = Extract<MessageItem, { type: 'reasoning' }>
 type ToolOutputItem = Extract<MessageItem, { type: 'toolOutput' }>
 type UnknownItem = Extract<MessageItem, { type: 'unknown' }>
+type UserMessageItem = Extract<MessageItem, { type: 'user' }>
 type GroupedOperationItem = CommandItem | FileChangeItem | ToolOutputItem
 type WebSearchRenderItem = ToolOutputItem | UnknownItem
+type UserMessageActions = {
+  timeLabel?: string
+  canEdit?: boolean
+  onEdit?: () => void
+  isEditing?: boolean
+  editText?: string
+  onCancelEdit?: () => void
+  onSubmitEdit?: (text: string) => Promise<void> | void
+}
 type RenderOptions = {
   projectRoot?: string | null
   onOpenFileReference?: (path: string) => void
+  getUserMessageActions?: (item: UserMessageItem) => UserMessageActions | null
 }
 
 const USER_MESSAGE_COLLAPSE_LINE_COUNT = 9
@@ -413,6 +425,132 @@ function UserPlainText({ text }: { text: string }): ReactElement | null {
         </button>
       ) : null}
     </div>
+  )
+}
+
+function UserMessageActionRow({
+  actions,
+  text,
+}: {
+  actions: UserMessageActions | null
+  text: string
+}): ReactElement | null {
+  const [copied, setCopied] = useState(false)
+  const normalized = text.trim()
+  if (!actions) return null
+
+  return (
+    <div className={styles.userMessageActions} data-testid="user-message-actions">
+      {actions.timeLabel ? <span>{actions.timeLabel}</span> : null}
+      <button
+        type="button"
+        aria-label="复制用户消息"
+        title="复制"
+        disabled={!normalized}
+        onClick={() => {
+          if (!normalized) return
+          void writeClipboard(text).then(() => {
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 1200)
+          })
+        }}
+      >
+        {copied ? <Check size={13} /> : <Clipboard size={13} />}
+      </button>
+      {actions.canEdit && actions.onEdit ? (
+        <button
+          type="button"
+          aria-label="编辑用户消息"
+          title="编辑"
+          onClick={actions.onEdit}
+        >
+          <Pencil size={13} />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function UserMessageEditor({
+  actions,
+  text,
+}: {
+  actions: UserMessageActions
+  text: string
+}): ReactElement | null {
+  const initialText = actions.editText ?? text
+  const [draft, setDraft] = useState(initialText)
+  const [submitting, setSubmitting] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const normalized = draft.trim()
+
+  useEffect(() => {
+    setDraft(initialText)
+  }, [initialText])
+
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.focus({ preventScroll: true })
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    textarea.style.height = 'auto'
+    textarea.style.height = `${textarea.scrollHeight}px`
+  }, [initialText])
+
+  if (!actions.isEditing || !actions.onCancelEdit || !actions.onSubmitEdit) {
+    return null
+  }
+
+  const submit = async (): Promise<void> => {
+    if (!normalized || submitting) return
+    setSubmitting(true)
+    try {
+      await actions.onSubmitEdit?.(draft)
+    } catch {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form
+      className={styles.userMessageEditor}
+      data-testid="user-message-editor"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void submit()
+      }}
+    >
+      <textarea
+        ref={textareaRef}
+        aria-label="编辑用户消息"
+        value={draft}
+        disabled={submitting}
+        rows={1}
+        onChange={(event) => {
+          setDraft(event.target.value)
+          event.currentTarget.style.height = 'auto'
+          event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`
+        }}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            event.preventDefault()
+            void submit()
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            actions.onCancelEdit?.()
+          }
+        }}
+      />
+      <div className={styles.userMessageEditorActions}>
+        <button type="button" disabled={submitting} onClick={actions.onCancelEdit}>
+          取消
+        </button>
+        <button type="submit" disabled={!normalized || submitting}>
+          发送
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -1893,10 +2031,20 @@ function shouldRenderReasoningItem(items: MessageItem[], index: number, turnStat
 
 export function renderMessageItem(item: MessageItem, turnStatus: string, options: RenderOptions = {}): ReactElement | null {
   if (item.type === 'user') {
+    const userActions = item.intent === 'guidance'
+      ? null
+      : options.getUserMessageActions?.(item) ?? null
     return (
       <article className={styles.userMessage} data-testid="user-message" key={item.id}>
         <MessageImages images={item.images} projectRoot={options.projectRoot} />
-        <UserPlainText text={item.text} />
+        {userActions?.isEditing ? (
+          <UserMessageEditor actions={userActions} text={item.text} />
+        ) : (
+          <>
+            <UserPlainText text={item.text} />
+            <UserMessageActionRow actions={userActions} text={item.text} />
+          </>
+        )}
       </article>
     )
   }

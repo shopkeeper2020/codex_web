@@ -2,7 +2,10 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { logout } from "../api";
 import styles from "./App.module.css";
-import { ChatMain } from "./components/ChatMain";
+import {
+  ChatMain,
+  type UserMessageEditRequest,
+} from "./components/ChatMain";
 import { Composer, type SendOptions } from "./components/Composer";
 import { DebugPage } from "./components/DebugPage";
 import { LoginGate } from "./components/LoginGate";
@@ -83,6 +86,7 @@ export function App(): ReactElement {
     interruptSelectedTurn,
     compactSelectedThread,
     forkThreadById,
+    editLastUserMessage,
     setThreadGoalById,
     clearThreadGoalById,
     decidePendingApproval,
@@ -316,6 +320,17 @@ export function App(): ReactElement {
     },
     [draftThread, sendDraftMessage],
   );
+  const handleEditLastUserMessage = useCallback(
+    async (input: UserMessageEditRequest) => {
+      await editLastUserMessage({
+        threadId: input.threadId,
+        cwd: input.cwd,
+        expectedTurnId: input.turnId,
+        text: input.text,
+      });
+    },
+    [editLastUserMessage],
+  );
   const selectDraftProject = useCallback((cwd: string | null) => {
     setDraftThread((current) => (current ? { ...current, cwd } : current));
   }, []);
@@ -449,6 +464,7 @@ export function App(): ReactElement {
             onSetThreadGoal={setThreadGoalById}
             onClearThreadGoal={clearThreadGoalById}
             onForkThread={forkThreadById}
+            onEditLastUserMessage={handleEditLastUserMessage}
             onSelectThread={selectThread}
             pinnedSummaryOpen={visiblePinnedSummaryOpen}
             rightSidebarOpen={visibleRightSidebarOpen}

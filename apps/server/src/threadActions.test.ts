@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { archiveThreadWithRecovery, startLocalTurn } from './threadActions.js'
+import { archiveThreadWithRecovery, editLocalLastUserTurn, startLocalTurn } from './threadActions.js'
 import type {
   ThreadArchiveParams,
   ThreadReadParams,
   ThreadRenameParams,
   ThreadResumeParams,
+  ThreadRollbackParams,
   TurnStartParams,
 } from './appServerProcess.js'
 
@@ -107,6 +108,61 @@ describe('thread actions', () => {
           input: [{ type: 'text', text: 'hello' }],
           clientUserMessageId: 'client-msg-b',
           cwd: 'C:\\workspace\\codex_web',
+        },
+      },
+    ])
+  })
+
+  it('resumes an existing thread before editing the last user turn', async () => {
+    const calls: Array<{ method: string; params: unknown }> = []
+    const appServer = {
+      async threadResume(params: ThreadResumeParams): Promise<unknown> {
+        calls.push({ method: 'thread/resume', params })
+        return { ok: true }
+      },
+      async threadRollback(params: ThreadRollbackParams): Promise<unknown> {
+        calls.push({ method: 'thread/rollback', params })
+        return { ok: true }
+      },
+      async turnStart(params: TurnStartParams): Promise<unknown> {
+        calls.push({ method: 'turn/start', params })
+        return { turn: { id: 'turn-edited' } }
+      },
+    }
+
+    await expect(
+      editLocalLastUserTurn(appServer, {
+        threadId: 'thread-b',
+        turnId: 'turn-last',
+        message: 'edited',
+        conversationState: {
+          id: 'thread-b',
+          turns: [
+            {
+              turnId: 'turn-last',
+              status: 'completed',
+              params: {
+                cwd: 'C:\\workspace\\codex_web',
+                input: [{ type: 'text', text: 'original', text_elements: [] }],
+              },
+            },
+          ],
+        },
+      }),
+    ).resolves.toEqual({ turn: { id: 'turn-edited' } })
+    expect(calls).toEqual([
+      {
+        method: 'thread/resume',
+        params: { threadId: 'thread-b', cwd: 'C:\\workspace\\codex_web' },
+      },
+      { method: 'thread/rollback', params: { threadId: 'thread-b', numTurns: 1 } },
+      {
+        method: 'turn/start',
+        params: {
+          clientUserMessageId: expect.any(String),
+          threadId: 'thread-b',
+          cwd: 'C:\\workspace\\codex_web',
+          input: [{ type: 'text', text: 'edited', text_elements: [] }],
         },
       },
     ])
