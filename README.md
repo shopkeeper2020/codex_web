@@ -10,6 +10,10 @@
 
 ![codex_web Web 界面展示](./docs/assets/readme-ui-showcase.png)
 
+### 移动端示例
+
+<img src="./docs/assets/readme-mobile-example.jpg" alt="codex_web 移动端示例" width="360">
+
 ## 项目目标
 
 Codex Desktop 很适合在电脑上工作，但它不是一个天然的浏览器/LAN/手机入口。`codex_web` 的目标是在不把会话搬到云端的前提下，把本机 Codex 工作流扩展到更多屏幕和更多操作方式：

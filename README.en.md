@@ -10,6 +10,10 @@ The project is designed for local execution and LAN access, not as a hosted clou
 
 ![codex_web web interface preview](./docs/assets/readme-ui-showcase.png)
 
+### Mobile Example
+
+<img src="./docs/assets/readme-mobile-example.jpg" alt="codex_web mobile example" width="360">
+
 ## Project Goals
 
 Codex Desktop is good for working on one computer, but it is not a browser, LAN, or phone-first entry point. `codex_web` extends local Codex workflows to more screens and interaction styles without moving conversations to a hosted cloud service:
