@@ -181,6 +181,8 @@ import { LocalLiveThreadStore } from "./localLiveThreadStore.js";
 
 const THREAD_GOAL_READ_TIMEOUT_MS = 1200;
 const ACCOUNT_STATUS_CACHE_TTL_MS = 30_000;
+const REALTIME_SOCKET_DROP_DELTA_BUFFER_BYTES = 8 * 1024 * 1024;
+const REALTIME_SOCKET_CLOSE_BUFFER_BYTES = 64 * 1024 * 1024;
 const APP_SERVER_LIVE_DELTA_METHODS = new Set([
   "item/agentMessage/delta",
   "item/plan/delta",
@@ -5455,10 +5457,46 @@ export async function createServer(
   );
 
   app.get("/api/realtime", { websocket: true }, (socket) => {
-    const unsubscribe = bus.subscribe((event) => {
+    let closed = false;
+    let droppedDeltaCount = 0;
+    let unsubscribe = () => {};
+    const closeSocket = (reason: string, bufferedBytes: number) => {
+      if (closed) return;
+      closed = true;
+      unsubscribe();
+      diagnostics.record("warn", "realtime", reason, {
+        bufferedBytes,
+        droppedDeltaCount,
+      });
+      socket.close(1013, "realtime backlog");
+    };
+    unsubscribe = bus.subscribe((event) => {
+      if (closed) return;
+      if (
+        event.type === "appServer.notification" &&
+        event.shouldDriveRealtime === false
+      ) {
+        return;
+      }
+      const bufferedBytes = socket.bufferedAmount;
+      if (bufferedBytes > REALTIME_SOCKET_CLOSE_BUFFER_BYTES) {
+        closeSocket("socket-buffer-closed", bufferedBytes);
+        return;
+      }
+      if (
+        event.type === "appServer.notification" &&
+        APP_SERVER_LIVE_DELTA_METHODS.has(event.method) &&
+        bufferedBytes > REALTIME_SOCKET_DROP_DELTA_BUFFER_BYTES
+      ) {
+        droppedDeltaCount += 1;
+        return;
+      }
       socket.send(JSON.stringify(event));
     });
-    socket.on("close", unsubscribe);
+    socket.on("close", () => {
+      closed = true;
+      unsubscribe();
+    });
     socket.send(
       JSON.stringify({
         type: "connected",

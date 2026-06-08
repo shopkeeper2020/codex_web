@@ -28,10 +28,14 @@
 - 前端不直接依赖官方 raw protocol shape，必须经过 backend/domain 转换。
 - owner/follower 只作为协议和诊断概念，不暴露给普通用户。
 - 破坏性操作必须走官方可验证路径，不能猜测本地文件结构直接修改。
+- 每次开始新增或修改实现前，先按 `docs/official_first_implementation.md` 查阅官方文档、源码和 schema，确认是否已有推荐实现逻辑。
 - 对接或修改 Codex app-server / official IPC / raw RPC 参数、request/notification shape 前，必须先阅读 OpenAI 官方 Codex app-server 文档，并核对官方 `codex-rs/app-server` 源码和 `app-server-protocol` schema；不得凭记忆、旧实现或 Desktop 私有包装字段猜接口。
 - 新增或修改功能必须优先按 `docs/official_first_implementation.md` 查找并接入官方接口；官方已有能力不得自行重写。
 - 官方已有数据必须优先通过官方接口获取，不写死、不影子存储到本地 SQLite；SQLite 仅用于官方没有覆盖的自定义扩展。
 - Web 复刻必须以 Codex Desktop 的实际展现逻辑、交互细节和数据行为为准，避免自行分叉。
+- 实现必须保持最简，信任已验证接口；禁止大面积防御性编程、冗余兜底、过度异常处理和无依据兼容代码。
+- 禁止过度硬编码和写死变量；配置、协议和产品状态优先来自官方接口、共享 schema 或本地配置。
+- 单体文件代码超过 2000 行时，后续改动应优先准备拆分重构，避免继续堆叠难维护逻辑。
 
 ## 默认运行配置
 
