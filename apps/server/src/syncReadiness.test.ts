@@ -6,10 +6,9 @@ const registeredHandlers = [
   { method: "thread-follower-compact-thread", version: 1 },
   { method: "thread-follower-edit-last-user-turn", version: 1 },
   { method: "thread-follower-interrupt-turn", version: 1 },
-  { method: "thread-follower-set-collaboration-mode", version: 1 },
-  { method: "thread-follower-set-model-and-reasoning", version: 1 },
   { method: "thread-follower-start-turn", version: 1 },
   { method: "thread-follower-steer-turn", version: 1 },
+  { method: "thread-follower-update-thread-settings", version: 1 },
 ];
 
 const expectedMissingOptional = [

@@ -40,27 +40,6 @@ export const pinnedThreads = sqliteTable('pinned_threads', {
   pinnedAtIso: text('pinned_at_iso').notNull(),
 })
 
-export const officialStreamStates = sqliteTable(
-  'official_stream_states',
-  {
-    threadId: text('thread_id').primaryKey(),
-    conversationId: text('conversation_id').notNull(),
-    hostId: text('host_id').notNull(),
-    ownerClientId: text('owner_client_id'),
-    sourceClientId: text('source_client_id'),
-    conversationStateJson: text('conversation_state_json').notNull(),
-    changeType: text('change_type').notNull(),
-    cacheVersion: integer('cache_version').notNull(),
-    updatedAtIso: text('updated_at_iso').notNull(),
-    isInProgress: integer('is_in_progress', { mode: 'boolean' }).notNull(),
-    activeTurnId: text('active_turn_id').notNull(),
-    cachedAtIso: text('cached_at_iso').notNull(),
-  },
-  (table) => [
-    index('idx_official_stream_states_updated_at_iso').on(table.updatedAtIso),
-  ],
-)
-
 export const attachments = sqliteTable(
   'attachments',
   {

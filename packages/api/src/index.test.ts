@@ -609,7 +609,6 @@ describe("API contract schemas", () => {
             threadCount: 2,
             threadDetailCount: 1,
             attachmentCount: 0,
-            officialStreamStateCount: 0,
           },
           diagnostics: [
             {
@@ -648,7 +647,6 @@ describe("API contract schemas", () => {
           threadCount: 2,
           threadDetailCount: 1,
           attachmentCount: 0,
-          officialStreamStateCount: 0,
         },
       }).data.threadCount,
     ).toBe(2);
@@ -742,7 +740,6 @@ describe("API contract schemas", () => {
           threadCount: 0,
           threadDetailCount: 0,
           attachmentCount: 0,
-          officialStreamStateCount: 0,
         },
       }).success,
     ).toBe(false);

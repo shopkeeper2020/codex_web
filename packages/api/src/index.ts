@@ -677,7 +677,6 @@ export const cacheStatusSchema = z.object({
   threadCount: z.number().int().nonnegative(),
   threadDetailCount: z.number().int().nonnegative(),
   attachmentCount: z.number().int().nonnegative(),
-  officialStreamStateCount: z.number().int().nonnegative(),
 });
 
 export const cacheStatusResponseSchema = z.object({

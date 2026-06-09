@@ -13,7 +13,7 @@ const REQUEST_TIMEOUT_MS = 20_000;
 const INITIALIZE_REQUEST_TIMEOUT_MS = 60_000;
 
 export const IPC_METHOD_VERSIONS: Record<string, number> = {
-  "thread-stream-state-changed": 6,
+  "thread-stream-state-changed": 7,
   "thread-read-state-changed": 1,
   "thread-archived": 2,
   "thread-unarchived": 1,
@@ -21,8 +21,7 @@ export const IPC_METHOD_VERSIONS: Record<string, number> = {
   "thread-follower-compact-thread": 1,
   "thread-follower-steer-turn": 1,
   "thread-follower-interrupt-turn": 1,
-  "thread-follower-set-model-and-reasoning": 1,
-  "thread-follower-set-collaboration-mode": 1,
+  "thread-follower-update-thread-settings": 1,
   "thread-follower-edit-last-user-turn": 1,
   "thread-follower-command-approval-decision": 1,
   "thread-follower-file-approval-decision": 1,
@@ -217,6 +216,8 @@ export type OfficialThreadStreamState = {
   sourceClientId: string | null;
   conversationState: unknown;
   changeType: "snapshot" | "patches";
+  revision: number | null;
+  lastBaseRevision: number | null;
   cacheVersion: number;
   updatedAtIso: string;
   isInProgress: boolean;
@@ -438,6 +439,12 @@ function timestampMs(value: unknown): number | null {
 function timestampSeconds(value: unknown): number | null {
   const ms = timestampMs(value);
   return ms === null ? null : ms / 1000;
+}
+
+function readRevision(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1464,6 +1471,7 @@ export class OfficialIpcBridge {
   private requestHandlers = new Map<string, OfficialRequestHandler>();
   private streamStates = new Map<string, OfficialThreadStreamState>();
   private broadcastSnapshotSignatures = new Map<string, string>();
+  private ownedConversationRevisions = new Map<string, number>();
   private ownedConversationIds = new Set<string>();
   private localOnlyOwnedConversationIds = new Set<string>();
   private followerRequestHistory: FollowerRequestRecord[] = [];
@@ -1540,6 +1548,7 @@ export class OfficialIpcBridge {
     this.requestHandlers.clear();
     this.streamStates.clear();
     this.broadcastSnapshotSignatures.clear();
+    this.ownedConversationRevisions.clear();
     this.ownedConversationIds.clear();
     this.localOnlyOwnedConversationIds.clear();
   }
@@ -1611,8 +1620,12 @@ export class OfficialIpcBridge {
       return false;
     const existing = this.streamStates.get(normalizedConversationId);
     this.cacheVersion = Math.max(this.cacheVersion, state.cacheVersion);
+    const revision = readRevision(state.revision);
+    const lastBaseRevision = readRevision(state.lastBaseRevision);
     const restoredState: OfficialThreadStreamState = {
       ...state,
+      revision,
+      lastBaseRevision,
       conversationState: sanitizeConversationStateForOfficialBroadcast(
         state.conversationState,
       ),
@@ -1761,6 +1774,21 @@ export class OfficialIpcBridge {
     );
   }
 
+  async sendThreadFollowerUpdateThreadSettings(
+    threadId: string,
+    threadSettings: unknown,
+  ): Promise<unknown> {
+    if (this.isOwnedConversation(threadId))
+      throw new Error("no-official-owner");
+    const ownerClientId = this.getExternalOwnerClientId(threadId) || undefined;
+    return await this.sendFollowerRequestWithDiscoveryRetry(
+      "thread-follower-update-thread-settings",
+      threadId,
+      { conversationId: threadId, threadSettings },
+      ownerClientId,
+    );
+  }
+
   async sendThreadFollowerEditLastUserTurn(
     threadId: string,
     params: {
@@ -1858,6 +1886,18 @@ export class OfficialIpcBridge {
     );
   }
 
+  private nextOwnedConversationRevision(conversationId: string): number {
+    const existingRevision =
+      this.streamStates.get(conversationId)?.revision ?? null;
+    const current = Math.max(
+      this.ownedConversationRevisions.get(conversationId) ?? 0,
+      existingRevision ?? 0,
+    );
+    const next = current + 1;
+    this.ownedConversationRevisions.set(conversationId, next);
+    return next;
+  }
+
   broadcastConversationSnapshot(
     threadId: string,
     conversationState: unknown,
@@ -1878,6 +1918,7 @@ export class OfficialIpcBridge {
       return true;
     }
     this.ownedConversationIds.add(normalizedThreadId);
+    const revision = this.nextOwnedConversationRevision(normalizedThreadId);
     this.storeThreadStreamState({
       threadId: normalizedThreadId,
       conversationId: normalizedThreadId,
@@ -1886,6 +1927,8 @@ export class OfficialIpcBridge {
       sourceClientId: this.clientId,
       conversationState: officialConversationState,
       changeType: "snapshot",
+      revision,
+      lastBaseRevision: null,
     });
     if (snapshotSignature) {
       this.broadcastSnapshotSignatures.set(
@@ -1900,6 +1943,7 @@ export class OfficialIpcBridge {
       conversationId: normalizedThreadId,
       change: {
         type: "snapshot",
+        revision,
         conversationState: officialConversationState,
       },
     });
@@ -1927,6 +1971,7 @@ export class OfficialIpcBridge {
         existing.conversationState,
       );
       const previousOwnerClientId = existing.ownerClientId;
+      const revision = this.nextOwnedConversationRevision(conversationId);
       this.storeThreadStreamState({
         threadId: existing.threadId || conversationId,
         conversationId,
@@ -1935,6 +1980,8 @@ export class OfficialIpcBridge {
         sourceClientId: this.clientId,
         conversationState,
         changeType: "snapshot",
+        revision,
+        lastBaseRevision: null,
       });
       const snapshotSignature = stableJsonSignature(conversationState);
       if (snapshotSignature) {
@@ -1959,6 +2006,7 @@ export class OfficialIpcBridge {
         conversationId,
         change: {
           type: "snapshot",
+          revision,
           conversationState,
         },
       });
@@ -1980,6 +2028,8 @@ export class OfficialIpcBridge {
     hostId?: string | null;
     ownerClientId?: string | null;
     sourceClientId?: string | null;
+    revision?: number | null;
+    lastBaseRevision?: number | null;
   }): boolean {
     const normalizedThreadId = input.threadId.trim();
     if (!normalizedThreadId || !input.conversationState) return false;
@@ -2004,6 +2054,11 @@ export class OfficialIpcBridge {
         input.conversationState,
       ),
       changeType: "snapshot",
+      revision: readRevision(input.revision) ?? existing?.revision ?? null,
+      lastBaseRevision:
+        readRevision(input.lastBaseRevision) ??
+        existing?.lastBaseRevision ??
+        null,
     });
     if (
       this.lastError ===
@@ -2022,6 +2077,8 @@ export class OfficialIpcBridge {
     if (!wasOwned && !wasLocalOnly) return;
     const existing = this.streamStates.get(normalizedThreadId);
     this.streamStates.delete(normalizedThreadId);
+    this.broadcastSnapshotSignatures.delete(normalizedThreadId);
+    this.ownedConversationRevisions.delete(normalizedThreadId);
     this.recordOwnershipHandoff({
       conversationId: normalizedThreadId,
       previousOwnerClientId: existing?.ownerClientId ?? this.clientId,
@@ -2040,6 +2097,8 @@ export class OfficialIpcBridge {
       this.localOnlyOwnedConversationIds.delete(normalizedThreadId);
     const deleted = this.streamStates.delete(normalizedThreadId);
     if (!existing && !wasOwned && !wasLocalOnly && !deleted) return false;
+    this.broadcastSnapshotSignatures.delete(normalizedThreadId);
+    this.ownedConversationRevisions.delete(normalizedThreadId);
     this.recordOwnershipHandoff({
       conversationId: normalizedThreadId,
       previousOwnerClientId: existing?.ownerClientId ?? this.clientId,
@@ -2234,6 +2293,8 @@ export class OfficialIpcBridge {
     const existing = this.streamStates.get(lifecycle.threadId);
     const wasOwned = this.ownedConversationIds.delete(lifecycle.threadId);
     this.streamStates.delete(lifecycle.threadId);
+    this.broadcastSnapshotSignatures.delete(lifecycle.threadId);
+    this.ownedConversationRevisions.delete(lifecycle.threadId);
     if (wasOwned || existing) {
       this.recordOwnershipHandoff({
         conversationId: lifecycle.threadId,
@@ -2268,6 +2329,36 @@ export class OfficialIpcBridge {
     });
   }
 
+  private emitThreadStreamStateDiagnostic(input: {
+    threadId: string;
+    hostId: string;
+    ownerClientId: string | null;
+    sourceClientId: string | null;
+    changeType: string;
+    revision?: number | null;
+    baseRevision?: number | null;
+    expectedRevision?: number | null;
+  }): void {
+    this.emitNotification({
+      method: OFFICIAL_THREAD_STREAM_CHANGED_METHOD,
+      params: {
+        threadId: input.threadId,
+        conversationId: input.threadId,
+        hostId: input.hostId,
+        ownerClientId: input.ownerClientId,
+        sourceClientId: input.sourceClientId,
+        changeType: input.changeType,
+        revision: input.revision ?? null,
+        baseRevision: input.baseRevision ?? null,
+        expectedRevision: input.expectedRevision ?? null,
+        cacheVersion: this.cacheVersion,
+        isInProgress: false,
+        activeTurnId: "",
+      },
+      atIso: new Date().toISOString(),
+    });
+  }
+
   private handleThreadStreamStateChanged(frame: OfficialIpcFrame): void {
     const params = asRecord(frame.params);
     if (!params) return;
@@ -2296,25 +2387,91 @@ export class OfficialIpcBridge {
     }
 
     let conversationState: unknown = null;
+    let revision: number | null = null;
+    let lastBaseRevision: number | null = null;
     if (changeType === "snapshot") {
+      revision = readRevision(change?.revision);
+      if (revision === null) {
+        this.lastError = `official-ipc-missing-revision:${conversationId}`;
+        this.emitThreadStreamStateDiagnostic({
+          threadId: conversationId,
+          hostId,
+          ownerClientId,
+          sourceClientId,
+          changeType: "snapshot-missing-revision",
+        });
+        return;
+      }
       conversationState = change?.conversationState ?? null;
     } else if (changeType === "patches") {
+      lastBaseRevision = readRevision(change?.baseRevision);
+      revision = readRevision(change?.revision);
+      if (lastBaseRevision === null || revision === null) {
+        this.lastError = `official-ipc-missing-revision:${conversationId}`;
+        this.emitThreadStreamStateDiagnostic({
+          threadId: conversationId,
+          hostId,
+          ownerClientId,
+          sourceClientId,
+          changeType: "patches-missing-revision",
+          revision,
+          baseRevision: lastBaseRevision,
+          expectedRevision: existing?.revision ?? null,
+        });
+        return;
+      }
       if (!existing) {
         this.lastError = `official-ipc-patches-without-snapshot:${conversationId}`;
-        this.emitNotification({
-          method: OFFICIAL_THREAD_STREAM_CHANGED_METHOD,
-          params: {
-            threadId: conversationId,
-            conversationId,
-            hostId,
-            ownerClientId,
-            sourceClientId,
-            changeType: "patches-without-snapshot",
-            cacheVersion: this.cacheVersion,
-            isInProgress: false,
-            activeTurnId: "",
-          },
-          atIso: new Date().toISOString(),
+        this.emitThreadStreamStateDiagnostic({
+          threadId: conversationId,
+          hostId,
+          ownerClientId,
+          sourceClientId,
+          changeType: "patches-without-snapshot",
+          revision,
+          baseRevision: lastBaseRevision,
+        });
+        return;
+      }
+      if (existing.revision === null) {
+        this.lastError = `official-ipc-missing-revision-baseline:${conversationId}`;
+        this.emitThreadStreamStateDiagnostic({
+          threadId: conversationId,
+          hostId,
+          ownerClientId,
+          sourceClientId,
+          changeType: "patches-missing-revision-baseline",
+          revision,
+          baseRevision: lastBaseRevision,
+          expectedRevision: existing.revision,
+        });
+        return;
+      }
+      if (lastBaseRevision !== existing.revision) {
+        this.lastError = `official-ipc-revision-mismatch:${conversationId}`;
+        this.emitThreadStreamStateDiagnostic({
+          threadId: conversationId,
+          hostId,
+          ownerClientId,
+          sourceClientId,
+          changeType: "patches-revision-mismatch",
+          revision,
+          baseRevision: lastBaseRevision,
+          expectedRevision: existing.revision,
+        });
+        return;
+      }
+      if (revision <= existing.revision) {
+        this.lastError = `official-ipc-stale-patch:${conversationId}`;
+        this.emitThreadStreamStateDiagnostic({
+          threadId: conversationId,
+          hostId,
+          ownerClientId,
+          sourceClientId,
+          changeType: "patches-stale",
+          revision,
+          baseRevision: lastBaseRevision,
+          expectedRevision: existing.revision,
         });
         return;
       }
@@ -2363,6 +2520,8 @@ export class OfficialIpcBridge {
       conversationState:
         sanitizeConversationStateForOfficialBroadcast(conversationState),
       changeType: changeType === "patches" ? "patches" : "snapshot",
+      revision,
+      lastBaseRevision,
     });
     if (
       this.lastError ===
@@ -2438,6 +2597,8 @@ export class OfficialIpcBridge {
     sourceClientId: string | null;
     conversationState: unknown;
     changeType: "snapshot" | "patches";
+    revision: number | null;
+    lastBaseRevision: number | null;
   }): void {
     const cacheVersion = ++this.cacheVersion;
     const conversationState = input.conversationState;
@@ -2459,6 +2620,8 @@ export class OfficialIpcBridge {
         ownerClientId: input.ownerClientId,
         sourceClientId: input.sourceClientId,
         changeType: input.changeType,
+        revision: input.revision,
+        baseRevision: input.lastBaseRevision,
         cacheVersion,
         isInProgress: state.isInProgress,
         activeTurnId: state.activeTurnId,
@@ -2483,6 +2646,8 @@ export class OfficialIpcBridge {
     if (!externalSource && !externalOwner) return;
     this.ownedConversationIds.delete(input.conversationId);
     this.localOnlyOwnedConversationIds.delete(input.conversationId);
+    this.broadcastSnapshotSignatures.delete(input.conversationId);
+    this.ownedConversationRevisions.delete(input.conversationId);
     this.recordOwnershipHandoff(input);
   }
 

@@ -11,7 +11,6 @@ import type {
   ThreadDetail,
 } from "@codex-web/domain";
 import { ensureDirectory, type RuntimeConfig } from "@codex-web/config";
-import type { OfficialThreadStreamState } from "@codex-web/protocol";
 import * as schema from "./schema.js";
 
 export type DatabaseStoreStatus = {
@@ -20,14 +19,13 @@ export type DatabaseStoreStatus = {
   threadCount: number;
   threadDetailCount: number;
   attachmentCount: number;
-  officialStreamStateCount: number;
 };
 
 export type DerivedCacheCleanupResult = {
   projectCount: number;
   threadCount: number;
   threadDetailCount: number;
-  officialStreamStateCount: number;
+  legacyOfficialStreamStateCount: number;
 };
 
 export class DatabaseStore {
@@ -154,84 +152,17 @@ export class DatabaseStore {
     }
   }
 
-  upsertOfficialStreamState(state: OfficialThreadStreamState): void {
-    this.sqlite
-      .prepare(
-        `
-      INSERT INTO official_stream_states (
-        thread_id, conversation_id, host_id, owner_client_id,
-        source_client_id, conversation_state_json, change_type,
-        cache_version, updated_at_iso, is_in_progress, active_turn_id,
-        cached_at_iso
-      )
-      VALUES (
-        @threadId, @conversationId, @hostId, @ownerClientId,
-        @sourceClientId, @conversationStateJson, @changeType,
-        @cacheVersion, @updatedAtIso, @isInProgress, @activeTurnId,
-        @cachedAtIso
-      )
-      ON CONFLICT(thread_id) DO UPDATE SET
-        conversation_id = excluded.conversation_id,
-        host_id = excluded.host_id,
-        owner_client_id = excluded.owner_client_id,
-        source_client_id = excluded.source_client_id,
-        conversation_state_json = excluded.conversation_state_json,
-        change_type = excluded.change_type,
-        cache_version = excluded.cache_version,
-        updated_at_iso = excluded.updated_at_iso,
-        is_in_progress = excluded.is_in_progress,
-        active_turn_id = excluded.active_turn_id,
-        cached_at_iso = excluded.cached_at_iso
-    `,
-      )
-      .run({
-        threadId: state.threadId,
-        conversationId: state.conversationId,
-        hostId: state.hostId,
-        ownerClientId: state.ownerClientId,
-        sourceClientId: state.sourceClientId,
-        conversationStateJson: JSON.stringify(state.conversationState),
-        changeType: state.changeType,
-        cacheVersion: state.cacheVersion,
-        updatedAtIso: state.updatedAtIso,
-        isInProgress: state.isInProgress ? 1 : 0,
-        activeTurnId: state.activeTurnId,
-        cachedAtIso: new Date().toISOString(),
-      });
-  }
-
-  listOfficialStreamStates(limit = 200): OfficialThreadStreamState[] {
-    const rows = this.sqlite
-      .prepare(
-        `
-      SELECT * FROM official_stream_states
-      ORDER BY updated_at_iso DESC
-      LIMIT ?
-    `,
-      )
-      .all(limit);
-    return rows
-      .map((row) => this.mapOfficialStreamStateRow(row))
-      .filter((state): state is OfficialThreadStreamState => Boolean(state));
-  }
-
-  deleteOfficialStreamState(threadId: string): void {
-    const normalizedThreadId = threadId.trim();
-    if (!normalizedThreadId) return;
-    this.sqlite
-      .prepare("DELETE FROM official_stream_states WHERE thread_id = ?")
-      .run(normalizedThreadId);
-  }
-
   clearDerivedCaches(): DerivedCacheCleanupResult {
     const before = {
       projectCount: this.readCount("projects"),
       threadCount: this.readCount("threads"),
       threadDetailCount: this.readCount("thread_details"),
-      officialStreamStateCount: this.readCount("official_stream_states"),
+      legacyOfficialStreamStateCount: this.readCountIfTableExists(
+        "official_stream_states",
+      ),
     };
     const transaction = this.sqlite.transaction(() => {
-      this.sqlite.prepare("DELETE FROM official_stream_states").run();
+      this.sqlite.exec("DROP TABLE IF EXISTS official_stream_states");
       this.sqlite.prepare("DELETE FROM thread_details").run();
       this.sqlite.prepare("DELETE FROM threads").run();
       this.sqlite.prepare("DELETE FROM projects").run();
@@ -289,9 +220,6 @@ export class DatabaseStore {
         .prepare("DELETE FROM thread_details WHERE thread_id = ?")
         .run(id);
       this.sqlite.prepare("DELETE FROM threads WHERE id = ?").run(id);
-      this.sqlite
-        .prepare("DELETE FROM official_stream_states WHERE thread_id = ?")
-        .run(id);
     });
     transaction(threadId);
   }
@@ -431,7 +359,6 @@ export class DatabaseStore {
       threadCount: this.readCount("threads"),
       threadDetailCount: this.readCount("thread_details"),
       attachmentCount: this.readCount("attachments"),
-      officialStreamStateCount: this.readCount("official_stream_states"),
     };
   }
 
@@ -474,24 +401,6 @@ export class DatabaseStore {
         pinned_at_iso TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS official_stream_states (
-        thread_id TEXT PRIMARY KEY,
-        conversation_id TEXT NOT NULL,
-        host_id TEXT NOT NULL,
-        owner_client_id TEXT,
-        source_client_id TEXT,
-        conversation_state_json TEXT NOT NULL,
-        change_type TEXT NOT NULL,
-        cache_version INTEGER NOT NULL,
-        updated_at_iso TEXT NOT NULL,
-        is_in_progress INTEGER NOT NULL,
-        active_turn_id TEXT NOT NULL,
-        cached_at_iso TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_official_stream_states_updated_at_iso
-        ON official_stream_states(updated_at_iso);
-
       CREATE TABLE IF NOT EXISTS attachments (
         id TEXT PRIMARY KEY,
         filename TEXT NOT NULL,
@@ -515,6 +424,15 @@ export class DatabaseStore {
       .prepare(`SELECT COUNT(*) AS count FROM ${table}`)
       .get() as { count?: number };
     return Number(row.count ?? 0);
+  }
+
+  private readCountIfTableExists(table: string): number {
+    const tableRow = this.sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
+      .get(table);
+    return tableRow ? this.readCount(table) : 0;
   }
 
   private mapProjectRow(row: unknown): Project {
@@ -546,36 +464,4 @@ export class DatabaseStore {
     };
   }
 
-  private mapOfficialStreamStateRow(
-    row: unknown,
-  ): OfficialThreadStreamState | null {
-    const record = row as Record<string, unknown>;
-    try {
-      const conversationState = JSON.parse(
-        String(record.conversation_state_json ?? "null"),
-      ) as unknown;
-      if (!conversationState) return null;
-      return {
-        threadId: String(record.thread_id ?? ""),
-        conversationId: String(record.conversation_id ?? ""),
-        hostId: String(record.host_id ?? "local"),
-        ownerClientId:
-          typeof record.owner_client_id === "string"
-            ? record.owner_client_id
-            : null,
-        sourceClientId:
-          typeof record.source_client_id === "string"
-            ? record.source_client_id
-            : null,
-        conversationState,
-        changeType: record.change_type === "patches" ? "patches" : "snapshot",
-        cacheVersion: Number(record.cache_version ?? 0),
-        updatedAtIso: String(record.updated_at_iso ?? ""),
-        isInProgress: Number(record.is_in_progress ?? 0) === 1,
-        activeTurnId: String(record.active_turn_id ?? ""),
-      };
-    } catch {
-      return null;
-    }
-  }
 }

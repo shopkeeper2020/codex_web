@@ -104,6 +104,7 @@ function applyExternalEmptySnapshot(
       conversationId: threadId,
       change: {
         type: "snapshot",
+        revision: 1,
         conversationState: {
           id: threadId,
           name: "Desktop empty snapshot",
@@ -131,6 +132,7 @@ function applyExternalPartialActiveSnapshot(
       conversationId: threadId,
       change: {
         type: "snapshot",
+        revision: 1,
         conversationState: {
           id: threadId,
           name: "Desktop partial active snapshot",
@@ -170,6 +172,7 @@ function applyPendingLocalTurnSnapshot(
       conversationId: threadId,
       change: {
         type: "snapshot",
+        revision: 1,
         conversationState: {
           id: threadId,
           name: "Pending local snapshot",
@@ -221,6 +224,7 @@ function applyExternalSparseItemSnapshot(
       conversationId: threadId,
       change: {
         type: "snapshot",
+        revision: 1,
         conversationState: {
           id: threadId,
           name: "Desktop sparse item snapshot",
@@ -668,6 +672,8 @@ describe("thread detail route", () => {
         ],
       },
       changeType: "snapshot",
+      revision: 14,
+      lastBaseRevision: null,
       cacheVersion: 14,
       updatedAtIso: "2026-06-04T00:00:00.000Z",
       isInProgress: true,
@@ -785,6 +791,8 @@ describe("thread detail route", () => {
         ],
       },
       changeType: "snapshot",
+      revision: 9,
+      lastBaseRevision: null,
       cacheVersion: 9,
       updatedAtIso: "2026-05-29T00:00:00.000Z",
       isInProgress: true,
@@ -884,6 +892,8 @@ describe("thread detail route", () => {
         ],
       },
       changeType: "snapshot",
+      revision: 12,
+      lastBaseRevision: null,
       cacheVersion: 12,
       updatedAtIso: "2026-06-02T00:00:00.000Z",
       isInProgress: true,
@@ -981,6 +991,8 @@ describe("thread detail route", () => {
         ],
       },
       changeType: "snapshot",
+      revision: 1,
+      lastBaseRevision: null,
       cacheVersion: 1,
       updatedAtIso: "2026-05-29T00:00:00.000Z",
       isInProgress: true,

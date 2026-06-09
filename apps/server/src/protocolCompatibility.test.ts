@@ -14,10 +14,9 @@ const connectedIpc = {
     { method: "thread-follower-compact-thread", version: 1 },
     { method: "thread-follower-edit-last-user-turn", version: 1 },
     { method: "thread-follower-interrupt-turn", version: 1 },
-    { method: "thread-follower-set-collaboration-mode", version: 1 },
-    { method: "thread-follower-set-model-and-reasoning", version: 1 },
     { method: "thread-follower-start-turn", version: 1 },
     { method: "thread-follower-steer-turn", version: 1 },
+    { method: "thread-follower-update-thread-settings", version: 1 },
   ],
   lastError: null,
 };
@@ -70,14 +69,7 @@ describe("protocol compatibility snapshot", () => {
           appServerRpcMapping: "thread/compact/start",
         }),
         expect.objectContaining({
-          method: "thread-follower-set-model-and-reasoning",
-          localHandlerRegistered: true,
-          supportLevel: "implemented",
-          safeToImplement: true,
-          appServerRpcMapping: "thread/settings/update",
-        }),
-        expect.objectContaining({
-          method: "thread-follower-set-collaboration-mode",
+          method: "thread-follower-update-thread-settings",
           localHandlerRegistered: true,
           supportLevel: "implemented",
           safeToImplement: true,
@@ -109,7 +101,7 @@ describe("protocol compatibility snapshot", () => {
       state: "compatible",
       reason: null,
       methodCount: Object.keys(IPC_METHOD_VERSIONS).length,
-      registeredHandlerCount: 7,
+      registeredHandlerCount: 6,
     });
   });
 

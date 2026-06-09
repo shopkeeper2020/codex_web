@@ -99,7 +99,6 @@ describe("safe diagnostics export", () => {
         threadCount: 2,
         threadDetailCount: 3,
         attachmentCount: 4,
-        officialStreamStateCount: 5,
       },
       diagnosticEvents: [
         {

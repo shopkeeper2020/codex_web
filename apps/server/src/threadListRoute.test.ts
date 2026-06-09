@@ -95,6 +95,7 @@ function applyExternalActiveSnapshot(
       conversationId: threadId,
       change: {
         type: "snapshot",
+        revision: 1,
         conversationState: {
           id: threadId,
           name: "Page 1",

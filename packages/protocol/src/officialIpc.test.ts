@@ -225,6 +225,7 @@ function sendExternalOwnerSnapshot(
       conversationId: threadId,
       change: {
         type: "snapshot",
+        revision: 1,
         conversationState: { turns: [] },
       },
     },
@@ -234,13 +235,14 @@ function sendExternalOwnerSnapshot(
 describe("official IPC helpers", () => {
   it("declares the official follower and broadcast method versions used by Desktop and VS Code", () => {
     expect(IPC_METHOD_VERSIONS).toMatchObject({
-      "thread-stream-state-changed": 6,
+      "thread-stream-state-changed": 7,
       "thread-read-state-changed": 1,
       "thread-archived": 2,
       "thread-unarchived": 1,
       "thread-follower-start-turn": 1,
       "thread-follower-steer-turn": 1,
       "thread-follower-interrupt-turn": 1,
+      "thread-follower-update-thread-settings": 1,
       "thread-follower-command-approval-decision": 1,
       "thread-follower-file-approval-decision": 1,
       "thread-follower-permissions-request-approval-response": 1,
@@ -316,6 +318,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-1",
         change: {
           type: "snapshot",
+          revision: 2,
           conversationState: {
             turns: [{ id: "turn-1", status: "completed", items: [] }],
           },
@@ -353,6 +356,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-external-markdown",
         change: {
           type: "snapshot",
+          revision: 1,
           conversationState: {
             turns: [
               {
@@ -891,6 +895,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-runtime-only",
         change: {
           type: "snapshot",
+          revision: 1,
           conversationState: {
             id: "thread-runtime-only",
             turns: [
@@ -1082,6 +1087,8 @@ describe("official IPC helpers", () => {
         turns: [{ id: "turn-active", status: "active", items: [] }],
       },
       changeType: "snapshot",
+      revision: 1,
+      lastBaseRevision: null,
       cacheVersion: 1,
       updatedAtIso: "2026-06-02T00:00:00.000Z",
       isInProgress: true,
@@ -1104,6 +1111,7 @@ describe("official IPC helpers", () => {
           conversationId: "thread-reconnect-owned",
           change: {
             type: "snapshot",
+            revision: 2,
             conversationState: {
               turns: [{ id: "turn-active", status: "active", items: [] }],
             },
@@ -1166,6 +1174,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-web-owned",
         change: {
           type: "snapshot",
+          revision: 2,
           conversationState: {
             threadRuntimeStatus: { type: "active" },
             turns: [{ id: "turn-active", status: "active", items: [] }],
@@ -1208,6 +1217,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-local",
         change: {
           type: "snapshot",
+          revision: 1,
           conversationState: {
             status: "interrupted",
             turns: [{ id: "turn-opened", status: "interrupted", items: [] }],
@@ -1233,6 +1243,8 @@ describe("official IPC helpers", () => {
         conversationId: "thread-local",
         change: {
           type: "patches",
+          baseRevision: 1,
+          revision: 2,
           patches: [
             {
               op: "replace",
@@ -1264,6 +1276,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-active",
         change: {
           type: "snapshot",
+          revision: 1,
           conversationState: {
             turns: [{ turnId: "turn-active", status: "active", items: [] }],
           },
@@ -1292,6 +1305,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-non-local-host",
         change: {
           type: "snapshot",
+          revision: 1,
           conversationState: {
             status: { type: "running" },
             turns: [
@@ -1328,6 +1342,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-stale-inactive",
         change: {
           type: "snapshot",
+          revision: 1,
           conversationState: {
             status: { type: "running" },
             turns: [
@@ -1351,6 +1366,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-stale-inactive",
         change: {
           type: "snapshot",
+          revision: 2,
           conversationState: {
             status: { type: "notLoaded" },
             turns: [],
@@ -1383,6 +1399,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-completed-elsewhere",
         change: {
           type: "snapshot",
+          revision: 1,
           conversationState: {
             status: { type: "running" },
             turns: [
@@ -1406,6 +1423,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-completed-elsewhere",
         change: {
           type: "snapshot",
+          revision: 2,
           conversationState: {
             status: { type: "completed" },
             turns: [
@@ -1445,6 +1463,7 @@ describe("official IPC helpers", () => {
         conversationId: "thread-persisted",
         change: {
           type: "snapshot",
+          revision: 1,
           conversationState: {
             status: { type: "running" },
             turns: [{ id: "turn-persisted", status: "active", items: [] }],
@@ -1535,6 +1554,8 @@ describe("official IPC helpers", () => {
           conversationId: "thread-missing-snapshot",
           change: {
             type: "patches",
+            baseRevision: 1,
+            revision: 2,
             patches: [
               { op: "add", path: ["turns", 0], value: { id: "turn-a" } },
             ],
@@ -1555,6 +1576,9 @@ describe("official IPC helpers", () => {
         ownerClientId: "desktop-client",
         sourceClientId: "desktop-client",
         changeType: "patches-without-snapshot",
+        revision: 2,
+        baseRevision: 1,
+        expectedRevision: null,
         cacheVersion: 0,
         isInProgress: false,
         activeTurnId: "",
@@ -1567,6 +1591,226 @@ describe("official IPC helpers", () => {
       bridge.dispose();
       await peer.stop();
     }
+  });
+
+  it("applies v7 stream patches when the base revision matches the cached revision", () => {
+    const bridge = new OfficialIpcBridge("");
+    const testBridge = bridge as unknown as {
+      handleFrame: (frame: Record<string, unknown>) => void;
+    };
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-revision-success",
+        change: {
+          type: "snapshot",
+          revision: 1,
+          conversationState: {
+            turns: [{ id: "turn-1", status: "active", items: [] }],
+          },
+        },
+      },
+    });
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-revision-success",
+        change: {
+          type: "patches",
+          baseRevision: 1,
+          revision: 2,
+          patches: [
+            {
+              op: "replace",
+              path: ["turns", 0, "status"],
+              value: "completed",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(bridge.getThreadStreamState("thread-revision-success")).toMatchObject({
+      changeType: "patches",
+      revision: 2,
+      lastBaseRevision: 1,
+      conversationState: {
+        turns: [{ id: "turn-1", status: "completed", items: [] }],
+      },
+    });
+  });
+
+  it("rejects mismatched and stale v7 stream patches without mutating cached state", () => {
+    const bridge = new OfficialIpcBridge("");
+    const testBridge = bridge as unknown as {
+      handleFrame: (frame: Record<string, unknown>) => void;
+    };
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-revision-reject",
+        change: {
+          type: "snapshot",
+          revision: 3,
+          conversationState: {
+            turns: [{ id: "turn-1", status: "active", items: [] }],
+          },
+        },
+      },
+    });
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-revision-reject",
+        change: {
+          type: "patches",
+          baseRevision: 2,
+          revision: 4,
+          patches: [
+            {
+              op: "replace",
+              path: ["turns", 0, "status"],
+              value: "completed",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(bridge.getThreadStreamState("thread-revision-reject")).toMatchObject({
+      revision: 3,
+      cacheVersion: 1,
+      conversationState: {
+        turns: [{ id: "turn-1", status: "active", items: [] }],
+      },
+    });
+    expect(bridge.getStatus()).toMatchObject({
+      lastError: "official-ipc-revision-mismatch:thread-revision-reject",
+    });
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-revision-reject",
+        change: {
+          type: "patches",
+          baseRevision: 3,
+          revision: 3,
+          patches: [
+            {
+              op: "replace",
+              path: ["turns", 0, "status"],
+              value: "completed",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(bridge.getThreadStreamState("thread-revision-reject")).toMatchObject({
+      revision: 3,
+      cacheVersion: 1,
+      conversationState: {
+        turns: [{ id: "turn-1", status: "active", items: [] }],
+      },
+    });
+    expect(bridge.getStatus()).toMatchObject({
+      lastError: "official-ipc-stale-patch:thread-revision-reject",
+    });
+  });
+
+  it("continues applying v7 patches after readonly hydration supplies the missing patch revision", () => {
+    const bridge = new OfficialIpcBridge("");
+    const testBridge = bridge as unknown as {
+      handleFrame: (frame: Record<string, unknown>) => void;
+    };
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-hydrate-revision",
+        change: {
+          type: "patches",
+          baseRevision: 10,
+          revision: 11,
+          patches: [
+            { op: "add", path: ["turns", 0], value: { id: "turn-live" } },
+          ],
+        },
+      },
+    });
+
+    expect(bridge.getThreadStreamState("thread-hydrate-revision")).toBeNull();
+    expect(bridge.getStatus()).toMatchObject({
+      lastError: "official-ipc-patches-without-snapshot:thread-hydrate-revision",
+    });
+
+    expect(
+      bridge.hydrateThreadStreamState({
+        threadId: "thread-hydrate-revision",
+        hostId: "local",
+        ownerClientId: "desktop-client",
+        sourceClientId: "desktop-client",
+        revision: 11,
+        lastBaseRevision: 10,
+        conversationState: {
+          turns: [{ id: "turn-live", status: "active", items: [] }],
+        },
+      }),
+    ).toBe(true);
+
+    testBridge.handleFrame({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      sourceClientId: "desktop-client",
+      params: {
+        hostId: "local",
+        conversationId: "thread-hydrate-revision",
+        change: {
+          type: "patches",
+          baseRevision: 11,
+          revision: 12,
+          patches: [
+            {
+              op: "replace",
+              path: ["turns", 0, "status"],
+              value: "completed",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(bridge.getThreadStreamState("thread-hydrate-revision")).toMatchObject({
+      changeType: "patches",
+      revision: 12,
+      lastBaseRevision: 11,
+      conversationState: {
+        turns: [{ id: "turn-live", status: "completed", items: [] }],
+      },
+    });
   });
 
   it("uses framed IPC to send follower start-turn to the current official owner", async () => {
@@ -1591,6 +1835,7 @@ describe("official IPC helpers", () => {
           conversationId: "thread-follow",
           change: {
             type: "snapshot",
+            revision: 1,
             conversationState: { turns: [] },
           },
         },
@@ -1698,6 +1943,75 @@ describe("official IPC helpers", () => {
       ).toMatchObject({
         method: "thread-follower-edit-last-user-turn",
         threadId: "thread-edit",
+        targetClientId: "desktop-client",
+        usedDiscovery: false,
+        result: "success",
+        handledByClientId: "desktop-client",
+      });
+    } finally {
+      bridge.dispose();
+      await peer.stop();
+    }
+  });
+
+  it("uses framed IPC to send follower thread settings updates to the current official owner", async () => {
+    const peer = new FakeOfficialIpcPeer();
+    await peer.start();
+    const bridge = new OfficialIpcBridge(peer.pipePath);
+
+    try {
+      bridge.start();
+      await waitUntil(
+        () =>
+          (bridge.getStatus() as { clientId?: string | null }).clientId ===
+          "web-client",
+      );
+
+      sendExternalOwnerSnapshot(peer, "thread-settings");
+      await waitUntil(
+        () =>
+          bridge.getThreadStreamState("thread-settings")?.ownerClientId ===
+          "desktop-client",
+      );
+
+      const resultPromise = bridge.sendThreadFollowerUpdateThreadSettings(
+        "thread-settings",
+        {
+          model: "gpt-runtime",
+          effort: "high",
+          collaborationMode: { mode: "plan" },
+        },
+      );
+      const request = await peer.waitForFrame(
+        (frame) =>
+          frame.type === "request" &&
+          frame.method === "thread-follower-update-thread-settings",
+      );
+      await expect(resultPromise).resolves.toEqual({ ok: true });
+
+      expect(request).toMatchObject({
+        type: "request",
+        method: "thread-follower-update-thread-settings",
+        targetClientId: "desktop-client",
+        sourceClientId: "web-client",
+      });
+      expect(request.params).toMatchObject({
+        conversationId: "thread-settings",
+        threadSettings: {
+          model: "gpt-runtime",
+          effort: "high",
+          collaborationMode: { mode: "plan" },
+        },
+      });
+      expect(
+        (
+          bridge.getStatus() as {
+            recentFollowerRequests?: Array<Record<string, unknown>>;
+          }
+        ).recentFollowerRequests?.at(-1),
+      ).toMatchObject({
+        method: "thread-follower-update-thread-settings",
+        threadId: "thread-settings",
         targetClientId: "desktop-client",
         usedDiscovery: false,
         result: "success",
@@ -2252,6 +2566,7 @@ describe("official IPC helpers", () => {
           conversationId: "thread-web-owned",
           change: {
             type: "snapshot",
+            revision: 1,
             conversationState: { turns: [] },
           },
         },
@@ -2306,6 +2621,7 @@ describe("official IPC helpers", () => {
           conversationId: "thread-web-owned",
           change: {
             type: "snapshot",
+            revision: 2,
             conversationState: {
               turns: [{ id: "desktop-turn", status: "completed", items: [] }],
             },

@@ -76,19 +76,29 @@ The router returns a client id:
 
 ## Method Versions
 
-Observed method versions used by official clients:
+Observed method versions used by the 2026-06-09 local official clients
+(`OpenAI.Codex_26.602.9276.0` and VS Code extension
+`openai.chatgpt-26.5601.21317-win32-x64`):
 
 ```ts
 {
-  "thread-stream-state-changed": 6,
+  "thread-stream-state-changed": 7,
   "thread-read-state-changed": 1,
+  "thread-archived": 2,
+  "thread-unarchived": 1,
   "thread-follower-start-turn": 1,
   "thread-follower-compact-thread": 1,
   "thread-follower-steer-turn": 1,
   "thread-follower-interrupt-turn": 1,
-  "thread-follower-set-model-and-reasoning": 1,
-  "thread-follower-set-collaboration-mode": 1,
+  "thread-follower-update-thread-settings": 1,
   "thread-follower-edit-last-user-turn": 1,
+  "thread-follower-command-approval-decision": 1,
+  "thread-follower-file-approval-decision": 1,
+  "thread-follower-permissions-request-approval-response": 1,
+  "thread-follower-submit-user-input": 1,
+  "thread-follower-submit-mcp-server-elicitation-response": 1,
+  "thread-follower-set-queued-follow-ups-state": 1,
+  "thread-queued-followups-changed": 1,
   "initialize": 0
 }
 ```
@@ -108,23 +118,53 @@ thread-follower-* IPC request
 
 Do not assume every follower method is a one-hop app-server JSON-RPC call. The current Web adapter exposes a machine-readable version of this matrix at `/api/protocol/compatibility` under `adapter.followerMethodCapabilities`.
 
-| Method                                    | Web handler | Official host command found | Owner behavior                                      | App-server mapping               | Support level | Current policy                                                            |
-| ----------------------------------------- | ----------- | --------------------------- | --------------------------------------------------- | -------------------------------- | ------------- | ------------------------------------------------------------------------- |
-| `thread-follower-start-turn`              | Yes         | Yes                         | Start a turn on the owner                           | `turn/start`                     | `implemented` | Required for realtime Web sends and Web-owned handoff behavior.           |
-| `thread-follower-steer-turn`              | Yes         | Yes                         | Steer the active owner turn with `expectedTurnId`   | `turn/steer`                     | `implemented` | Required for guiding active turns without duplicate turns.                |
-| `thread-follower-interrupt-turn`          | Yes         | Yes                         | Interrupt the owner active turn                     | `turn/interrupt`                 | `implemented` | Required for stopping the same active turn across clients.                |
-| `thread-follower-compact-thread`          | Yes         | Yes                         | Start compaction on the owner                       | `thread/compact/start`           | `implemented` | Implemented only for Web-owned conversations and guarded by owner checks. |
-| `thread-follower-set-model-and-reasoning` | Yes         | Yes                         | Update owner local latest model/reasoning state     | Owner-state, not app-server RPC  | `implemented` | Implemented as Web-owned runtime state consumed by later follower starts. |
-| `thread-follower-set-collaboration-mode`  | Yes         | Yes                         | Update owner local latest collaboration mode state  | Owner-state, not app-server RPC  | `implemented` | Implemented as Web-owned runtime state consumed by later follower starts. |
-| `thread-follower-edit-last-user-turn`     | Yes         | Yes                         | Roll back the last turn and start a replacement one | `thread/rollback` + `turn/start` | `implemented` | Guarded to the latest completed turn; rollback still does not restore local file changes. |
+| Method                                      | Web handler | Official host command found | Owner behavior                                      | App-server mapping               | Support level | Current policy                                                            |
+| ------------------------------------------- | ----------- | --------------------------- | --------------------------------------------------- | -------------------------------- | ------------- | ------------------------------------------------------------------------- |
+| `thread-follower-start-turn`                | Yes         | Yes                         | Start a turn on the owner                           | `turn/start`                     | `implemented` | Required for realtime Web sends and Web-owned handoff behavior.           |
+| `thread-follower-steer-turn`                | Yes         | Yes                         | Steer the active owner turn with `expectedTurnId`   | `turn/steer`                     | `implemented` | Required for guiding active turns without duplicate turns.                |
+| `thread-follower-interrupt-turn`            | Yes         | Yes                         | Interrupt the owner active turn                     | `turn/interrupt`                 | `implemented` | Required for stopping the same active turn across clients.                |
+| `thread-follower-compact-thread`            | Yes         | Yes                         | Start compaction on the owner                       | `thread/compact/start`           | `implemented` | Implemented only for Web-owned conversations and guarded by owner checks. |
+| `thread-follower-update-thread-settings`    | Yes         | Yes                         | Apply a partial next-turn `threadSettings` update   | `thread/settings/update`         | `implemented` | Current Desktop/VS Code settings follower path for model, effort, service tier, personality, permissions, sandbox and collaboration mode. |
+| `thread-follower-edit-last-user-turn`       | Yes         | Yes                         | Roll back the last turn and start a replacement one | `thread/rollback` + `turn/start` | `implemented` | Guarded to the latest completed turn; rollback still does not restore local file changes. |
 
 Important consequences:
 
 - Missing optional follower handlers should be diagnosed as capability gaps, not as proof that base realtime sync is broken.
 - `start` / `steer` / `interrupt` are the required first-version realtime set.
 - `compact` is implemented for Web-owned conversations because the official owner mapping is direct. It is still a thread-mutating operation, so public UI should keep an explicit confirmation path if exposed later.
-- `set-model-and-reasoning` and `set-collaboration-mode` are owner-state updates in official clients. The Web implementation stores equivalent Web-owned runtime state and applies it to later follower `turn/start` requests when those params are omitted.
+- settings updates use the single current `thread-follower-update-thread-settings` method. Web-owned conversations pass the whitelisted update fields from `threadSettings` to official app-server `thread/settings/update`; old split model/reasoning and collaboration methods are not part of the current adapter surface.
 - `edit-last-user-turn` is implemented through the official owner-aware path. External-owned threads receive `conversationId + turnId + message` via `thread-follower-edit-last-user-turn`; Web-owned threads reconstruct replacement params from the original turn, then call `thread/rollback` and `turn/start`.
+
+## Stream revision ordering
+
+IPC v7 stream broadcasts carry revision metadata:
+
+```json
+{
+  "change": {
+    "type": "snapshot",
+    "revision": 1,
+    "conversationState": {}
+  }
+}
+```
+
+```json
+{
+  "change": {
+    "type": "patches",
+    "baseRevision": 1,
+    "revision": 2,
+    "patches": []
+  }
+}
+```
+
+The Web bridge treats revision as a protocol boundary. A patch is applied only
+when `baseRevision` matches the cached stream state revision and the incoming
+`revision` is newer. Missing revision, mismatched base revision, and stale patch
+frames are rejected and recorded as official IPC diagnostics instead of being
+forced onto the live cache.
 
 ## Owner/Follower Model
 
@@ -162,13 +202,14 @@ Owners broadcast stream state with:
 {
   "type": "broadcast",
   "method": "thread-stream-state-changed",
-  "version": 6,
+  "version": 7,
   "sourceClientId": "owner-client-id",
   "params": {
     "hostId": "local",
     "conversationId": "thread-id",
     "change": {
       "type": "snapshot",
+      "revision": 1,
       "conversationState": {}
     }
   }
@@ -181,24 +222,26 @@ Live updates can also arrive as patches:
 {
   "type": "broadcast",
   "method": "thread-stream-state-changed",
-  "version": 6,
+  "version": 7,
   "sourceClientId": "owner-client-id",
   "params": {
     "hostId": "local",
     "conversationId": "thread-id",
     "change": {
       "type": "patches",
+      "baseRevision": 1,
+      "revision": 2,
       "patches": []
     }
   }
 }
 ```
 
-The implementation should cache the latest full `conversationState` per `conversationId`. For a snapshot, replace the cache. For patches, apply them to the cached state and emit a lightweight app notification so the browser refreshes the affected thread.
+The implementation should cache the latest full `conversationState` per `conversationId` together with the official stream `revision`. For a snapshot, replace the cache and record `change.revision`. For patches, apply them only when `change.baseRevision` equals the cached revision and `change.revision` is newer, then emit a lightweight app notification so the browser refreshes the affected thread.
 
 The patch format observed here is Immer-style enough for the current implementation: each patch has `op`, `path`, and optional `value`. Support at least `add`, `replace`, and `remove` on object and array paths.
 
-If patches arrive before any snapshot for that `conversationId`, do not fail silently. Current implementation records `official-ipc-patches-without-snapshot:<conversationId>` as the last IPC error and emits a lightweight `patches-without-snapshot` notification. The server reacts to that notification by reading the current thread through app-server `thread/read` and hydrating the official stream cache with that snapshot as a read-only baseline. This hydration must not broadcast back to official clients and must not mark the Web client as owner. Once the baseline exists, later owner patches can be applied normally; after successful hydration or a later successful snapshot/patch, the stale `patches-without-snapshot` error is cleared.
+If patches arrive before any snapshot for that `conversationId`, do not fail silently. Current implementation records `official-ipc-patches-without-snapshot:<conversationId>` as the last IPC error and emits a lightweight `patches-without-snapshot` notification that includes the skipped patch `baseRevision` and `revision`. The server reacts by reading the current thread through app-server `thread/read` and hydrating the official stream cache with that snapshot as a read-only baseline, using the skipped patch `revision` as the hydrated cache revision. This hydration must not broadcast back to official clients and must not mark the Web client as owner. Once the baseline exists, later owner patches can be applied normally; after successful hydration or a later successful snapshot/patch, the stale `patches-without-snapshot` error is cleared.
 
 ## Follower Start Turn
 
@@ -560,7 +603,7 @@ Recommended limits:
 
 - Keep only latest `conversationState` per conversation.
 - Apply patches in memory.
-- Persist the latest official stream state locally before serving a LAN/mobile UI. A Web server restart during an active Desktop turn may otherwise lose the only full snapshot and receive only later patches or stale `notLoaded` snapshots.
+- Do not persist official stream state to SQLite. A Web server restart must rebuild live state from a fresh official IPC snapshot or from the `patches-without-snapshot -> thread/read` read-only hydrate path; until that baseline exists, patch application stays blocked by revision checks.
 - Do not allow a stale non-active snapshot to overwrite a known active state unless it clearly comes from the current owner completing the turn.
 - Emit lightweight browser notifications; fetch full cached state only when needed.
 - Debounce publishable Web-owned snapshot broadcasts. This project uses a 650 ms debounce for local owner snapshots, while local-only Web owners skip official stream broadcasts.

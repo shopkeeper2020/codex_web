@@ -90,7 +90,12 @@ OpenAI Codex app-server README 和 `app-server-protocol` schema 确认：
 
 ### 主进程 follower method -> renderer request
 
-Desktop asar `.vite/build/src-B5wXNbcV.js` 中确认存在 follower method 到 renderer request 的映射：
+2026-06-09 复查 Desktop `26.602.9276.0` 和 VS Code
+`openai.chatgpt-26.5601.21317-win32-x64` 后确认，settings follower 已合并为
+`thread-follower-update-thread-settings`。旧版 Desktop asar
+`.vite/build/src-B5wXNbcV.js` 曾存在的拆分 settings method 只作为历史证据保留。
+
+当前 follower method 到 renderer request 的核心映射：
 
 | IPC method | Renderer request |
 | --- | --- |
@@ -98,8 +103,7 @@ Desktop asar `.vite/build/src-B5wXNbcV.js` 中确认存在 follower method 到 r
 | `thread-follower-compact-thread` | `thread-follower-compact-thread-request` |
 | `thread-follower-steer-turn` | `thread-follower-steer-turn-request` |
 | `thread-follower-interrupt-turn` | `thread-follower-interrupt-turn-request` |
-| `thread-follower-set-model-and-reasoning` | `thread-follower-set-model-and-reasoning-request` |
-| `thread-follower-set-collaboration-mode` | `thread-follower-set-collaboration-mode-request` |
+| `thread-follower-update-thread-settings` | `thread-follower-update-thread-settings-request` |
 | `thread-follower-edit-last-user-turn` | `thread-follower-edit-last-user-turn-request` |
 | `thread-follower-command-approval-decision` | `thread-follower-command-approval-decision-request` |
 | `thread-follower-file-approval-decision` | `thread-follower-file-approval-decision-request` |
@@ -126,8 +130,7 @@ Desktop asar `.vite/build/src-DJzHq3CP.js` 中确认 request handler 注册时�
 - `thread-follower-compact-thread`
 - `thread-follower-steer-turn`
 - `thread-follower-interrupt-turn`
-- `thread-follower-set-model-and-reasoning`
-- `thread-follower-set-collaboration-mode`
+- `thread-follower-update-thread-settings`
 - `thread-follower-edit-last-user-turn`
 - approval/user input/MCP elicitation 类 follower method
 
@@ -257,11 +260,11 @@ Desktop `webview/assets/app-server-manager-signals-*.js` 中确认：
 
 ### IPC method version map
 
-VS Code `out/extension.js` 中确认 method version map：
+2026-06-09 复查 VS Code `out/extension.js` 与 Desktop bundle 后确认当前 method version map：
 
 | Method | Version |
 | --- | ---: |
-| `thread-stream-state-changed` | 6 |
+| `thread-stream-state-changed` | 7 |
 | `thread-read-state-changed` | 1 |
 | `thread-archived` | 2 |
 | `thread-unarchived` | 1 |
@@ -269,8 +272,7 @@ VS Code `out/extension.js` 中确认 method version map：
 | `thread-follower-compact-thread` | 1 |
 | `thread-follower-steer-turn` | 1 |
 | `thread-follower-interrupt-turn` | 1 |
-| `thread-follower-set-model-and-reasoning` | 1 |
-| `thread-follower-set-collaboration-mode` | 1 |
+| `thread-follower-update-thread-settings` | 1 |
 | `thread-follower-edit-last-user-turn` | 1 |
 | `thread-follower-command-approval-decision` | 1 |
 | `thread-follower-file-approval-decision` | 1 |

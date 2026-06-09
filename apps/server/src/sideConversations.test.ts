@@ -27,6 +27,8 @@ function streamState(input: {
     isInProgress: false,
     activeTurnId: "",
     changeType: "snapshot",
+    revision: input.cacheVersion,
+    lastBaseRevision: null,
     conversationState: {
       id: input.id,
       title: input.title ?? null,

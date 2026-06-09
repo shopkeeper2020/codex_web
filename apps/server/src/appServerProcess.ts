@@ -183,14 +183,12 @@ export type ThreadSettingsUpdateParams = {
   approvalsReviewer?: string | null;
   sandboxPolicy?: SandboxPolicy | null;
   permissions?: string | null;
-  runtimeWorkspaceRoots?: string[] | null;
   model?: string | null;
   serviceTier?: string | null;
   effort?: string | null;
   summary?: string | null;
   personality?: string | null;
   collaborationMode?: Record<string, unknown> | null;
-  environments?: Array<Record<string, unknown>> | null;
 };
 
 export type PermissionProfileListParams = {

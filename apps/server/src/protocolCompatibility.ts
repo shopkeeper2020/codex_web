@@ -109,29 +109,17 @@ const FOLLOWER_METHOD_CAPABILITY_DEFINITIONS: FollowerMethodCapabilityDefinition
       note: "Implemented only for Web-owned conversations and guarded by the same owner canHandle check as other follower handlers.",
     },
     {
-      method: "thread-follower-set-model-and-reasoning",
+      method: "thread-follower-update-thread-settings",
       requiredForRealtimeSync: false,
       officialForHostCommandFound: true,
       officialForHostCommand:
-        "thread-follower-set-model-and-reasoning-for-host",
+        "thread-follower-update-thread-settings-for-host",
       ownerBehavior:
-        "owner updates next-turn model/latestReasoningEffort settings",
+        "owner applies a partial next-turn threadSettings update",
       appServerRpcMapping: "thread/settings/update",
       supportLevel: "implemented",
       safeToImplement: true,
-      note: "Implemented for Web-owned conversations via official thread/settings/update.",
-    },
-    {
-      method: "thread-follower-set-collaboration-mode",
-      requiredForRealtimeSync: false,
-      officialForHostCommandFound: true,
-      officialForHostCommand: "thread-follower-set-collaboration-mode-for-host",
-      ownerBehavior:
-        "owner updates next-turn collaborationMode settings",
-      appServerRpcMapping: "thread/settings/update",
-      supportLevel: "implemented",
-      safeToImplement: true,
-      note: "Implemented for Web-owned conversations via official thread/settings/update.",
+      note: "Current Desktop/VS Code settings follower path; implemented for Web-owned conversations via official thread/settings/update.",
     },
     {
       method: "thread-follower-edit-last-user-turn",

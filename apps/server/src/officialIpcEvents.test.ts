@@ -24,6 +24,8 @@ class FakeOfficialIpc {
     hostId?: string | null;
     ownerClientId?: string | null;
     sourceClientId?: string | null;
+    revision?: number | null;
+    lastBaseRevision?: number | null;
   }> = [];
   readonly streamStates = new Map<string, OfficialThreadStreamState>();
 
@@ -68,6 +70,8 @@ class FakeOfficialIpc {
     hostId?: string | null;
     ownerClientId?: string | null;
     sourceClientId?: string | null;
+    revision?: number | null;
+    lastBaseRevision?: number | null;
   }): boolean {
     this.hydratedThreadStreamStates.push(input);
     return true;
@@ -338,6 +342,8 @@ describe("official IPC realtime events", () => {
         ],
       },
       changeType: "snapshot",
+      revision: 1,
+      lastBaseRevision: null,
       cacheVersion: 42,
       updatedAtIso: "2026-05-29T00:00:00.000Z",
       isInProgress: true,
@@ -418,6 +424,8 @@ describe("official IPC realtime events", () => {
         ],
       },
       changeType: "snapshot",
+      revision: 1,
+      lastBaseRevision: null,
       cacheVersion: 43,
       updatedAtIso: "2026-05-29T00:00:00.000Z",
       isInProgress: true,
@@ -459,6 +467,8 @@ describe("official IPC realtime events", () => {
       ownerClientId: "desktop-owner",
       sourceClientId: "desktop-source",
       changeType: "patches-without-snapshot",
+      revision: 7,
+      baseRevision: 6,
       cacheVersion: 3,
     });
 
@@ -478,6 +488,8 @@ describe("official IPC realtime events", () => {
         hostId: "desktop-host",
         ownerClientId: "desktop-owner",
         sourceClientId: "desktop-source",
+        revision: 7,
+        lastBaseRevision: 6,
       },
     ]);
     expect(events).toContainEqual(

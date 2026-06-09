@@ -229,12 +229,30 @@ export function preserveSideConversationMetadata(input: {
   return next;
 }
 
-function readReasoningEffort(record: Record<string, unknown> | null): string {
-  return (
-    readString(record?.reasoningEffort) ||
-    readString(record?.reasoning_effort) ||
-    readString(record?.effort)
-  );
+const THREAD_SETTINGS_UPDATE_FIELDS = [
+  "cwd",
+  "approvalPolicy",
+  "approvalsReviewer",
+  "sandboxPolicy",
+  "permissions",
+  "model",
+  "serviceTier",
+  "effort",
+  "summary",
+  "personality",
+  "collaborationMode",
+] as const;
+
+function pickThreadSettingsUpdateParams(
+  threadSettings: Record<string, unknown>,
+): Omit<ThreadSettingsUpdateParams, "threadId"> {
+  const settings: Record<string, unknown> = {};
+  for (const field of THREAD_SETTINGS_UPDATE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(threadSettings, field)) {
+      settings[field] = threadSettings[field];
+    }
+  }
+  return settings as Omit<ThreadSettingsUpdateParams, "threadId">;
 }
 
 async function updateThreadSettings(input: {
@@ -279,7 +297,7 @@ export function installLocalOwnerSnapshotSync(input: {
   });
 
   input.officialIpc.registerRequestHandler(
-    "thread-follower-set-model-and-reasoning",
+    "thread-follower-update-thread-settings",
     {
       canHandle: (params) => isLocalOwner(readOfficialConversationId(params)),
       handle: async (params) => {
@@ -287,39 +305,12 @@ export function installLocalOwnerSnapshotSync(input: {
         const threadId = readOfficialConversationId(record);
         if (!threadId) throw new Error("Missing conversationId");
         if (!isLocalOwner(threadId)) throw new Error("no-local-owner");
-        const model = readString(record?.model);
-        const effort = readReasoningEffort(record);
-        if (!model && !effort) {
-          throw new Error("Missing model or reasoningEffort");
-        }
+        const threadSettings = asRecord(record?.threadSettings);
+        if (!threadSettings) throw new Error("Missing threadSettings");
         await updateThreadSettings({
           appServer: input.appServer,
           threadId,
-          settings: {
-            ...(model ? { model } : {}),
-            ...(effort ? { effort } : {}),
-          },
-        });
-        return { ok: true };
-      },
-    },
-  );
-
-  input.officialIpc.registerRequestHandler(
-    "thread-follower-set-collaboration-mode",
-    {
-      canHandle: (params) => isLocalOwner(readOfficialConversationId(params)),
-      handle: async (params) => {
-        const record = asRecord(params);
-        const threadId = readOfficialConversationId(record);
-        if (!threadId) throw new Error("Missing conversationId");
-        if (!isLocalOwner(threadId)) throw new Error("no-local-owner");
-        const collaborationMode = asRecord(record?.collaborationMode);
-        if (!collaborationMode) throw new Error("Missing collaborationMode");
-        await updateThreadSettings({
-          appServer: input.appServer,
-          threadId,
-          settings: { collaborationMode },
+          settings: pickThreadSettingsUpdateParams(threadSettings),
         });
         return { ok: true };
       },

@@ -348,35 +348,36 @@ describe("local owner sync coordinator", () => {
     const { officialIpc, appServer, dispose } = installFakes();
     officialIpc.ownedThreads.add("thread-1");
     try {
-      const modelHandler = officialIpc.handlers.get(
-        "thread-follower-set-model-and-reasoning",
-      );
-      const collaborationHandler = officialIpc.handlers.get(
-        "thread-follower-set-collaboration-mode",
+      const settingsHandler = officialIpc.handlers.get(
+        "thread-follower-update-thread-settings",
       );
       const startHandler = officialIpc.handlers.get(
         "thread-follower-start-turn",
       );
 
-      expect(modelHandler).toBeTruthy();
-      expect(collaborationHandler).toBeTruthy();
       expect(
-        await modelHandler?.canHandle?.({ conversationId: "thread-1" }),
+        officialIpc.handlers.has("thread-follower-set-model-and-reasoning"),
+      ).toBe(false);
+      expect(
+        officialIpc.handlers.has("thread-follower-set-collaboration-mode"),
+      ).toBe(false);
+      expect(settingsHandler).toBeTruthy();
+      expect(
+        await settingsHandler?.canHandle?.({ conversationId: "thread-1" }),
       ).toBe(true);
 
       await expect(
-        modelHandler?.handle({
+        settingsHandler?.handle({
           conversationId: "thread-1",
-          model: "gpt-runtime",
-          reasoningEffort: "high",
-        }),
-      ).resolves.toEqual({ ok: true });
-      await expect(
-        collaborationHandler?.handle({
-          conversationId: "thread-1",
-          collaborationMode: {
-            mode: "plan",
-            settings: { developer_instructions: null },
+          threadSettings: {
+            model: "gpt-runtime",
+            modelProvider: "openai",
+            effort: "high",
+            activePermissionProfile: { id: "profile-readonly" },
+            collaborationMode: {
+              mode: "plan",
+              settings: { developer_instructions: null },
+            },
           },
         }),
       ).resolves.toEqual({ ok: true });
@@ -396,12 +397,6 @@ describe("local owner sync coordinator", () => {
             threadId: "thread-1",
             model: "gpt-runtime",
             effort: "high",
-          },
-        },
-        {
-          method: "thread/settings/update",
-          params: {
-            threadId: "thread-1",
             collaborationMode: {
               mode: "plan",
               settings: { developer_instructions: null },
@@ -429,24 +424,20 @@ describe("local owner sync coordinator", () => {
     const { officialIpc, appServer, dispose } = installFakes();
     officialIpc.ownedThreads.add("thread-1");
     try {
-      const modelHandler = officialIpc.handlers.get(
-        "thread-follower-set-model-and-reasoning",
-      );
-      const collaborationHandler = officialIpc.handlers.get(
-        "thread-follower-set-collaboration-mode",
+      const settingsHandler = officialIpc.handlers.get(
+        "thread-follower-update-thread-settings",
       );
       const startHandler = officialIpc.handlers.get(
         "thread-follower-start-turn",
       );
 
-      await modelHandler?.handle({
+      await settingsHandler?.handle({
         conversationId: "thread-1",
-        model: "gpt-cached",
-        reasoningEffort: "high",
-      });
-      await collaborationHandler?.handle({
-        conversationId: "thread-1",
-        collaborationMode: { mode: "plan" },
+        threadSettings: {
+          model: "gpt-cached",
+          effort: "high",
+          collaborationMode: { mode: "plan" },
+        },
       });
       await expect(
         startHandler?.handle({

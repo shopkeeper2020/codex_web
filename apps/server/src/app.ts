@@ -215,6 +215,12 @@ function readString(value: unknown): string {
     : "";
 }
 
+function readRevision(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return typeof error === "string" ? error : "";
@@ -1659,7 +1665,7 @@ export async function createServer(
     clearedDerivedCaches.projectCount +
     clearedDerivedCaches.threadCount +
     clearedDerivedCaches.threadDetailCount +
-    clearedDerivedCaches.officialStreamStateCount;
+    clearedDerivedCaches.legacyOfficialStreamStateCount;
   if (clearedDerivedCacheCount > 0) {
     database.compactStorage();
     diagnostics.record("info", "cache", "derived-sqlite-cache-cleared", {
@@ -2140,6 +2146,8 @@ export async function createServer(
                 "local",
               ownerClientId: readString(params?.ownerClientId) || null,
               sourceClientId: readString(params?.sourceClientId) || null,
+              revision: readRevision(params?.revision),
+              lastBaseRevision: readRevision(params?.baseRevision),
             });
             diagnostics.record(
               hydrated ? "info" : "warn",
@@ -2175,8 +2183,6 @@ export async function createServer(
         type: "official.threadArchived",
         payload: notification.params,
       });
-      const threadId = readString(asRecord(notification.params)?.threadId);
-      if (threadId) database.deleteOfficialStreamState(threadId);
     }
     if (notification.method === OFFICIAL_THREAD_UNARCHIVED_METHOD) {
       bus.publish({

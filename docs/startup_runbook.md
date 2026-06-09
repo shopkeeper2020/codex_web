@@ -258,7 +258,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:18930/api/sync/readiness | ConvertTo-Jso
 Invoke-RestMethod -Uri "http://127.0.0.1:18930/api/sync/readiness?threadId=<thread-id>" | ConvertTo-Json -Depth 12
 ```
 
-该接口面向“三端同步为什么没有实时发生”的排查。无 `threadId` 时检查全局 IPC、app-server、必需 follower handler 和可选 follower handler；带 `threadId` 时还会补充该 thread 是否存在官方实时缓存、当前缓存 owner 来源和最近 handoff。第一版必需 handler 是 `thread-follower-start-turn`、`thread-follower-steer-turn`、`thread-follower-interrupt-turn`；`thread-follower-compact-thread`、`thread-follower-set-model-and-reasoning`、`thread-follower-set-collaboration-mode` 已在 Web-owned conversation 上实现。edit last user turn 仍作为可选高风险缺口以 `warn` 展示。更细的可选方法安全级别见 `/api/protocol/compatibility` 的 `adapter.followerMethodCapabilities`。
+该接口面向“三端同步为什么没有实时发生”的排查。无 `threadId` 时检查全局 IPC、app-server、必需 follower handler 和可选 follower handler；带 `threadId` 时还会补充该 thread 是否存在官方实时缓存、当前缓存 owner 来源和最近 handoff。当前必需 handler 是 `thread-follower-start-turn`、`thread-follower-steer-turn`、`thread-follower-interrupt-turn`；`thread-follower-compact-thread`、`thread-follower-update-thread-settings`、`thread-follower-edit-last-user-turn` 已在 Web-owned conversation 上实现。审批、用户输入、MCP elicitation 和 queued follow-ups 仍作为可选缺口以 `warn` 展示。更细的可选方法安全级别见 `/api/protocol/compatibility` 的 `adapter.followerMethodCapabilities`。
 
 ## LAN 访问密码
 

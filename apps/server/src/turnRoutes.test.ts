@@ -236,6 +236,8 @@ class FakeOfficialIpc {
       ownerClientId: "web-test",
       sourceClientId: "web-test",
       changeType: "snapshot",
+      revision: this.snapshots.length,
+      lastBaseRevision: null,
       cacheVersion: this.snapshots.length,
       updatedAtIso: "2026-05-29T00:00:00.000Z",
       isInProgress: true,

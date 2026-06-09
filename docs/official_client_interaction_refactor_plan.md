@@ -101,8 +101,7 @@ codex_web
 | steer turn | `thread-follower-steer-turn` | 本地 steer/start 语义由 Web owner 决定 |
 | interrupt | `thread-follower-interrupt-turn` | 本地 `turn/interrupt` |
 | compact | `thread-follower-compact-thread` | 本地 compact |
-| model/reasoning | `thread-follower-set-model-and-reasoning` | 本地更新运行配置 |
-| collaboration mode | `thread-follower-set-collaboration-mode` | 本地更新运行配置 |
+| thread settings | `thread-follower-update-thread-settings` | 本地 `thread/settings/update` |
 | edit last user turn | `thread-follower-edit-last-user-turn` | 本地 rollback/replacement |
 | approvals/user input/MCP elicitation | 对应 `thread-follower-*` response | 本地 server request response |
 
@@ -190,11 +189,12 @@ queued follow-ups 会影响 active turn 后续动作；read state 会影响列�
 
 ### 8. method version map 必须完整登记
 
-当前已确认的官方 IPC method version：
+2026-06-09 复查 Desktop `26.602.9276.0` 与 VS Code
+`openai.chatgpt-26.5601.21317-win32-x64` 后，当前已确认的官方 IPC method version：
 
 | Method | Version |
 | --- | ---: |
-| `thread-stream-state-changed` | 6 |
+| `thread-stream-state-changed` | 7 |
 | `thread-read-state-changed` | 1 |
 | `thread-archived` | 2 |
 | `thread-unarchived` | 1 |
@@ -202,8 +202,7 @@ queued follow-ups 会影响 active turn 后续动作；read state 会影响列�
 | `thread-follower-compact-thread` | 1 |
 | `thread-follower-steer-turn` | 1 |
 | `thread-follower-interrupt-turn` | 1 |
-| `thread-follower-set-model-and-reasoning` | 1 |
-| `thread-follower-set-collaboration-mode` | 1 |
+| `thread-follower-update-thread-settings` | 1 |
 | `thread-follower-edit-last-user-turn` | 1 |
 | `thread-follower-command-approval-decision` | 1 |
 | `thread-follower-file-approval-decision` | 1 |
@@ -265,8 +264,7 @@ Web-owned thread 收到 Desktop/扩展的 model/reasoning/collaboration follower
 - `thread-follower-steer-turn`
 - `thread-follower-interrupt-turn`
 - `thread-follower-compact-thread`
-- `thread-follower-set-model-and-reasoning`
-- `thread-follower-set-collaboration-mode`
+- `thread-follower-update-thread-settings`
 - `thread-follower-edit-last-user-turn`
 - `thread-follower-command-approval-decision`
 - `thread-follower-file-approval-decision`

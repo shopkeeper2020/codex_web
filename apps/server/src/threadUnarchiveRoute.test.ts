@@ -90,6 +90,7 @@ function applyExternalSnapshot(
       conversationId: threadId,
       change: {
         type: "snapshot",
+        revision: 1,
         conversationState: {
           id: threadId,
           name: "Desktop owned thread",

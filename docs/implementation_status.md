@@ -1,12 +1,14 @@
 # 当前实现进展与启动验证说明
 
-更新时间：2026-06-03。
+更新时间：2026-06-09。
 
 本文汇总当前仓库实现状态、默认端口、关键路径、依赖、官方 IPC/app-server 机制，以及已知限制。更完整的产品目标见 `docs/product_spec.md`，协议研究细节见 `documentation/protocol/official_codex_ipc_sync.md`，日常启动命令见 `docs/startup_runbook.md`。
 
 ## 当前阶段
 
 项目处于 Milestone 1：项目基础与真实同步切片。
+
+2026-06-09 协议迁移：按本机官方 Desktop `26.602.9276.0`、VS Code Codex 扩展 `26.5601.21317` 和当前 OpenAI Codex app-server README/source/schema 复核后，将 official IPC 基线升级到 v7。`thread-stream-state-changed` 现在登记为 `7`，settings follower 只保留 `thread-follower-update-thread-settings`，旧的 model/reasoning 与 collaboration 两条 split method 不再注册、不再进入 compatibility/readiness 当前能力矩阵。协议层新增 stream `revision` / `baseRevision` 状态，snapshot 缺 revision 会被拒绝，patch 只有在 `baseRevision` 等于本地缓存 revision 且 incoming revision 更新时才应用；mismatch/stale/missing revision 只记录 official IPC 诊断，不强行修改 live cache。Web-owned snapshot 广播会携带递增 `change.revision`，owner release/archive/handoff 会清理本地 revision state。SQLite 不再创建、写入或读取 `official_stream_states`；official live stream、owner、revision 和 patch base 全部只保存在内存中，旧库里的 legacy 表会在启动派生缓存清理时删除。验证：`pnpm --filter @codex-web/protocol exec vitest run src/officialIpc.test.ts`、`pnpm --filter @codex-web/server exec vitest run src/syncCoordinator.test.ts src/protocolCompatibility.test.ts src/syncReadiness.test.ts src/officialIpcEvents.test.ts src/threadDetailRoute.test.ts src/turnRoutes.test.ts src/sideConversations.test.ts`、`pnpm --filter @codex-web/protocol typecheck`、`pnpm --filter @codex-web/server typecheck`、`pnpm --filter @codex-web/protocol build`、`pnpm --filter @codex-web/server build`、`git diff --check`。
 
 2026-06-03 续跑修复：修复 Web 新会话首条消息报 `no rollout found for thread id ...`。按 OpenAI Codex app-server README、`codex-rs/app-server` request processor 和 `app-server-protocol` v2 schema 复核后确认：新会话官方 lifecycle 是 `thread/start -> turn/start`，`thread/resume` 只用于继续已有/已持久化 thread。此前清理把所有 Web 本地 owner turn 都强制改为 `thread/resume` 成功后再 `turn/start`，导致刚 `thread/start` 的空 thread 在 rollout 尚未 materialize 时被误走 resume。现在只在“Web-owned 且 stream state 明确 `turns: []`”的首轮本地 turn 跳过 resume，直接调用官方 raw `turn/start`；已有/非空会话仍保持先 `thread/resume` 再 `turn/start`，避免分叉。发布前同时收紧了 app-shell E2E 中与当前真实运行态耦合的旧选择器/布局断言，避免回归套件因当前会话正在运行而假失败。验证：官方文档/源码复核、`pnpm --filter @codex-web/server exec vitest run src/threadActions.test.ts src/turnRoutes.test.ts src/threadStartRoute.test.ts`（31 passed）、`pnpm typecheck`、`git diff --check`、`pnpm test`（server 167 passed，web 27 passed，protocol 40 passed）、`pnpm build`、`pnpm exec playwright test tests/e2e/app-shell.spec.ts tests/e2e/composer-runtime.spec.ts --project=desktop-chromium --project=mobile-chromium`（49 passed / 27 skipped）。生产服务已重启到 `0.0.0.0:18930`，node PID `113104`，app-server child PID `114536`；`/health`、`/api/health`、official IPC 和 sync readiness 均正常，readiness 只保留插件图标路径 warning（`interface.icon_large` 路径校验）与可选 follower handler warning。真实 HTTP 探针创建 thread `019e89a6-97ca-78a3-9831-809527cfcaf6` 并发送首条 `只回复 OK`，`turn/start` 返回 `mode: "app-server"`、turn `inProgress`，随后 detail 从 official IPC 读到完成回复 `OK`，未再出现 `no rollout found`。
 
@@ -407,7 +409,7 @@ SQLite 只保存 Web 自己拥有的本地状态，不保存 app-server / 官方
 - `pinned_threads`：Web 本地置顶状态。
 - `attachments`：Web 上传附件的元数据、sha256、持久文件路径和可选 thread/turn/official reference 关联；清理逻辑只会删除三类关联都为空的孤立记录和其安全目录内文件。
 
-历史派生表 `projects`、`threads`、`thread_details`、`official_stream_states` 保留 schema 兼容，但运行时不再长期写入官方/app-server 大数据。
+历史派生表 `projects`、`threads`、`thread_details` 保留 schema 兼容但启动即清理；`official_stream_states` 不再保留 schema，新启动会删除旧库里的 legacy 表。运行时不再长期写入官方/app-server 大数据。
 
 生成迁移：
 
@@ -479,7 +481,7 @@ pnpm sync:doctor -- --thread <thread-id> --interrupt
 - `pnpm build`：通过。
 - `pnpm test:e2e`：通过，`34 passed / 28 skipped`，当前按 `workers: 1` 串行访问真实本机服务。跳过项包含需要显式 `LIVE_SYNC_THREAD_ID` / `LIVE_SYNC_STEER_TEXT` / `LIVE_SYNC_INTERRUPT=1` / `LIVE_SYNC_ATTACHMENT=1` 的真实三端同步 start/steer/interrupt/attachment 烟测、桌面视口下只适用于移动端的布局回归，以及移动项目下重复的 mock 驱动链路检查；`tests/e2e/composer-runtime.spec.ts` 已覆盖 Composer 选择模型、推理强度、Plan 协作模式、Skill 和附件后发送到 `/api/domain/turn/start` 的 body，覆盖 `Enter` 发送与 `Shift+Enter` 换行，并新增移动端长文件名附件、Skills 选择、发送 body 和发送后托盘清空；`tests/e2e/thread-pagination.spec.ts` 已覆盖普通/归档会话加载更多按钮使用 app-server cursor 拉取下一页并合并列表；`tests/e2e/long-thread-list.spec.ts` 已覆盖 1000 条已加载会话时只渲染窗口内行、滚到底仍能访问深处会话，并可直接搜索定位第 1000 条深处会话；`tests/e2e/sync-safety-ui.spec.ts` 已覆盖 official owner 不可用时 Web 不清空 Composer 文本且显示中文友好错误；`tests/e2e/approval-card.spec.ts` 已覆盖审批卡片细节展示、决策请求体、按钮禁用和卡片刷新消失，并新增移动端审批决策可用性；`tests/e2e/message-blocks.spec.ts` 已覆盖复杂消息块渲染和展开/折叠交互，并新增移动端复杂消息块无横向溢出烟测；`tests/e2e/mobile-experience.spec.ts` 覆盖移动抽屉、搜索、Settings、附件/Skills 入口、运行状态折叠面板、手机视口下停止 active turn，并已处理真实 active turn 后到导致附件按钮禁用的等待问题；移动端横向溢出断言已统一到 `tests/e2e/helpers/layout.ts`，失败时会输出 offender 诊断，并允许 `pre/code` 等内部滚动区域不被误判为页面级横向溢出；`tests/e2e/ui-fidelity-baseline.spec.ts` 已提供桌面/移动固定命名截图入口，覆盖 shell、Search、Settings、Debug，移动端额外覆盖 drawer 和 Skills 菜单；该视觉基线用例超时已提升到 90 秒，避免真实长线程 full-page screenshot 在移动项目下产生假失败。
 - `pnpm sync:doctor -- --json --report data\tmp\sync-doctor-report-post-build-restart.json`：通过，当前本机服务可访问，后端生产服务监听 `0.0.0.0:18930`，本次监听进程 PID 为 `<pid>`；结果为 `ok: true`，并验证 report 输出逻辑可用。注意 CLI 中相对 `--report` 路径会按仓库根目录解析，本次报告落在 `data\tmp\sync-doctor-report-post-build-restart.json`，没有写入 `apps/server/data`。本轮协议兼容性为 `warning`，原因是官方 app-server 的 `state db discrepancy during read_repair_rollout_path: upsert_needed (fast path)` warning；官方 IPC connected、app-server initialized、必需 follower handler 全部通过，可选缺口仍是 `thread-follower-edit-last-user-turn`。CLI help 已验证支持诊断、`--send`、`--steer`、`--interrupt` 和 `--report`。
-- 运行态 HTTP 检查：`/health`、`/api/protocol/compatibility`、`/api/sync/readiness` 均可访问；本次 `/api/protocol/compatibility` 显示 7 项 follower method capability matrix，`start/steer/interrupt/compact/set-model-and-reasoning/set-collaboration-mode` 为 implemented 且已注册，`edit-last-user-turn` 为 risky；`/api/sync/readiness` 显示官方 IPC connected、app-server initialized、3 个必需 follower handler 全部注册，剩余 `edit-last-user-turn` 尚未实现并以 warn 展示。
+- 历史运行态 HTTP 检查（2026-05-29）：`/health`、`/api/protocol/compatibility`、`/api/sync/readiness` 均可访问。当时 `/api/protocol/compatibility` 仍展示旧 split settings follower（`set-model-and-reasoning` / `set-collaboration-mode`）。该基线已被 2026-06-09 IPC v7 迁移取代；当前 settings follower 统一为 `thread-follower-update-thread-settings -> thread/settings/update`，旧 split method 不再注册，也不再进入当前 compatibility/readiness 能力矩阵。
 
 最近一次局部验证（2026-05-31 00:31 左右，收口 `file change` / “已编辑文件”默认折叠与 Desktop-like 展开样式，并记录顶部按钮/真实右侧栏设计约束后）：
 
