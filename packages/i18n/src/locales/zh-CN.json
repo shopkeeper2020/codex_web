@@ -95,6 +95,17 @@
       "openInFiles": "在右侧“文件”标签页打开"
     }
   },
+  "textReference": {
+    "actions": {
+      "toolbar": "文本引用操作",
+      "addToConversation": "添加到对话",
+      "askInSideChat": "在侧边聊天中提问"
+    },
+    "chip": {
+      "count": "{{count}} 个已选文本片段",
+      "clearAll": "清除已选文本片段"
+    }
+  },
   "settings": {
     "language": {
       "system": "跟随系统",

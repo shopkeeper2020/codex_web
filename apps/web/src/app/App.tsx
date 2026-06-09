@@ -19,6 +19,7 @@ import { SettingsDiagnosticsPanel } from "./components/SettingsDiagnosticsPanel"
 import { Header } from "./components/ThreadHeader";
 import { useAuthGate } from "./hooks/useAuthGate";
 import { useRuntimeData } from "./hooks/useRuntimeData";
+import type { TextReference } from "./textReferences";
 import {
   ROUTE_CHANGE_EVENT,
   type AppRoute,
@@ -115,6 +116,10 @@ export function App(): ReactElement {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [bottomTerminalOpen] = useState(false);
   const [draftThread, setDraftThread] = useState<DraftThread | null>(null);
+  const [mainTextReferencesByThreadId, setMainTextReferencesByThreadId] =
+    useState<Record<string, TextReference[]>>({});
+  const [mainComposerFocusRequestKey, setMainComposerFocusRequestKey] =
+    useState(0);
   const [layoutViewportWidth, setLayoutViewportWidth] = useState(
     readLayoutViewportWidth,
   );
@@ -340,6 +345,37 @@ export function App(): ReactElement {
           project.path === draftThread.cwd || project.id === draftThread.cwd,
       )?.name ?? projectDisplayName(draftThread.cwd))
     : null;
+  const mainComposerThreadId = draftThread
+    ? `draft:${draftThread.key}`
+    : selectedThreadId;
+  const mainTextReferences = mainComposerThreadId
+    ? (mainTextReferencesByThreadId[mainComposerThreadId] ?? [])
+    : [];
+  const addMainTextReference = useCallback(
+    (reference: TextReference) => {
+      if (!mainComposerThreadId) return;
+      setMainTextReferencesByThreadId((current) => ({
+        ...current,
+        [mainComposerThreadId]: [
+          ...(current[mainComposerThreadId] ?? []),
+          reference,
+        ],
+      }));
+    },
+    [mainComposerThreadId],
+  );
+  const clearMainTextReferences = useCallback(() => {
+    if (!mainComposerThreadId) return;
+    setMainTextReferencesByThreadId((current) => {
+      if (!current[mainComposerThreadId]?.length) return current;
+      const next = { ...current };
+      delete next[mainComposerThreadId];
+      return next;
+    });
+  }, [mainComposerThreadId]);
+  const focusMainComposer = useCallback(() => {
+    setMainComposerFocusRequestKey((value) => value + 1);
+  }, []);
   const visibleSelectedThread = draftThread ? null : selectedThread;
   const visibleSelectedThreadId = draftThread ? "" : selectedThreadId;
   const visibleSelectedThreadProjectId = visibleSelectedThread
@@ -483,6 +519,8 @@ export function App(): ReactElement {
                 ? async () => undefined
                 : closeSideConversationForSelectedThread
             }
+            onAddMainTextReference={addMainTextReference}
+            onFocusMainComposer={focusMainComposer}
             composer={
               <Composer
                 threadId={
@@ -515,6 +553,9 @@ export function App(): ReactElement {
                 onCompactThread={
                   draftThread ? undefined : () => void compactSelectedThread()
                 }
+                textReferences={mainTextReferences}
+                onClearTextReferences={clearMainTextReferences}
+                focusRequestKey={mainComposerFocusRequestKey}
               />
             }
           />

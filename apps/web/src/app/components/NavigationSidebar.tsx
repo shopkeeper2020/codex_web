@@ -37,6 +37,7 @@ import type {
   ThreadList,
 } from "../../api";
 import styles from "../App.module.css";
+import { displayTextFromReferencedPrompt } from "../textReferences";
 import {
   calculateVirtualThreadWindow,
   initialThreadScrollTop,
@@ -489,6 +490,7 @@ function ThreadRows({
     : threads;
 
   const rows = renderedThreads.map((thread) => {
+    const displayTitle = displayTextFromReferencedPrompt(thread.title);
     if (archived) {
       return (
         <button
@@ -500,7 +502,7 @@ function ThreadRows({
         >
           <Archive size={15} />
           <span className={styles.rowText}>
-            <span className={styles.rowTitle}>{thread.title}</span>
+            <span className={styles.rowTitle}>{displayTitle}</span>
             <span className={styles.rowMeta}>
               点击恢复 · {formatTime(thread.updatedAtIso)}
             </span>
@@ -544,7 +546,7 @@ function ThreadRows({
             <MessageSquare size={15} />
           )}
           <span className={styles.rowText}>
-            <span className={styles.rowTitle}>{thread.title}</span>
+            <span className={styles.rowTitle}>{displayTitle}</span>
             <span className={styles.rowMeta}>
               {project?.name ?? thread.path ?? "无项目会话"}
             </span>
@@ -558,7 +560,7 @@ function ThreadRows({
             className={styles.threadActionMenu}
             ref={actionMenuRef}
             role="menu"
-            aria-label={`${thread.title} 的会话操作`}
+            aria-label={`${displayTitle} 的会话操作`}
             onClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
           >

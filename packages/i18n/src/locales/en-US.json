@@ -95,6 +95,17 @@
       "openInFiles": "Open in Files tab"
     }
   },
+  "textReference": {
+    "actions": {
+      "toolbar": "Text reference actions",
+      "addToConversation": "Add to conversation",
+      "askInSideChat": "Ask in side chat"
+    },
+    "chip": {
+      "count": "{{count}} selected text snippets",
+      "clearAll": "Clear selected text snippets"
+    }
+  },
   "settings": {
     "language": {
       "system": "Use system language",

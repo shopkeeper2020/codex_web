@@ -1,10 +1,9 @@
 # 会话文本引用交互设计
 
-更新时间：2026-06-08
+更新时间：2026-06-09
 
 本文记录 `codex_web` 会话区文本引用功能的前端设计。目标是复刻官方 Codex Desktop 的选择文本交互：用户在会话区选中文本后，出现“添加到对话”和“在侧边聊天中提问”两个动作；被添加的文本以 Composer 上方的引用片段 chip 展示，并在发送时合入本次用户请求。
 
-> 临时截图引用清理提醒：本节包含用户本次提供的临时截图和本地 PixPin 路径，仅用于当天设计对照。提交代码或提交文档前，必须删除本节图片引用，或替换为已脱敏、稳定、可提交的 `docs/assets/` 参考图。
 
 ## 1. 临时参考图
 
@@ -13,6 +12,10 @@
 - 参考图 C：绝对路径 `C:/Users/user/AppData/Local/PixPin/Temp/PixPin_2026-06-08_16-32-39.png`。重点是鼠标悬停在引用 chip 上时的预览浮层：每段引用用英文双引号包围，并在 chip 右侧显示清除按钮。
 - 参考图 D：源文件绝对路径同参考图 A：`C:/Users/user/AppData/Local/PixPin/Data/2026-06-08_15-53-14-0.png`，对应 A 图右侧 Desktop 会话区的局部效果。重点是用户消息气泡上方/气泡内靠前位置显示 `2 个已选文本片段` chip，下面显示用户请求文本。
 - 参考图 E：本次对话内第五张裁剪图，展示会话区引用 chip 的鼠标悬停效果。重点是 hover 时弹出小型预览浮层，每段被引用文本用英文双引号包围，样式与 Composer hover 预览保持一致。当前未在 `C:/Users/user/AppData/Local/PixPin/Data`、`C:/Users/user/AppData/Local/PixPin/Temp`、`C:/Users/user/AppData/Local/OpenAI` 中匹配到本地绝对路径；如果后续要长期回看，需要先另存该裁剪图并补入绝对路径。
+- 参考图 F：绝对路径 `C:/Users/user/AppData/Local/PixPin/Temp/PixPin_2026-06-09_09-21-28.png`。重点是官方 Desktop 允许用户手动在 Composer 中输入 `# Selected text:` / `## Selection 1` / `## My request for Codex:` 结构。
+- 参考图 G：绝对路径 `C:/Users/user/AppData/Local/PixPin/Temp/PixPin_2026-06-09_09-21-33.png`。重点是手动输入上述结构后，Desktop 仍按引用消息渲染：显示 `1 个已选文本片段` chip，并在下方显示用户请求文本。
+- 参考图 H：绝对路径 `C:/Users/user/AppData/Local/PixPin/Temp/PixPin_2026-06-09_09-22-18.png`。重点是官方 Desktop 允许只有引用、没有用户请求文本的 Composer 内容。
+- 参考图 I：绝对路径 `C:/Users/user/AppData/Local/PixPin/Temp/PixPin_2026-06-09_09-22-31.png`。重点是只有引用、没有用户请求文本时，Desktop 发送后只显示引用 chip，不显示空的用户请求气泡。
 
 ![参考图 A：Web 与 Desktop 并排对照](C:/Users/user/AppData/Local/PixPin/Data/2026-06-08_15-53-14-0.png)
 
@@ -36,6 +39,7 @@
 - 不支持跨浏览器刷新后的引用片段恢复；引用片段是 Composer 草稿级本地状态。
 - 不在本轮实现复杂富文本引用、锚点跳转、高亮回放或引用来源长期追踪。
 - 不限制引用数量和文本长度；第一版按用户选择的完整文本发送。
+- 不处理引用正文中恰好包含 `## Selection N` 行时的分隔符碰撞；本轮只对齐 Desktop 当前可见渲染行为。
 
 ## 4. 参考依据
 
@@ -239,6 +243,11 @@ function formatReferencedPrompt(userText: string, references: ComposerTextRefere
 
 这个格式刻意沿用截图中的英文标题，避免中文 UI 下改变 Codex 已有提示结构。后续如果确认官方 Desktop 在所有语言下都使用另一种格式，应以 Desktop 实测为准调整。
 
+识别规则：
+
+- 发送后的消息展示不能只识别 Web 自己通过选区动作生成的引用。凡是普通用户消息文本本身符合上述 Desktop 结构，都应按引用消息渲染；即用户手动拼接 `# Selected text:` / `## Selection N` / `## My request for Codex:` 也会被识别为引用。
+- 解析出的引用只影响 Web 展示和复制/编辑体验，不改变发送给官方 app-server 的普通 text 字符串。
+
 `hasSubmitContent` 建议把引用片段计入内容：
 
 - 有文本、附件、Skills 或引用片段任意一种时，发送按钮可用。
@@ -248,13 +257,15 @@ function formatReferencedPrompt(userText: string, references: ComposerTextRefere
 
 - 发送后消息在会话区的展示标题不做额外改写时，应使用用户输入内容作为标题。
 - 引用片段只作为正文前置上下文，不替代用户输入标题。
+- 只有引用、用户输入为空时，标题/摘要不得回退显示 `# Selected text:` 原始结构；可使用第一段引用 preview 作为本地展示兜底，或等待官方标题改写。
 
 ## 11. 用户消息展示
 
 带引用发送后的用户消息展示也要对齐 Codex Desktop，而不是按普通 Markdown 文章渲染：
 
 - 用户消息整体使用 Desktop-like 右侧浅灰气泡，边框弱化，圆角、内边距和最大宽度参考官方 Desktop 当前截图。
-- 用户消息正文按纯文本展示，保留原始换行、编号和空格；不解析 Markdown/GFM。`# Selected text:`、`## Selection N` 和 `## My request for Codex:` 在用户消息里按字面文本显示。
+- 普通用户消息正文按纯文本展示，保留原始换行、编号和空格；不解析 Markdown/GFM。
+- 符合 Desktop 引用结构的用户消息不直接铺开 `# Selected text:`、`## Selection N` 和 `## My request for Codex:` 原始脚手架；应渲染为只读引用 chip + 用户请求气泡。
 - 如果用户输入内容存在，会话列表标题或消息摘要在没有官方改写标题时优先使用用户输入内容，而不是使用 `# Selected text:` 或引用片段。
 - 长用户消息继续遵守现有 Desktop-like 折叠规则：默认不撑满整个视口，可展开/收起，展开后仍不造成页面级横向滚动。
 
@@ -263,9 +274,16 @@ function formatReferencedPrompt(userText: string, references: ComposerTextRefere
 - 发送后的用户消息需要在会话区展示引用 chip，位置参考 Desktop：chip 位于用户请求文本之前，与请求文本同属用户消息气泡区域，整体右对齐。
 - chip 文案仍为 `1 个已选文本片段` / `2 个已选文本片段`，左侧使用对话/文本片段图标，尺寸和 Composer 内 chip 保持一致或略微收紧。
 - 用户请求文本单独显示在 chip 下方，例如参考图 D 中的 `分别列表格`，不把引用拼接格式直接铺成主视觉内容。
+- 如果引用结构存在但用户请求文本为空，只显示引用 chip，不显示空白请求气泡。
 - 鼠标悬停或键盘 focus 会话区引用 chip 时，显示与 Composer hover 类似的预览浮层；浮层逐行展示被引用文本，每段用英文双引号包围，例如 `"深圳"`、`"广州"`。
 - 会话区引用 chip 是已发送消息的只读展示，不提供清除按钮，不允许修改已发送引用。清除按钮只存在于发送前 Composer chip。
 - 如果后端/domain 目前无法从已发送纯文本中可靠还原引用片段，前端可以在本地发送成功后的当前会话渲染中保留引用展示状态；刷新或从其他客户端同步回来时，至少保证用户消息正文仍按纯文本可读。后续若 domain 能稳定解析引用结构，再把会话区 chip 作为持久可复看的展示能力。
+
+编辑规则：
+
+- 带引用的已发送用户消息进入编辑态时，引用 chip 仍然只读展示，不进入 textarea。
+- 只有 `## My request for Codex:` 后面的用户请求气泡可以被编辑；提交时保留原引用片段，并把编辑后的请求重新拼回 Desktop 引用结构。
+- 只有引用、没有用户请求文本的消息没有可编辑请求气泡，第一版不显示编辑入口。
 
 ## 12. 组件改造点
 
@@ -290,6 +308,8 @@ function formatReferencedPrompt(userText: string, references: ComposerTextRefere
 
 - 用户消息渲染继续按 Desktop-like 纯文本气泡展示，避免把引用拼接格式解析成 Markdown 标题。
 - 对带引用的用户消息渲染会话区引用 chip 和 hover 预览；已发送消息里的 chip 只读，不显示清除按钮。
+- 识别任意符合 Desktop 引用结构的用户消息，包括用户手动输入该结构的消息，不要求来源必须是 Web 选区动作。
+- 引用消息进入编辑态时保留只读 chip，只把用户请求文本放入编辑器；reference-only 消息不显示空编辑气泡。
 - 在没有可还原引用结构时，退回纯文本用户消息展示，不阻断消息阅读。
 
 `apps/web/src/app/App.module.css`：
@@ -323,13 +343,17 @@ function formatReferencedPrompt(userText: string, references: ComposerTextRefere
 | 点击“在侧边聊天中提问”且没有可复用侧聊 | 新建并打开一个侧边聊天 tab，侧边 Composer 显示引用 chip |
 | 侧边聊天创建失败 | 不创建 Web 私有 thread，显示创建失败 |
 | 发送主 Composer | 请求 text 包含 `# Selected text:` 和用户输入，发送成功后清空引用 |
-| 发送后的用户消息展示 | 使用 Desktop-like 右侧浅灰气泡，正文按纯文本保留换行，不解析 Markdown |
+| 手动输入 Desktop 引用结构并发送 | 会话区按引用消息渲染 chip 和用户请求，不直接显示 `# Selected text:` 脚手架 |
+| 发送后的普通用户消息展示 | 使用 Desktop-like 右侧浅灰气泡，正文按纯文本保留换行，不解析 Markdown |
 | 发送后的用户消息带引用 | 用户消息内显示只读引用 chip，下面显示用户请求文本 |
+| 发送后的用户消息只有引用、没有请求文本 | 只显示只读引用 chip，不显示空白请求气泡 |
 | hover 会话区引用 chip | 显示预览浮层，每段引用用英文双引号包围，不显示清除按钮 |
+| 编辑带引用的用户消息 | 引用 chip 只读保留，编辑器只编辑用户请求文本 |
+| 编辑只有引用、没有请求文本的用户消息 | 不显示编辑入口 |
 | 发送侧边 Composer | 同样拼接引用文本，走现有 side conversation 发送 |
 | thread 切换后切回 | 未发送的主 Composer 引用片段仍在本地草稿中 |
 | 刷新页面 | 引用片段丢失，不恢复 |
-| 只有引用、没有用户输入 | 允许发送，`My request for Codex` 为空 |
+| 只有引用、没有用户输入 | 允许发送，`My request for Codex` 为空；发送后只显示引用 chip |
 | 移动端选择文本 | 显示动作条并可操作；系统选择菜单可能遮挡时以可用、不溢出为验收底线 |
 
 ## 14. 测试策略
@@ -337,6 +361,7 @@ function formatReferencedPrompt(userText: string, references: ComposerTextRefere
 单元测试：
 
 - `formatReferencedPrompt()`：无引用、有单条引用、多条引用、空用户请求、保留换行。
+- `displayTextFromReferencedPrompt()`：带引用和请求时返回请求文本；只有引用、请求为空时不返回原始脚手架，使用引用 preview 兜底。
 - `normalizeSelectionText()`：trim 空白、过滤空选择、保留表格/多行文本结构。
 - `formatReferencePreview()`：每段预览用英文双引号包围，保留可读截断。
 
@@ -348,6 +373,9 @@ function formatReferencedPrompt(userText: string, references: ComposerTextRefere
 - 删除引用片段后 chip 消失。
 - 发送时 `onSend` 收到拼接后的 text，attachmentIds/options 不变。
 - 用户消息包含引用拼接格式时，按纯文本气泡展示，不渲染成 Markdown 标题。
+- 用户手动输入引用拼接格式时，同样按引用 chip + 用户请求文本展示。
+- 用户消息只有引用、没有用户请求时，只显示引用 chip，不显示空白用户请求气泡。
+- 编辑带引用的用户消息时，引用 chip 保持只读，编辑器只包含用户请求文本。
 - 发送后的用户消息有可用引用结构时，显示只读引用 chip；hover/focus 显示双引号预览。
 
 E2E：
@@ -356,8 +384,10 @@ E2E：
 - 点击“添加到对话”，断言主 Composer 出现 `1 个已选文本片段`。
 - 在侧边聊天 transcript 中制造选区，点击“添加到对话”，断言当前侧边 Composer 出现引用 chip。
 - 输入问题并发送，拦截 `/api/domain/turn/start`，断言 text 包含 `# Selected text:`、`## Selection 1`、`## My request for Codex:`。
-- 发送后断言会话区用户消息仍是 Desktop-like 用户气泡，`# Selected text:` 按文本出现。
+- 发送后断言会话区用户消息仍是 Desktop-like 用户气泡，但 `# Selected text:` 脚手架不直接出现在主视觉内容中。
 - 发送后断言当前会话里的用户消息显示只读 `N 个已选文本片段` chip；hover chip 后可见 `"深圳"` / `"广州"` 这类双引号预览。
+- 发送 reference-only 引用消息后，断言只显示只读引用 chip，不显示空请求气泡。
+- 编辑带引用的用户消息，断言 textarea 只包含请求文本，提交后保留原引用。
 - 点击“在侧边聊天中提问”，已有激活侧聊时断言复用该 tab；无可复用侧聊时断言右侧栏打开、新侧边聊天 tab 激活、侧边 Composer 出现引用 chip。
 - 移动端覆盖文本选区动作条可见、按钮可点、chip 不横向溢出。
 
@@ -386,11 +416,7 @@ E2E：
 14. 会话区用户消息内也要展示只读引用 chip；hover 时按参考图 E 展示双引号包围的引用文本，样式与 Composer hover 预览类似。
 15. 用户消息展示要参照 Desktop：右侧浅灰气泡、纯文本、保留换行，不解析引用格式里的 Markdown 标题。
 16. 参考图继续只保留文字说明和临时路径，提交前删除，不复制到 `docs/assets/`。
-
-## 16. 提交前清理
-
-- 删除本文第 1 节中的临时截图路径和 Markdown 图片引用，或替换成已脱敏、稳定、可提交的参考图。
-- 删除本文第 1 节中对“本次对话内截图 E”的文字引用，或在用户另存图片后替换成已脱敏、稳定、可提交的参考图说明。
-- 特别检查 `C:/Users/user/AppData/Local/PixPin/Data/2026-06-08_15-53-14-0.png` 不应出现在最终提交中。
-- 特别检查 `C:/Users/user/AppData/Local/PixPin/Temp/PixPin_2026-06-08_15-54-50.png` 不应出现在最终提交中。
-- 特别检查 `C:/Users/user/AppData/Local/PixPin/Temp/PixPin_2026-06-08_16-32-39.png` 不应出现在最终提交中。
+17. 用户手动拼接 Desktop 引用结构时，也应被识别为引用消息渲染；识别依据是文本结构本身，不是 Web 本地引用状态。
+18. 只有引用、没有用户请求文本时，发送后只显示引用 chip，不显示空白请求气泡。
+19. 编辑带引用的用户消息时，只允许编辑用户请求气泡；引用 chip 保持只读并在提交时原样保留。
+20. 引用正文中包含 `## Selection N` 造成解析碰撞的问题本轮不处理。

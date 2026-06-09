@@ -12,6 +12,7 @@ import {
   Globe2,
   Maximize2,
   Minimize2,
+  MessageSquare,
   PanelRightOpen,
   Paperclip,
   Pencil,
@@ -33,6 +34,12 @@ import {
   type PendingApproval,
 } from '../../api'
 import { useI18n } from '../../i18n/useI18n'
+import {
+  formatReferenceQuote,
+  parseReferencedPrompt,
+  userRequestTextFromReferencedPrompt,
+  type ComposerTextReference,
+} from '../textReferences'
 import styles from '../App.module.css'
 import { StatusBadge } from './StatusBadge'
 
@@ -395,13 +402,89 @@ function shouldCollapseUserText(text: string): boolean {
   return text.length > USER_MESSAGE_COLLAPSE_CHAR_COUNT || text.split(/\r?\n/).length > USER_MESSAGE_COLLAPSE_LINE_COUNT
 }
 
+function UserTextReferenceChip({
+  references,
+}: {
+  references: ComposerTextReference[]
+}): ReactElement {
+  const { t } = useI18n()
+  const [expanded, setExpanded] = useState(false)
+  const label = t('textReference.chip.count', { count: references.length })
+
+  return (
+    <span
+      className={styles.messageTextReferenceChipWrap}
+      data-expanded={expanded ? 'true' : undefined}
+    >
+      <button
+        aria-expanded={expanded}
+        aria-label={label}
+        className={styles.messageTextReferenceChip}
+        data-testid="message-text-reference-chip"
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <MessageSquare size={14} />
+        <span>{label}</span>
+      </button>
+      <span
+        className={styles.messageTextReferencePreview}
+        role="tooltip"
+        data-testid="message-text-reference-preview"
+      >
+        {references.map((reference) => (
+          <span
+            className={styles.textReferencePreviewLine}
+            key={reference.id}
+          >
+            {formatReferenceQuote(reference.text)}
+          </span>
+        ))}
+      </span>
+    </span>
+  )
+}
+
 function UserPlainText({ text }: { text: string }): ReactElement | null {
   const normalized = text.trimEnd()
-  const shouldCollapse = shouldCollapseUserText(normalized)
+  const referencedPrompt = parseReferencedPrompt(normalized)
+  const displayText = userRequestTextFromReferencedPrompt(normalized).trimEnd()
+  const shouldCollapse = shouldCollapseUserText(displayText)
   const [expanded, setExpanded] = useState(false)
   const collapsed = shouldCollapse && !expanded
 
   if (!normalized) return null
+
+  if (referencedPrompt) {
+    return (
+      <>
+        <UserTextReferenceChip references={referencedPrompt.references} />
+        {displayText ? (
+          <div
+            className={styles.userMessageBubble}
+            data-collapsed={collapsed ? 'true' : undefined}
+            data-testid="user-message-bubble"
+          >
+            <div className={styles.userMessageText} data-testid="user-message-text">
+              {displayText}
+            </div>
+            {shouldCollapse ? (
+              <button
+                aria-expanded={expanded}
+                aria-label={expanded ? '折叠用户消息' : '展开用户消息'}
+                className={styles.userMessageToggle}
+                type="button"
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? '收起' : '显示更多'}
+                <ChevronDown className={expanded ? styles.userMessageToggleIconOpen : styles.userMessageToggleIcon} size={14} />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </>
+    )
+  }
 
   return (
     <div
@@ -410,7 +493,7 @@ function UserPlainText({ text }: { text: string }): ReactElement | null {
       data-testid="user-message-bubble"
     >
       <div className={styles.userMessageText} data-testid="user-message-text">
-        {normalized}
+        {displayText}
       </div>
       {shouldCollapse ? (
         <button
@@ -436,7 +519,8 @@ function UserMessageActionRow({
   text: string
 }): ReactElement | null {
   const [copied, setCopied] = useState(false)
-  const normalized = text.trim()
+  const copyText = userRequestTextFromReferencedPrompt(text)
+  const normalized = copyText.trim()
   if (!actions) return null
 
   return (
@@ -449,7 +533,7 @@ function UserMessageActionRow({
         disabled={!normalized}
         onClick={() => {
           if (!normalized) return
-          void writeClipboard(text).then(() => {
+          void writeClipboard(copyText).then(() => {
             setCopied(true)
             window.setTimeout(() => setCopied(false), 1200)
           })
@@ -2031,6 +2115,7 @@ function shouldRenderReasoningItem(items: MessageItem[], index: number, turnStat
 
 export function renderMessageItem(item: MessageItem, turnStatus: string, options: RenderOptions = {}): ReactElement | null {
   if (item.type === 'user') {
+    const referencedPrompt = parseReferencedPrompt(item.text)
     const userActions = item.intent === 'guidance'
       ? null
       : options.getUserMessageActions?.(item) ?? null
@@ -2038,7 +2123,10 @@ export function renderMessageItem(item: MessageItem, turnStatus: string, options
       <article className={styles.userMessage} data-testid="user-message" key={item.id}>
         <MessageImages images={item.images} projectRoot={options.projectRoot} />
         {userActions?.isEditing ? (
-          <UserMessageEditor actions={userActions} text={item.text} />
+          <>
+            {referencedPrompt ? <UserTextReferenceChip references={referencedPrompt.references} /> : null}
+            <UserMessageEditor actions={userActions} text={referencedPrompt?.request ?? item.text} />
+          </>
         ) : (
           <>
             <UserPlainText text={item.text} />

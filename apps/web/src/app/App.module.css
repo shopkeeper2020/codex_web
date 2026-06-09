@@ -1731,6 +1731,7 @@
   position: relative;
   display: grid;
   justify-items: start;
+  gap: 6px;
   width: fit-content;
   max-width: min(72%, 620px);
   margin: 0;
@@ -1741,6 +1742,14 @@
   font-size: 14px;
   line-height: 1.48;
   overflow-wrap: anywhere;
+}
+
+.messageTextReferenceChipWrap {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  justify-self: end;
+  align-items: center;
 }
 
 .userMessageText {
@@ -4811,6 +4820,51 @@ button.fileRowActive:hover {
   color: var(--color-text-primary);
 }
 
+.textSelectionToolbar {
+  position: fixed;
+  z-index: 90;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 34px;
+  border: 1px solid rgb(228 231 236 / 92%);
+  border-radius: 999px;
+  padding: 3px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 12px 34px rgb(15 23 42 / 14%);
+  color: #374151;
+}
+
+.textSelectionToolbar button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.textSelectionToolbar button:hover,
+.textSelectionToolbar button:focus-visible {
+  background: #f2f4f7;
+  color: #111827;
+}
+
+.textReferenceMessageSurface {
+  display: contents;
+}
+
 .composerDock {
   position: relative;
   z-index: 10;
@@ -4937,6 +4991,142 @@ button.fileRowActive:hover {
 
 .composerRecording textarea {
   min-height: 46px;
+}
+
+.textReferenceTray {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 8px 10px 0;
+}
+
+.textReferenceChipWrap {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 82%);
+  color: #374151;
+  box-shadow: 0 4px 12px rgb(15 23 42 / 5%);
+}
+
+.textReferenceChipWrap:hover,
+.textReferenceChipWrap:focus-within {
+  background: #ffffff;
+  color: #111827;
+}
+
+.textReferenceChip,
+.messageTextReferenceChip {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.messageTextReferenceChip {
+  border: 1px solid var(--color-border-subtle);
+  background: rgb(255 255 255 / 82%);
+  color: #374151;
+  box-shadow: 0 4px 12px rgb(15 23 42 / 5%);
+}
+
+.textReferenceChip span,
+.messageTextReferenceChip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.textReferenceChip:hover,
+.textReferenceChip:focus-visible {
+  color: #111827;
+}
+
+.messageTextReferenceChip:hover,
+.messageTextReferenceChip:focus-visible {
+  background: #ffffff;
+  color: #111827;
+}
+
+.textReferenceClearButton {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+
+.textReferenceClearButton:hover,
+.textReferenceClearButton:focus-visible {
+  background: #f2f4f7;
+  color: #111827;
+}
+
+.textReferencePreview,
+.messageTextReferencePreview {
+  position: absolute;
+  z-index: 95;
+  display: none;
+  min-width: 128px;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: rgb(255 255 255 / 98%);
+  box-shadow: 0 12px 32px rgb(15 23 42 / 14%);
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.textReferencePreview {
+  bottom: calc(100% + 8px);
+  left: 0;
+}
+
+.messageTextReferencePreview {
+  right: 0;
+  bottom: calc(100% + 8px);
+}
+
+.textReferenceChipWrap:hover .textReferencePreview,
+.textReferenceChipWrap:focus-within .textReferencePreview,
+.textReferenceChipWrap[data-expanded="true"] .textReferencePreview,
+.messageTextReferenceChipWrap:hover .messageTextReferencePreview,
+.messageTextReferenceChipWrap:focus-within .messageTextReferencePreview,
+.messageTextReferenceChipWrap[data-expanded="true"] .messageTextReferencePreview {
+  display: grid;
+  gap: 4px;
+}
+
+.textReferencePreviewLine {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .hiddenFileInput {
@@ -6995,6 +7185,26 @@ button.fileRowActive:hover {
 
   .userMessageBubble {
     max-width: min(86%, 620px);
+  }
+
+  .textSelectionToolbar {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .textSelectionToolbar button {
+    flex: 0 0 auto;
+    padding: 0 9px;
+  }
+
+  .textReferenceTray {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .textReferencePreview,
+  .messageTextReferencePreview {
+    max-width: min(320px, calc(100vw - 24px));
   }
 
   .userMessage p,

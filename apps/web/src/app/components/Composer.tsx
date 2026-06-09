@@ -11,6 +11,7 @@ import {
   GitBranch,
   Hand,
   Laptop,
+  MessageSquare,
   Mic,
   Paperclip,
   Plus,
@@ -47,6 +48,12 @@ import {
   type SkillOption,
   type WorkspaceStatus,
 } from "../../api";
+import { useI18n } from "../../i18n/useI18n";
+import {
+  formatReferencedPrompt,
+  formatReferenceQuote,
+  type ComposerTextReference,
+} from "../textReferences";
 import styles from "../App.module.css";
 
 export type SendOptions = {
@@ -349,6 +356,9 @@ export function Composer({
   formAriaLabel = "Composer",
   inputAriaLabel = "输入消息",
   sendAriaLabel = "发送",
+  textReferences = [],
+  onClearTextReferences,
+  focusRequestKey = 0,
 }: {
   threadId: string;
   cwd: string | null;
@@ -370,7 +380,11 @@ export function Composer({
   formAriaLabel?: string;
   inputAriaLabel?: string;
   sendAriaLabel?: string;
+  textReferences?: ComposerTextReference[];
+  onClearTextReferences?: () => void;
+  focusRequestKey?: number;
 }): ReactElement {
+  const { t } = useI18n();
   const effectiveRuntimeOptions = runtimeOptions ?? FALLBACK_RUNTIME_OPTIONS;
   const modelOptions = effectiveRuntimeOptions.models.length
     ? effectiveRuntimeOptions.models
@@ -447,6 +461,9 @@ export function Composer({
   const previousRuntimeDefaultsRef = useRef(effectiveRuntimeOptions.defaults);
   const uploadFocusRequestedRef = useRef(false);
   const focusRetryTimerRef = useRef<number | null>(null);
+  const lastFocusRequestKeyRef = useRef(0);
+  const [textReferencePreviewOpen, setTextReferencePreviewOpen] =
+    useState(false);
   const hasRunningThread = Boolean(activeTurnId) || threadInProgress;
   const activeSteerMode = Boolean(activeTurnId) && sendMode === "steer";
   const selectedModel =
@@ -493,8 +510,12 @@ export function Composer({
   const fileAttachments = attachments.filter(
     (attachment) => !attachment.mimeType.startsWith("image/"),
   );
+  const hasTextReferences = textReferences.length > 0;
   const hasSubmitContent =
-    text.trim().length > 0 || attachments.length > 0 || hasSelectedSkills;
+    text.trim().length > 0 ||
+    attachments.length > 0 ||
+    hasSelectedSkills ||
+    hasTextReferences;
   const controlsDisabled = disabled || sending || uploading;
   const contextControlsDisabled = controlsDisabled || branchSwitching;
   const dictationStatusText =
@@ -505,6 +526,9 @@ export function Composer({
     Boolean(dictationStatusText) ||
     Boolean(skillsError);
   const showAttachmentTray = imageAttachments.length > 0 || hasAttachmentMeta;
+  const textReferenceCountLabel = t("textReference.chip.count", {
+    count: textReferences.length,
+  });
   const composerClassName = [
     styles.composer,
     dictationState === "recording" ? styles.composerRecording : "",
@@ -850,7 +874,14 @@ export function Composer({
     setRuntimeMenuOpen(false);
     setSendModeTouched(false);
     setPreviewAttachment(null);
+    setTextReferencePreviewOpen(false);
   }, [threadId]);
+
+  useEffect(() => {
+    if (focusRequestKey === lastFocusRequestKeyRef.current) return;
+    lastFocusRequestKeyRef.current = focusRequestKey;
+    scheduleFocusTextareaEnd();
+  }, [focusRequestKey]);
 
   useEffect(() => {
     if (!previewAttachment) return;
@@ -1385,10 +1416,11 @@ export function Composer({
       path: skill.path,
     }));
     const submitThreadId = currentThreadIdRef.current;
+    const submitText = formatReferencedPrompt(trimmed, textReferences);
     submitInFlightRef.current = true;
     try {
       await onSend(
-        trimmed,
+        submitText,
         attachments.map((attachment) => attachment.id),
         {
           model,
@@ -1402,9 +1434,11 @@ export function Composer({
       );
       setDraftText("", submitThreadId);
       setDraftAttachments([], submitThreadId);
+      onClearTextReferences?.();
       if (submitThreadId === currentThreadIdRef.current) {
         setSelectedSkillIds([]);
         setPreviewAttachment(null);
+        setTextReferencePreviewOpen(false);
       }
     } finally {
       submitInFlightRef.current = false;
@@ -1520,6 +1554,55 @@ export function Composer({
                 ) : null}
               </div>
             ) : null}
+          </div>
+        ) : null}
+        {hasTextReferences ? (
+          <div
+            className={styles.textReferenceTray}
+            data-testid="composer-text-reference-tray"
+          >
+            <span
+              className={styles.textReferenceChipWrap}
+              data-expanded={textReferencePreviewOpen ? "true" : undefined}
+            >
+              <button
+                className={styles.textReferenceChip}
+                type="button"
+                aria-expanded={textReferencePreviewOpen}
+                aria-label={textReferenceCountLabel}
+                onClick={() => setTextReferencePreviewOpen((open) => !open)}
+              >
+                <MessageSquare size={14} />
+                <span>{textReferenceCountLabel}</span>
+              </button>
+              <button
+                className={styles.textReferenceClearButton}
+                type="button"
+                aria-label={t("textReference.chip.clearAll")}
+                title={t("textReference.chip.clearAll")}
+                onClick={() => {
+                  onClearTextReferences?.();
+                  setTextReferencePreviewOpen(false);
+                  scheduleFocusTextareaEnd();
+                }}
+              >
+                <X size={13} />
+              </button>
+              <span
+                className={styles.textReferencePreview}
+                role="tooltip"
+                data-testid="composer-text-reference-preview"
+              >
+                {textReferences.map((reference) => (
+                  <span
+                    className={styles.textReferencePreviewLine}
+                    key={reference.id}
+                  >
+                    {formatReferenceQuote(reference.text)}
+                  </span>
+                ))}
+              </span>
+            </span>
           </div>
         ) : null}
         {slashMenuOpen ? (

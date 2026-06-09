@@ -21,6 +21,7 @@ import { useState } from "react";
 import type { AppServerStatus, OfficialIpcStatus, Thread } from "../../api";
 import { useI18n } from "../../i18n/useI18n";
 import styles from "../App.module.css";
+import { displayTextFromReferencedPrompt } from "../textReferences";
 import { StatusBadge, type StatusTone } from "./StatusBadge";
 
 function projectDisplayName(path: string): string {
@@ -113,7 +114,8 @@ export function Header({
     : selectedThread?.projectId
       ? projectDisplayName(selectedThread.projectId)
       : "无项目";
-  const title = draftMode ? "新对话" : (selectedThread?.title ?? "codex_web");
+  const rawTitle = selectedThread?.title ?? "codex_web";
+  const title = draftMode ? "新对话" : displayTextFromReferencedPrompt(rawTitle);
   const hasSelectedThread = Boolean(selectedThread);
   const localEnvironmentActionsEnabled = false;
   const runMobileAction = (action: () => void): void => {
@@ -157,7 +159,13 @@ export function Header({
           <Folder size={14} />
           <span>{projectName}</span>
           <span>/</span>
-          <span>{draftMode ? "新对话" : (selectedThread?.title ?? "选择会话")}</span>
+          <span>
+            {draftMode
+              ? "新对话"
+              : displayTextFromReferencedPrompt(
+                  selectedThread?.title ?? "选择会话",
+                )}
+          </span>
         </div>
         <h1 className={styles.headerTitle}>
           {!draftMode && selectedThread?.pinned ? (

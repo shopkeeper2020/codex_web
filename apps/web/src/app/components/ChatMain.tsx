@@ -20,6 +20,7 @@ import {
   HardDrive,
   Laptop,
   MessageSquare,
+  PanelRightOpen,
   PauseCircle,
   Pencil,
   PlayCircle,
@@ -43,6 +44,7 @@ import type {
   ReactNode,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { I18nKey } from "@codex-web/i18n";
@@ -68,6 +70,16 @@ import {
 } from "../../api";
 import { useI18n } from "../../i18n/useI18n";
 import type { QueuedThreadMessage } from "../hooks/useRuntimeData";
+import {
+  createTextReference,
+  displayTextFromReferencedPrompt,
+  formatReferencedPrompt,
+  normalizeSelectionText,
+  parseReferencedPrompt,
+  type ComposerTextReference,
+  type TextReference,
+  type TextReferenceSourceSurface,
+} from "../textReferences";
 import styles from "../App.module.css";
 import { Composer, type SendOptions } from "./Composer";
 import { ApprovalCard, MessageAuthor, renderTurnItems } from "./MessageBlocks";
@@ -89,6 +101,7 @@ export type UserMessageEditRequest = {
 
 type EditingUserMessage = UserMessageEditRequest & {
   itemId: string;
+  textReferences?: ComposerTextReference[] | null;
 };
 
 type RightSidebarTabInstance = {
@@ -139,6 +152,16 @@ type ProgressItem = {
 type ActivitySourceSummary =
   | { type: "webSearch"; availability: "used" | "available" }
   | { type: "none" };
+type TextSelectionToolbarState = {
+  text: string;
+  rect: DOMRectReadOnly;
+  sourceSurface: TextReferenceSourceSurface;
+  sourceSideConversationId: string | null;
+};
+type TextSelectionSource = {
+  sourceSurface: TextReferenceSourceSurface;
+  sourceSideConversationId: string | null;
+};
 
 function sourceKeyLooksLikeWebSearch(value: string): boolean {
   const normalized = value.toLowerCase();
@@ -188,6 +211,126 @@ function hasTextSelectionInside(element: HTMLElement): boolean {
     if (node && element.contains(node)) return true;
   }
   return false;
+}
+
+function elementFromSelectionContainer(container: Node): HTMLElement | null {
+  const node =
+    container.nodeType === Node.ELEMENT_NODE
+      ? container
+      : container.parentNode;
+  return node instanceof HTMLElement ? node : null;
+}
+
+function textSelectionSource(selection: Selection): TextSelectionSource | null {
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+    const element = elementFromSelectionContainer(range.commonAncestorContainer);
+    const transcript = element?.closest<HTMLElement>(
+      "[data-text-reference-surface]",
+    );
+    const sourceSurface = transcript?.dataset
+      .textReferenceSurface as TextReferenceSourceSurface | undefined;
+    if (sourceSurface !== "main" && sourceSurface !== "side") continue;
+    return {
+      sourceSurface,
+      sourceSideConversationId:
+        sourceSurface === "side"
+          ? (transcript?.dataset.sideConversationId ?? null)
+          : null,
+    };
+  }
+  return null;
+}
+
+function isSelectionBlockedByActiveElement(): boolean {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLElement)) return false;
+  return Boolean(
+    activeElement.closest(
+      "textarea,input,button,select,[contenteditable='true'],[role='menu'],[role='dialog']",
+    ),
+  );
+}
+
+function selectionAnchorRect(selection: Selection): DOMRectReadOnly | null {
+  if (selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(selection.rangeCount - 1);
+  const rects = Array.from(range.getClientRects()).filter(
+    (rect) => rect.width > 0 && rect.height > 0,
+  );
+  return rects.at(-1) ?? range.getBoundingClientRect();
+}
+
+function selectionToolbarStyle(rect: DOMRectReadOnly): CSSProperties {
+  if (typeof window === "undefined") return {};
+  const toolbarWidth = 306;
+  const viewportPadding = 8;
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - toolbarWidth - viewportPadding);
+  const left = clamp(
+    rect.left + rect.width / 2 - toolbarWidth / 2,
+    viewportPadding,
+    maxLeft,
+  );
+  const top =
+    rect.top > 54 ? rect.top - 42 : Math.min(rect.bottom + 10, window.innerHeight - 52);
+  return {
+    left,
+    top: Math.max(viewportPadding, top),
+    width: `min(${toolbarWidth}px, calc(100vw - ${viewportPadding * 2}px))`,
+  };
+}
+
+function clearBrowserSelection(): void {
+  window.getSelection()?.removeAllRanges();
+}
+
+function TextSelectionToolbar({
+  selection,
+  onAddToConversation,
+  onAskInSideChat,
+}: {
+  selection: TextSelectionToolbarState | null;
+  onAddToConversation: () => void;
+  onAskInSideChat: () => void;
+}): ReactElement | null {
+  const { t } = useI18n();
+  if (!selection) return null;
+
+  return createPortal(
+    <div
+      className={styles.textSelectionToolbar}
+      data-testid="text-selection-toolbar"
+      role="toolbar"
+      aria-label={t("textReference.actions.toolbar")}
+      style={selectionToolbarStyle(selection.rect)}
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      <button type="button" onClick={onAddToConversation}>
+        <MessageSquare size={14} />
+        <span>{t("textReference.actions.addToConversation")}</span>
+      </button>
+      <button type="button" onClick={onAskInSideChat}>
+        <PanelRightOpen size={14} />
+        <span>{t("textReference.actions.askInSideChat")}</span>
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
+function asMainTextReferenceRows(
+  turnId: string,
+  rows: ReactElement[],
+): ReactElement[] {
+  return rows.map((row, index) => (
+    <div
+      className={styles.textReferenceMessageSurface}
+      data-text-reference-surface="main"
+      key={`text-reference-${turnId}-${row.key ?? index}`}
+    >
+      {row}
+    </div>
+  ));
 }
 
 function itemScrollSignature(item: TurnItem): string {
@@ -1142,6 +1285,9 @@ function SideChatPane({
   runtimeOptions,
   onOpenFileReference,
   onSendSideChat,
+  textReferences,
+  onClearTextReferences,
+  focusRequestKey,
 }: {
   sideConversation: SideConversation | null;
   projectRoot: string | null;
@@ -1153,6 +1299,9 @@ function SideChatPane({
     attachmentIds?: string[],
     options?: SendOptions,
   ) => Promise<void>;
+  textReferences: TextReference[];
+  onClearTextReferences: () => void;
+  focusRequestKey: number;
 }): ReactElement {
   const { t } = useI18n();
   const sideConversationId = sideConversation?.id ?? "";
@@ -1294,6 +1443,8 @@ function SideChatPane({
       <div className={styles.sideChatTranscriptFrame}>
         <div
           className={styles.sideChatTranscript}
+          data-text-reference-surface="side"
+          data-side-conversation-id={sideConversationId || undefined}
           data-testid="side-chat-transcript"
           ref={transcriptRef}
         >
@@ -1331,6 +1482,9 @@ function SideChatPane({
           formAriaLabel="侧边聊天 Composer"
           inputAriaLabel="侧边聊天输入"
           sendAriaLabel="发送侧边消息"
+          textReferences={textReferences}
+          onClearTextReferences={onClearTextReferences}
+          focusRequestKey={focusRequestKey}
         />
       </div>
     </section>
@@ -1355,6 +1509,9 @@ function DesktopRightSidebar({
   selectedFilePath,
   onOpenFileReference,
   onSendSideChat,
+  sideTextReferencesByConversationId,
+  sideComposerFocusRequestByConversationId,
+  onClearSideTextReferences,
   onSelectFile,
   fileTreeWidth,
   onFileTreeResizeStart,
@@ -1381,6 +1538,9 @@ function DesktopRightSidebar({
     attachmentIds?: string[],
     options?: SendOptions,
   ) => Promise<void>;
+  sideTextReferencesByConversationId: Record<string, TextReference[]>;
+  sideComposerFocusRequestByConversationId: Record<string, number>;
+  onClearSideTextReferences: (sideConversationId: string) => void;
   onSelectFile: (path: string) => void;
   fileTreeWidth: number;
   onFileTreeResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -1417,7 +1577,7 @@ function DesktopRightSidebar({
       >
         {tabs.map((tab) => {
           const active = tab.id === activeTabId && !showLauncher;
-          const label = tab.title;
+          const label = displayTextFromReferencedPrompt(tab.title);
           return (
             <span
               className={
@@ -1473,6 +1633,20 @@ function DesktopRightSidebar({
           runtimeOptions={runtimeOptions}
           onOpenFileReference={onOpenFileReference}
           onSendSideChat={onSendSideChat}
+          textReferences={
+            activeSideConversation?.id
+              ? (sideTextReferencesByConversationId[activeSideConversation.id] ?? [])
+              : []
+          }
+          onClearTextReferences={() => {
+            if (activeSideConversation?.id)
+              onClearSideTextReferences(activeSideConversation.id);
+          }}
+          focusRequestKey={
+            activeSideConversation?.id
+              ? (sideComposerFocusRequestByConversationId[activeSideConversation.id] ?? 0)
+              : 0
+          }
         />
       ) : null}
       {!showLauncher && activeTab?.type === "files" ? (
@@ -2011,8 +2185,9 @@ function QueuedMessagesStrip({
       {messages.map((message) => {
         const hasText = message.text.trim().length > 0;
         const hasSkills = message.skillCount > 0;
+        const displayText = displayTextFromReferencedPrompt(message.text);
         const label = hasText
-          ? message.text
+          ? displayText
           : hasSkills
             ? `${message.skillCount} 个 Skill`
             : `${message.attachmentCount} 个附件`;
@@ -2375,7 +2550,9 @@ function DesktopActivityPanel({
                   <span className={styles.activityMetricIcon}>
                     <MessageSquare size={15} />
                   </span>
-                  <strong>{sideConversation.title}</strong>
+                  <strong>
+                    {displayTextFromReferencedPrompt(sideConversation.title)}
+                  </strong>
                   <span className={styles.activityMetricValue}>
                     {sideConversation.inProgress
                       ? "正在生成"
@@ -2438,6 +2615,8 @@ export function ChatMain({
   onSendSideChat,
   onCreateSideChat,
   onCloseSideChat,
+  onAddMainTextReference,
+  onFocusMainComposer,
   onSetThreadGoal,
   onClearThreadGoal,
   onForkThread,
@@ -2476,6 +2655,8 @@ export function ChatMain({
     cwd?: string | null,
   ) => Promise<SideConversation | null>;
   onCloseSideChat: (sideConversationId: string) => Promise<void>;
+  onAddMainTextReference: (reference: TextReference) => void;
+  onFocusMainComposer: () => void;
   onSetThreadGoal: (
     threadId: string,
     input: { objective?: string; status?: "active" | "paused" },
@@ -2494,7 +2675,9 @@ export function ChatMain({
   const isDraftThread = Boolean(draftThread);
   const turns = threadDetail?.turns ?? [];
   const selectedThreadId = selectedThread?.id ?? "";
-  const selectedThreadTitle = selectedThread?.title ?? "";
+  const selectedThreadTitle = displayTextFromReferencedPrompt(
+    selectedThread?.title ?? "",
+  );
   const [editingUserMessage, setEditingUserMessage] =
     useState<EditingUserMessage | null>(null);
   const visibleApprovals = selectedThreadId
@@ -2562,10 +2745,12 @@ export function ChatMain({
       const timeLabel = formatClockTime(turn.startedAtIso ?? turn.completedAtIso);
       for (const item of turn.items) {
         if (!isOrdinaryUserMessageItem(item)) continue;
+        const referencedPrompt = parseReferencedPrompt(item.text);
+        const editableText = referencedPrompt?.request ?? item.text;
         const canEdit =
           Boolean(selectedThreadId) &&
           item.id === lastEditableUserItemId &&
-          item.text.trim().length > 0;
+          editableText.trim().length > 0;
         const isEditing = editingUserMessage?.itemId === item.id;
         actions.set(item.id, {
           timeLabel,
@@ -2578,7 +2763,8 @@ export function ChatMain({
                     threadId: selectedThreadId,
                     cwd: projectRoot,
                     turnId: turn.id,
-                    text: item.text,
+                    text: editableText,
+                    textReferences: referencedPrompt?.references ?? null,
                   }),
               }
             : {}),
@@ -2588,11 +2774,17 @@ export function ChatMain({
                 editText: editingUserMessage.text,
                 onCancelEdit: () => setEditingUserMessage(null),
                 onSubmitEdit: async (text: string) => {
+                  const nextText = editingUserMessage.textReferences
+                    ? formatReferencedPrompt(
+                        text,
+                        editingUserMessage.textReferences,
+                      )
+                    : text;
                   await onEditLastUserMessage({
                     threadId: editingUserMessage.threadId,
                     cwd: editingUserMessage.cwd,
                     turnId: editingUserMessage.turnId,
-                    text,
+                    text: nextText,
                   });
                   setEditingUserMessage((current) =>
                     current?.itemId === item.id ? null : current,
@@ -2643,6 +2835,14 @@ export function ChatMain({
   const [rightSidebarCreatePendingType, setRightSidebarCreatePendingType] =
     useState<RightSidebarTab | null>(null);
   const [rightSidebarCreateError, setRightSidebarCreateError] = useState("");
+  const [sideTextReferencesByConversationId, setSideTextReferencesByConversationId] =
+    useState<Record<string, TextReference[]>>({});
+  const [
+    sideComposerFocusRequestByConversationId,
+    setSideComposerFocusRequestByConversationId,
+  ] = useState<Record<string, number>>({});
+  const [textSelectionToolbar, setTextSelectionToolbar] =
+    useState<TextSelectionToolbarState | null>(null);
   const [closedSideConversationIds, setClosedSideConversationIds] = useState(
     () => new Set<string>(),
   );
@@ -2686,6 +2886,83 @@ export function ChatMain({
   useEffect(() => {
     setClosedSideConversationIds(new Set());
   }, [selectedThreadId]);
+
+  const addSideTextReference = useCallback(
+    (sideConversationId: string, reference: TextReference) => {
+      setSideTextReferencesByConversationId((current) => ({
+        ...current,
+        [sideConversationId]: [
+          ...(current[sideConversationId] ?? []),
+          reference,
+        ],
+      }));
+    },
+    [],
+  );
+
+  const clearSideTextReferences = useCallback((sideConversationId: string) => {
+    setSideTextReferencesByConversationId((current) => {
+      if (!current[sideConversationId]?.length) return current;
+      const next = { ...current };
+      delete next[sideConversationId];
+      return next;
+    });
+  }, []);
+
+  const requestSideComposerFocus = useCallback((sideConversationId: string) => {
+    setSideComposerFocusRequestByConversationId((current) => ({
+      ...current,
+      [sideConversationId]: (current[sideConversationId] ?? 0) + 1,
+    }));
+  }, []);
+
+  const updateTextSelectionToolbar = useCallback(() => {
+    const selection = window.getSelection();
+    if (
+      !selection ||
+      selection.isCollapsed ||
+      selection.rangeCount === 0 ||
+      isSelectionBlockedByActiveElement()
+    ) {
+      setTextSelectionToolbar(null);
+      return;
+    }
+
+    const text = normalizeSelectionText(selection.toString());
+    const source = textSelectionSource(selection);
+    const rect = selectionAnchorRect(selection);
+    if (!text || !source || !rect || rect.width <= 0 || rect.height <= 0) {
+      setTextSelectionToolbar(null);
+      return;
+    }
+
+    setTextSelectionToolbar({
+      text,
+      rect,
+      sourceSurface: source.sourceSurface,
+      sourceSideConversationId: source.sourceSideConversationId,
+    });
+  }, []);
+
+  useEffect(() => {
+    const scheduleUpdate = () => {
+      window.setTimeout(updateTextSelectionToolbar, 0);
+    };
+    document.addEventListener("selectionchange", scheduleUpdate);
+    document.addEventListener("mouseup", scheduleUpdate);
+    document.addEventListener("keyup", scheduleUpdate);
+    window.addEventListener("resize", scheduleUpdate);
+    return () => {
+      document.removeEventListener("selectionchange", scheduleUpdate);
+      document.removeEventListener("mouseup", scheduleUpdate);
+      document.removeEventListener("keyup", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+    };
+  }, [updateTextSelectionToolbar]);
+
+  useEffect(() => {
+    setTextSelectionToolbar(null);
+  }, [activeRightSidebarTabId, rightSidebarOpen, selectedThreadId]);
 
   const createRightSidebarTab = useCallback(
     (
@@ -2832,6 +3109,113 @@ export function ChatMain({
     ],
   );
 
+  const handleAddSelectionToConversation = useCallback(() => {
+    const selection = textSelectionToolbar;
+    if (!selection) return;
+    const reference = createTextReference({
+      text: selection.text,
+      sourceThreadId: selectedThreadId || null,
+      sourceSurface: selection.sourceSurface,
+      sourceSideConversationId: selection.sourceSideConversationId,
+    });
+
+    setTextSelectionToolbar(null);
+    clearBrowserSelection();
+
+    if (selection.sourceSurface === "side") {
+      const sideConversationId = selection.sourceSideConversationId;
+      if (!sideConversationId) return;
+      addSideTextReference(sideConversationId, reference);
+      requestSideComposerFocus(sideConversationId);
+      return;
+    }
+
+    onAddMainTextReference(reference);
+    onFocusMainComposer();
+  }, [
+    addSideTextReference,
+    onAddMainTextReference,
+    onFocusMainComposer,
+    requestSideComposerFocus,
+    selectedThreadId,
+    textSelectionToolbar,
+  ]);
+
+  const handleAskSelectionInSideChat = useCallback(() => {
+    const selection = textSelectionToolbar;
+    if (!selection || !selectedThreadId || rightSidebarCreatePendingType)
+      return;
+    const reference = createTextReference({
+      text: selection.text,
+      sourceThreadId: selectedThreadId,
+      sourceSurface: selection.sourceSurface,
+      sourceSideConversationId: selection.sourceSideConversationId,
+    });
+    const tabBelongsToCurrentThread = (
+      tab: RightSidebarTabInstance | undefined,
+    ): tab is RightSidebarTabInstance =>
+      Boolean(
+        tab?.type === "chat" &&
+          tab.sideConversationId &&
+          (!tab.threadId || tab.threadId === selectedThreadId),
+      );
+    const activeTab = rightSidebarTabs.find(
+      (tab) => tab.id === activeRightSidebarTabId,
+    );
+    const reusableTab = tabBelongsToCurrentThread(activeTab)
+      ? activeTab
+      : [...rightSidebarTabs].reverse().find(tabBelongsToCurrentThread);
+
+    setTextSelectionToolbar(null);
+    clearBrowserSelection();
+
+    if (reusableTab?.sideConversationId) {
+      setActiveRightSidebarTabId(reusableTab.id);
+      setRightSidebarLauncherOpen(false);
+      onOpenRightSidebar();
+      addSideTextReference(reusableTab.sideConversationId, reference);
+      requestSideComposerFocus(reusableTab.sideConversationId);
+      return;
+    }
+
+    setRightSidebarCreatePendingType("chat");
+    setRightSidebarCreateError("");
+    void onCreateSideChat(projectRoot)
+      .then((sideConversation) => {
+        if (!sideConversation) return;
+        createRightSidebarTab("chat", {
+          sideConversationId: sideConversation.id,
+          sideConversation,
+          threadId: selectedThreadId,
+          keepMissingSideConversation: true,
+          title: sideConversation.title,
+        });
+        addSideTextReference(sideConversation.id, reference);
+        requestSideComposerFocus(sideConversation.id);
+      })
+      .catch((unknownError) => {
+        setRightSidebarCreateError(
+          unknownError instanceof Error
+            ? unknownError.message
+            : t("rightSidebar.chat.createFailed"),
+        );
+      })
+      .finally(() => setRightSidebarCreatePendingType(null));
+  }, [
+    activeRightSidebarTabId,
+    addSideTextReference,
+    createRightSidebarTab,
+    onCreateSideChat,
+    onOpenRightSidebar,
+    projectRoot,
+    requestSideComposerFocus,
+    rightSidebarCreatePendingType,
+    rightSidebarTabs,
+    selectedThreadId,
+    t,
+    textSelectionToolbar,
+  ]);
+
   useEffect(() => {
     if (!threadDetail || threadDetail.thread.id !== selectedThreadId) return;
     const sideConversationById = new Map(
@@ -2879,6 +3263,13 @@ export function ChatMain({
       const closingTab = rightSidebarTabs.find((tab) => tab.id === id) ?? null;
       if (closingTab?.type === "chat" && closingTab.sideConversationId) {
         const sideConversationId = closingTab.sideConversationId;
+        clearSideTextReferences(sideConversationId);
+        setSideComposerFocusRequestByConversationId((current) => {
+          if (current[sideConversationId] === undefined) return current;
+          const next = { ...current };
+          delete next[sideConversationId];
+          return next;
+        });
         setClosedSideConversationIds((current) => {
           const next = new Set(current);
           next.add(sideConversationId);
@@ -2909,7 +3300,13 @@ export function ChatMain({
         return nextTabs;
       });
     },
-    [activeRightSidebarTabId, onCloseSideChat, rightSidebarTabs, t],
+    [
+      activeRightSidebarTabId,
+      clearSideTextReferences,
+      onCloseSideChat,
+      rightSidebarTabs,
+      t,
+    ],
   );
 
   const handleShowRightSidebarLauncher = useCallback(() => {
@@ -3185,12 +3582,15 @@ export function ChatMain({
 
     for (const turn of turns) {
       rows.push(
-        ...renderTurnItems(turn.items, turn.status, {
-          projectRoot,
-          onOpenFileReference: handleOpenFileReference,
-          getUserMessageActions: (item) =>
-            userMessageActionById.get(item.id) ?? null,
-        }),
+        ...asMainTextReferenceRows(
+          turn.id,
+          renderTurnItems(turn.items, turn.status, {
+            projectRoot,
+            onOpenFileReference: handleOpenFileReference,
+            getUserMessageActions: (item) =>
+              userMessageActionById.get(item.id) ?? null,
+          }),
+        ),
       );
       if (hasTurnActionRow(turn)) {
         rows.push(
@@ -3509,6 +3909,13 @@ export function ChatMain({
               selectedFilePath={fileSidebarTarget}
               onOpenFileReference={handleOpenFileReference}
               onSendSideChat={onSendSideChat}
+              sideTextReferencesByConversationId={
+                sideTextReferencesByConversationId
+              }
+              sideComposerFocusRequestByConversationId={
+                sideComposerFocusRequestByConversationId
+              }
+              onClearSideTextReferences={clearSideTextReferences}
               onSelectFile={handleSelectRightSidebarFile}
               fileTreeWidth={fileTreeWidth}
               onFileTreeResizeStart={handleFileTreeResizeStart}
@@ -3526,6 +3933,11 @@ export function ChatMain({
         onDraftChange={setGoalDraft}
         onCancel={handleCloseGoalEditor}
         onSubmit={handleSubmitGoalEditor}
+      />
+      <TextSelectionToolbar
+        selection={textSelectionToolbar}
+        onAddToConversation={handleAddSelectionToConversation}
+        onAskInSideChat={handleAskSelectionInSideChat}
       />
     </section>
   );

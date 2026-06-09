@@ -11,6 +11,7 @@ import {
   type ThreadSearchResult,
 } from "../../api";
 import styles from "../App.module.css";
+import { displayTextFromReferencedPrompt } from "../textReferences";
 
 function projectForThread(thread: Thread, projects: Project[]): Project | null {
   if (!thread.projectId) return null;
@@ -197,6 +198,7 @@ export function SearchPanel({
 
           {rows.map((row, index) => {
             const project = projectForThread(row.thread, threadList.projects);
+            const displayTitle = displayTextFromReferencedPrompt(row.thread.title);
             return (
               <button
                 className={
@@ -214,7 +216,7 @@ export function SearchPanel({
                 onClick={() => selectRow(row)}
               >
                 <span className={styles.searchCommandText}>
-                  <strong>{row.thread.title}</strong>
+                  <strong>{displayTitle}</strong>
                   {searchTerm ? (
                     <small>{row.snippet}</small>
                   ) : (
