@@ -1,8 +1,20 @@
-# codex_web
+<div align="center">
+  <h1>
+    <img src="./apps/web/public/icons/icon.svg" alt="codex_web 像素图标" width="36" height="36">
+    codex_web — 本地 Codex 的 Web / LAN / 移动端入口
+  </h1>
+  <p>
+    <img alt="Local first" src="https://img.shields.io/badge/local--first-Codex_Web-22bde8?style=for-the-badge">
+    <img alt="Desktop-like UI" src="https://img.shields.io/badge/desktop--like-UI-38bdf8?style=for-the-badge">
+    <img alt="Mobile LAN" src="https://img.shields.io/badge/mobile-LAN-0ea5e9?style=for-the-badge">
+    <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2563eb?style=for-the-badge">
+  </p>
+  <p>
+    简体中文 · <a href="./README.en.md">English</a>
+  </p>
+</div>
 
-简体中文 | [English](./README.en.md)
-
-`codex_web` 是一个非官方的本地 Codex Web 客户端。它把 Codex Desktop 风格的会话列表、聊天区、Composer、设置/诊断和移动端访问能力放到浏览器里，并实验性接入 Codex Desktop / VS Code Codex 扩展的实时同步链路。
+`codex_web` 是一个非官方的本地 Codex Web 客户端。它把 Codex Desktop 风格的会话列表、聊天区、Composer、设置/诊断和移动端访问能力放到浏览器里，并接入 Codex Desktop / VS Code Codex 扩展的实时同步链路。
 
 项目面向本机运行和局域网访问，不是云端托管服务。后端运行在你的电脑上，负责连接官方 Codex IPC、app-server、本地 SQLite、附件存储和浏览器 Web UI。
 
@@ -34,20 +46,6 @@ Codex Desktop 很适合在电脑上工作，但它不是一个天然的浏览器
 - **本地文件与附件**：受限文件浏览/预览、右侧文件标签页、消息图片渲染、file change 预览、Web 上传附件持久化和清理。
 - **安全与诊断**：LAN 密码、HTTP-only session cookie、session 撤销、诊断包递归脱敏、同步 readiness、协议兼容性和 `sync:doctor` CLI。
 - **测试覆盖**：TypeScript typecheck、Vitest 单元测试、Playwright 桌面/移动 E2E、UI fidelity baseline 入口。
-
-## 当前状态
-
-当前仓库已经包含可运行源码，版本仍处于 `0.1.x` 实验阶段。核心路径包括：
-
-- Desktop-like Web shell、会话列表、默认折叠的归档列表、搜索、设置和诊断面板
-- Composer 的模型、推理强度、协作模式、Skills、附件、按会话草稿和 active turn steer / interrupt
-- 官方 IPC / app-server bridge，用于 thread list、thread detail、follower start / steer / interrupt、stale active fallback 和实时事件
-- 侧边聊天读取与已有官方侧聊发送
-- 本地文件预览、右侧文件树/标签页、图片预览、附件持久化和受限文件读取
-- LAN 登录门禁、session 管理、诊断包脱敏导出
-- 桌面和移动端 Playwright 回归覆盖
-
-三端同步仍依赖官方 Codex Desktop / VS Code 扩展和官方协议形态，协议升级时可能需要跟进适配。
 
 ## 快速启动
 
@@ -86,19 +84,6 @@ pnpm start
 
 `pnpm start` 会启动 Fastify 后端，监听 `0.0.0.0:18930`，并提供构建后的 Web 静态页面。局域网设备访问时需要 LAN 密码；首次启动会生成本机私有配置和密码 hash。
 
-## 常用命令
-
-```powershell
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm check
-pnpm test:e2e -- --list
-pnpm sync:doctor -- --json
-```
-
-Playwright 默认访问 `http://127.0.0.1:18930/`。如果要跑前端开发服务器，可设置 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:18931`。
-
 ## 仓库结构
 
 ```text
@@ -119,20 +104,6 @@ data/          本机运行数据目录，默认被 Git 忽略
 ```
 
 更多细节见 [docs/repository_overview.md](./docs/repository_overview.md)。
-
-## 本机数据与安全边界
-
-`data/` 是运行时目录，默认不提交：
-
-- `data/config.local.json`：端口、主题、诊断开关、LAN 密码 hash、session secret
-- `data/auth.sessions.json`：LAN session 记录
-- `data/*.sqlite`：本地索引和投影数据
-- `data/attachments/`：Web 上传附件副本
-- `data/logs/`、`data/tmp/`：日志和临时诊断材料
-
-这些文件已在 `.gitignore` 中排除。不要用 `git add -f data/...` 把它们加入公开仓库。
-
-诊断导出通过 `/api/diagnostics/export` 生成，设计目标是只包含脱敏状态摘要，不包含会话正文、附件内容、密码、token、cookie、session secret 或原始协议帧。
 
 ## 文档入口
 

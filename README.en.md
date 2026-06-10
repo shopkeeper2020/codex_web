@@ -1,8 +1,20 @@
-# codex_web
+<div align="center">
+  <h1>
+    <img src="./apps/web/public/icons/icon.svg" alt="codex_web pixel icon" width="36" height="36">
+    codex_web — Web / LAN / mobile access for local Codex workflows
+  </h1>
+  <p>
+    <img alt="Local first" src="https://img.shields.io/badge/local--first-Codex_Web-22bde8?style=for-the-badge">
+    <img alt="Desktop-like UI" src="https://img.shields.io/badge/desktop--like-UI-38bdf8?style=for-the-badge">
+    <img alt="Mobile LAN" src="https://img.shields.io/badge/mobile-LAN-0ea5e9?style=for-the-badge">
+    <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2563eb?style=for-the-badge">
+  </p>
+  <p>
+    <a href="./README.md">简体中文</a> · English
+  </p>
+</div>
 
-[简体中文](./README.md) | English
-
-`codex_web` is an unofficial local Codex web client. It brings a Codex Desktop-like thread list, chat surface, composer, settings/diagnostics, and mobile browser access to the web, while experimentally connecting to the realtime sync path used by Codex Desktop and the VS Code Codex extension.
+`codex_web` is an unofficial local Codex web client. It brings a Codex Desktop-like thread list, chat surface, composer, settings/diagnostics, and mobile browser access to the web, while connecting to the realtime sync path used by Codex Desktop and the VS Code Codex extension.
 
 The project is designed for local execution and LAN access, not as a hosted cloud service. The backend runs on your machine and bridges the official Codex IPC layer, app-server, local SQLite data, attachment storage, and the browser UI.
 
@@ -34,20 +46,6 @@ Codex Desktop is good for working on one computer, but it is not a browser, LAN,
 - **Local files and attachments**: constrained file browsing/preview, right-side file tabs, message image rendering, file change previews, persisted web uploads, and cleanup.
 - **Security and diagnostics**: LAN password, HTTP-only session cookie, session revocation, recursive diagnostics redaction, sync readiness, protocol compatibility, and `sync:doctor` CLI.
 - **Test coverage**: TypeScript typecheck, Vitest unit tests, Playwright desktop/mobile E2E, and UI fidelity baseline entry points.
-
-## Status
-
-The repository now contains runnable source code and is still in the experimental `0.1.x` stage. Current coverage includes:
-
-- Desktop-like web shell, thread list, collapsed-by-default archive list, search, settings, and diagnostics
-- Composer support for model, reasoning effort, collaboration mode, Skills, attachments, per-thread drafts, and active turn steer / interrupt
-- Official IPC / app-server bridge for thread list, thread detail, follower start / steer / interrupt, stale active fallback, and realtime events
-- Side conversation reading and sending to already-synced official side conversations
-- Local file previews, right-side file tree/tabs, image previews, attachment persistence, and constrained file reads
-- LAN login gate, session management, and redacted diagnostics export
-- Desktop and mobile Playwright regression tests
-
-Three-way sync still depends on Codex Desktop, the VS Code Codex extension, and the current official protocol shape. Protocol changes may require follow-up adapters.
 
 ## Quick Start
 
@@ -86,19 +84,6 @@ pnpm start
 
 `pnpm start` runs the Fastify backend on `0.0.0.0:18930` and serves the built web app. LAN devices must pass the LAN password gate; first startup generates local private config and a password hash.
 
-## Common Commands
-
-```powershell
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm check
-pnpm test:e2e -- --list
-pnpm sync:doctor -- --json
-```
-
-Playwright defaults to `http://127.0.0.1:18930/`. To target the Vite dev server, set `PLAYWRIGHT_BASE_URL=http://127.0.0.1:18931`.
-
 ## Repository Layout
 
 ```text
@@ -119,20 +104,6 @@ data/          Local runtime data, ignored by Git by default
 ```
 
 See [docs/repository_overview.md](./docs/repository_overview.md) for more detail.
-
-## Local Data And Safety
-
-`data/` is the runtime directory and is not committed by default:
-
-- `data/config.local.json`: ports, theme, diagnostics flags, LAN password hash, session secret
-- `data/auth.sessions.json`: LAN session records
-- `data/*.sqlite`: local indexes and projection data
-- `data/attachments/`: persisted copies of uploaded web attachments
-- `data/logs/`, `data/tmp/`: logs and temporary diagnostics material
-
-These paths are excluded in `.gitignore`. Do not use `git add -f data/...` for a public repository.
-
-Diagnostics export is produced by `/api/diagnostics/export`. It is intended to contain redacted status summaries only, excluding conversation text, attachment contents, passwords, tokens, cookies, session secrets, and raw protocol frames.
 
 ## Documentation
 

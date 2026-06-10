@@ -124,7 +124,6 @@ $detail.data.sideConversations | Select-Object id,title,turnCount,inProgress
 ```text
 /manifest.webmanifest
 /icons/icon.svg
-/icons/maskable-icon.svg
 ```
 
 移动 Edge/Chrome 访问 `http://<电脑局域网 IP>:18930/` 后，可使用浏览器菜单里的“添加到手机”或“添加到主屏幕”。当前电脑可用的 LAN 地址可在 Web 的 `Settings / Network` 里查看和复制；也可以在本机运行：
