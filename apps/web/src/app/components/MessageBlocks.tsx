@@ -76,7 +76,7 @@ const AGENT_TASK_COLLAPSE_LINE_COUNT = 7
 const AGENT_TASK_COLLAPSE_CHAR_COUNT = 520
 const FILE_CHANGE_INITIAL_ROW_COUNT = 3
 const FILE_REFERENCE_EXTENSIONS =
-  'tsx?|jsx?|mjs|cjs|css|scss|sass|less|mdx?|jsonc?|ya?ml|toml|lock|html?|xml|svg|png|jpe?g|gif|webp|bmp|ico|pdf|docx?|xlsx?|xlsm|pptx?|txt|csv|tsv|log|py|ps1|sh|bat|cmd|rs|go|java|cs|cpp|c|h|hpp|sql|env|ini'
+  'tsx?|jsx?|mjs|cjs|css|scss|sass|less|mdx?|jsonc?|ya?ml|toml|lock|html?|xml|svg|png|jpe?g|gif|webp|bmp|ico|mp4|m4v|mov|webm|ogv|pdf|docx?|xlsx?|xlsm|pptx?|txt|csv|tsv|log|py|ps1|sh|bat|cmd|rs|go|java|cs|cpp|c|h|hpp|sql|env|ini'
 const FILE_REFERENCE_LOCATION_SUFFIX = '(?::\\d+(?::\\d+)?)?'
 const INLINE_FILE_REFERENCE_PATTERN = new RegExp(
   [
@@ -124,7 +124,7 @@ function isExternalLink(href?: string | null): boolean {
 }
 
 function markdownUrlTransform(url: string, key: string): string {
-  if (key === 'href' && isLocalFileReference(url)) return url
+  if ((key === 'href' || key === 'src') && isLocalFileReference(url)) return url
   return defaultUrlTransform(url)
 }
 
@@ -347,6 +347,51 @@ function MarkdownLink({
   )
 }
 
+function MarkdownMedia({
+  alt,
+  projectRoot,
+  src,
+  title,
+}: ComponentPropsWithoutRef<'img'> & RenderOptions): ReactElement {
+  const media: MessageImage = {
+    url: typeof src === 'string' ? src : null,
+    path: null,
+    mimeType: null,
+    alt: typeof alt === 'string' && alt.trim() ? alt : null,
+  }
+  const resolvedSrc = imageSource(media, projectRoot)
+  const label = mediaLabel(media)
+  if (!resolvedSrc) {
+    return <span className={styles.markdownMediaUnavailable}>{label}</span>
+  }
+
+  if (isVideoMedia(media)) {
+    return (
+      <span className={styles.markdownMediaBlock} data-media-kind="video">
+        <video
+          aria-label={label}
+          controls
+          data-testid="message-video"
+          preload="metadata"
+          title={title}
+        >
+          <source src={resolvedSrc} />
+        </video>
+      </span>
+    )
+  }
+
+  return (
+    <img
+      alt={label}
+      className={styles.markdownImage}
+      loading="lazy"
+      src={resolvedSrc}
+      title={title}
+    />
+  )
+}
+
 export function MessageAuthor({ icon, label, meta }: { icon: ReactElement; label: string; meta: string }): ReactElement {
   return (
     <div className={styles.messageAuthor}>
@@ -386,6 +431,12 @@ function MarkdownText({
           ),
           li: ({ children }) => (
             <li>{renderMarkdownInlineChildren(children, { projectRoot, onOpenFileReference })}</li>
+          ),
+          img: (props) => (
+            <MarkdownMedia
+              {...props}
+              projectRoot={projectRoot}
+            />
           ),
           pre: MarkdownPre,
         }}
@@ -695,6 +746,19 @@ function imageSource(image: MessageImage, projectRoot?: string | null): string |
   return fileContentUrl({ path: normalized, root: projectRoot })
 }
 
+function mediaLabel(image: MessageImage): string {
+  return image.alt ?? image.path?.split(/[\\/]/).filter(Boolean).at(-1) ?? image.url ?? image.mimeType ?? 'media'
+}
+
+function isVideoMedia(image: MessageImage): boolean {
+  const mimeType = image.mimeType?.toLowerCase() ?? ''
+  if (mimeType.startsWith('video/')) return true
+  const source = image.url ?? image.path ?? ''
+  if (/^data:video\//i.test(source)) return true
+  const normalized = normalizedFileReference(source).replace(/[?#].*$/, '').toLowerCase()
+  return /\.(?:mp4|m4v|mov|webm|ogv)$/.test(normalized)
+}
+
 function MessageImages({ images, projectRoot }: { images?: MessageImage[]; projectRoot?: string | null }): ReactElement | null {
   const [activeImage, setActiveImage] = useState<{ src: string; label: string } | null>(null)
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({})
@@ -736,9 +800,33 @@ function MessageImages({ images, projectRoot }: { images?: MessageImage[]; proje
       <div className={styles.imageGrid}>
         {images.map((image, index) => {
           const src = imageSource(image, projectRoot)
-          const label = image.alt ?? image.mimeType ?? image.path ?? image.url ?? 'image'
+          const video = isVideoMedia(image)
+          const label = mediaLabel(image)
           const failedKey = `${src ?? image.url ?? image.path ?? 'image'}-${index}`
           const failed = Boolean(failedImages[failedKey])
+          if (video) {
+            return (
+              <figure
+                className={styles.imageBlock}
+                data-media-kind="video"
+                key={`${image.url ?? image.path ?? 'video'}-${index}`}
+              >
+                {src ? (
+                  <video
+                    aria-label={label}
+                    controls
+                    data-testid="message-video"
+                    preload="metadata"
+                  >
+                    <source src={src} type={image.mimeType ?? undefined} />
+                  </video>
+                ) : (
+                  <span className={styles.imageUnavailable}>视频文件不可用</span>
+                )}
+                <figcaption>{label}</figcaption>
+              </figure>
+            )
+          }
           return (
             <button
               className={styles.imageBlock}
@@ -2224,9 +2312,10 @@ export function renderMessageItem(item: MessageItem, turnStatus: string, options
     )
   }
   if (item.type === 'image') {
+    const video = isVideoMedia(item.image)
     return (
       <article className={styles.assistantMessage} key={item.id}>
-        <MessageAuthor icon={<Paperclip size={16} />} label="图片" meta={item.image.mimeType ?? turnStatus} />
+        <MessageAuthor icon={<Paperclip size={16} />} label={video ? '视频' : '图片'} meta={item.image.mimeType ?? turnStatus} />
         <MessageImages images={[item.image]} projectRoot={options.projectRoot} />
       </article>
     )

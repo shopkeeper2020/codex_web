@@ -68,6 +68,21 @@ describe('file preview', () => {
     expect(preview.content).toBeNull()
   })
 
+  it('recognizes common video files as streamed binary previews', async () => {
+    const root = await createTempRoot()
+    await writeFile(join(root, 'joined.mp4'), Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]))
+
+    const preview = await readFilePreview({
+      filePath: 'joined.mp4',
+      root,
+      allowedRoots: [root],
+    })
+
+    expect(preview.kind).toBe('binary')
+    expect(preview.mimeType).toBe('video/mp4')
+    expect(preview.content).toBeNull()
+  })
+
   it('extracts spreadsheet files into a markdown preview', async () => {
     const root = await createTempRoot()
     const filePath = join(root, 'sheet.xlsx')

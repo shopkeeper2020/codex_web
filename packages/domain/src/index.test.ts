@@ -727,6 +727,13 @@ describe('domain normalization', () => {
                 alt: 'screenshot',
               },
               {
+                type: 'video',
+                id: 'video-a',
+                path: 'C:\\Users\\user\\Downloads\\result_joined_long_first.mp4',
+                mimeType: 'video/mp4',
+                alt: 'joined video',
+              },
+              {
                 type: 'error',
                 id: 'error-a',
                 message: 'Something failed',
@@ -804,6 +811,16 @@ describe('domain normalization', () => {
           path: null,
           mimeType: 'image/png',
           alt: 'screenshot',
+        },
+      },
+      {
+        type: 'image',
+        id: 'video-a',
+        image: {
+          url: null,
+          path: 'C:\\Users\\user\\Downloads\\result_joined_long_first.mp4',
+          mimeType: 'video/mp4',
+          alt: 'joined video',
         },
       },
       {

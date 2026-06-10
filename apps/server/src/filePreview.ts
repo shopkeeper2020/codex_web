@@ -21,6 +21,14 @@ const IMAGE_MIME_BY_EXTENSION = new Map<string, string>([
   ['.webp', 'image/webp'],
 ])
 
+const VIDEO_MIME_BY_EXTENSION = new Map<string, string>([
+  ['.m4v', 'video/mp4'],
+  ['.mov', 'video/quicktime'],
+  ['.mp4', 'video/mp4'],
+  ['.ogv', 'video/ogg'],
+  ['.webm', 'video/webm'],
+])
+
 const BINARY_MIME_BY_EXTENSION = new Map<string, string>([
   ['.doc', 'application/msword'],
   ['.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
@@ -120,6 +128,7 @@ export function detectFileMimeType(filePath: string): string {
   const extension = extname(filePath).toLowerCase()
   return (
     IMAGE_MIME_BY_EXTENSION.get(extension) ??
+    VIDEO_MIME_BY_EXTENSION.get(extension) ??
     BINARY_MIME_BY_EXTENSION.get(extension) ??
     TEXT_MIME_BY_EXTENSION.get(extension) ??
     'application/octet-stream'
@@ -135,7 +144,8 @@ function isTextExtension(filePath: string): boolean {
 }
 
 function isKnownBinaryExtension(filePath: string): boolean {
-  return BINARY_MIME_BY_EXTENSION.has(extname(filePath).toLowerCase())
+  const extension = extname(filePath).toLowerCase()
+  return BINARY_MIME_BY_EXTENSION.has(extension) || VIDEO_MIME_BY_EXTENSION.has(extension)
 }
 
 function isWordPreviewExtension(filePath: string): boolean {

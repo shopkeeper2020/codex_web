@@ -1606,6 +1606,41 @@
   text-decoration: underline;
 }
 
+.markdownImage {
+  display: block;
+  width: min(100%, 860px);
+  max-height: 420px;
+  border-radius: var(--radius-control);
+  object-fit: contain;
+  background: var(--color-bg-elevated);
+}
+
+.markdownMediaBlock {
+  display: block;
+  width: min(100%, 860px);
+  margin: 10px 0 14px;
+}
+
+.markdownMediaBlock video {
+  display: block;
+  width: 100%;
+  max-height: min(54vh, 520px);
+  border-radius: var(--radius-control);
+  background: #000;
+}
+
+.markdownMediaUnavailable {
+  display: inline-grid;
+  min-height: 34px;
+  align-items: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  padding: 7px 10px;
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
 .fileReferenceWrap {
   position: relative;
   display: inline-flex;
@@ -2599,12 +2634,14 @@
   background: transparent;
 }
 
-.userMessage .imageBlock img {
+.userMessage .imageBlock img,
+.userMessage .imageBlock video {
   height: 86px;
   object-fit: cover;
 }
 
-.userMessage .imageBlock span {
+.userMessage .imageBlock span,
+.userMessage .imageBlock figcaption {
   display: none;
 }
 
@@ -2614,6 +2651,7 @@
   width: min(100%, 420px);
   max-width: 100%;
   min-width: 0;
+  margin: 0;
   overflow: hidden;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-control);
@@ -2628,7 +2666,12 @@
   cursor: default;
 }
 
-.imageBlock img {
+.imageBlock[data-media-kind="video"] {
+  cursor: default;
+}
+
+.imageBlock img,
+.imageBlock video {
   display: block;
   width: 100%;
   max-width: 100%;
@@ -2638,7 +2681,12 @@
   background: var(--color-bg-elevated);
 }
 
-.imageBlock span {
+.imageBlock video {
+  background: #000;
+}
+
+.imageBlock span,
+.imageBlock figcaption {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2702,13 +2750,15 @@
   border-radius: 8px;
 }
 
-.userMessage .imageBlock img {
+.userMessage .imageBlock img,
+.userMessage .imageBlock video {
   aspect-ratio: 1 / 1;
   max-height: none;
   object-fit: cover;
 }
 
-.userMessage .imageBlock span {
+.userMessage .imageBlock span,
+.userMessage .imageBlock figcaption {
   display: none;
 }
 

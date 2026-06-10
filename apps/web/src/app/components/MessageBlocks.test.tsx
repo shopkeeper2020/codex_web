@@ -236,6 +236,22 @@ describe("MessageBlocks file references", () => {
     expect(html).toContain("复制 Markdown 代码");
   });
 
+  it("renders local markdown video references as playable media", () => {
+    const item: MessageItem = {
+      type: "assistant",
+      id: "assistant-markdown-video",
+      text: '搞掂。\n\n![合併影片](C:\\Users\\user\\Downloads\\result_joined_long_first.mp4)',
+    };
+
+    const html = renderToStaticMarkup(renderMessageItem(item, "completed")!);
+
+    expect(html).toContain('data-testid="message-video"');
+    expect(html).toContain('aria-label="合併影片"');
+    expect(html).toContain("controls");
+    expect(html).toContain("/api/files/content?path=");
+    expect(html).not.toContain("<img");
+  });
+
   it("summarizes web search tool output without generic tool cards", () => {
     const items: MessageItem[] = [
       {

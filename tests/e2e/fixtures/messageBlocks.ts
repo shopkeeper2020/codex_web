@@ -92,6 +92,8 @@ function complexTurn(): JsonBody {
           "| Key | Value |",
           "| --- | --- |",
           "| table | markdown-table-sentinel |",
+          "",
+          "![合併影片](C:/workspace/codex_web/data/tmp/joined-preview.mp4)",
         ].join("\n"),
       },
       {
@@ -471,6 +473,15 @@ async function installMessageBlockMocksWithTurns(page: Page, sourceThread: JsonB
   });
 
   await page.route("**/api/files/content**", async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.searchParams.get("path") ?? "";
+    if (path.toLowerCase().endsWith(".mp4")) {
+      await route.fulfill({
+        contentType: "video/mp4",
+        body: "codex-web-video-fixture",
+      });
+      return;
+    }
     await route.fulfill({
       contentType: "image/svg+xml",
       body: visiblePreviewSvg,

@@ -95,4 +95,24 @@ describe("file content route", () => {
     expect(response.headers["content-length"]).toBe(String(content.length));
     expect(response.body).toBe(content.toString());
   });
+
+  it("serves MP4 content with video MIME and byte ranges", async () => {
+    const { context, root } = await createHarness();
+    const content = Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]);
+    writeFileSync(join(root, "joined.mp4"), content);
+
+    const response = await context.app.inject({
+      method: "GET",
+      url: `/api/files/content?root=${encodeURIComponent(root)}&path=${encodeURIComponent("joined.mp4")}`,
+      headers: { range: "bytes=4-7" },
+    });
+
+    expect(response.statusCode).toBe(206);
+    expect(response.headers["accept-ranges"]).toBe("bytes");
+    expect(response.headers["content-range"]).toBe(
+      `bytes 4-7/${content.length}`,
+    );
+    expect(String(response.headers["content-type"])).toContain("video/mp4");
+    expect(response.rawPayload).toEqual(content.subarray(4, 8));
+  });
 });

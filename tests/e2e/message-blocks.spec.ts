@@ -266,6 +266,34 @@ test.describe("complex message blocks", () => {
     expect(pageErrors).toEqual([]);
   });
 
+  test("renders markdown video references as playable media", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name.includes("mobile"),
+      "视频播放器回归只需要在 desktop project 验证",
+    );
+
+    await installMessageBlockMocks(page);
+    await page.goto(`/thread/${threadId}`, { waitUntil: "domcontentloaded" });
+
+    const chat = page.getByLabel("会话", { exact: true });
+    const joinedVideo = chat.getByTestId("message-video").first();
+    await expect(joinedVideo).toBeVisible();
+    await expect(joinedVideo).toHaveAttribute("aria-label", "合併影片");
+    await expect(joinedVideo.locator("source")).toHaveAttribute(
+      "src",
+      /\/api\/files\/content\?/,
+    );
+    await expect(
+      chat.getByRole("img", { name: "合併影片" }),
+    ).toHaveCount(0);
+    await expect
+      .poll(() => joinedVideo.evaluate((video) => (video as HTMLVideoElement).controls))
+      .toBe(true);
+    await expectNoHorizontalOverflow(page, "desktop markdown video media");
+  });
+
   test("keeps active running, editing, and thinking summaries visible", async ({
     page,
   }) => {
