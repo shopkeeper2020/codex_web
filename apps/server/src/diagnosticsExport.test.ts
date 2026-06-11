@@ -95,9 +95,6 @@ describe("safe diagnostics export", () => {
       },
       cacheStatus: {
         path: "C:\\workspace\\codex_web\\data\\codex_web.sqlite",
-        projectCount: 1,
-        threadCount: 2,
-        threadDetailCount: 3,
         attachmentCount: 4,
       },
       diagnosticEvents: [

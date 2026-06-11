@@ -142,10 +142,100 @@ describe('domain normalization', () => {
     })
 
     expect(normalized?.thread.owner?.clientId).toBe('owner-a')
-    expect(normalized?.turns[0]?.items).toEqual([
-      { type: 'user', id: 'item-user', text: 'hello' },
-      { type: 'assistant', id: 'item-agent', text: 'world' },
+    expect(normalized?.turns[0]?.items).toMatchObject([
+      {
+        type: 'userMessage',
+        id: 'item-user',
+        clientId: null,
+        content: [{ type: 'text', text: 'hello' }],
+      },
+      {
+        type: 'agentMessage',
+        id: 'item-agent',
+        text: 'world',
+        phase: null,
+        memoryCitation: null,
+      },
     ])
+  })
+
+  it('preserves agent message phase, memory citations, and unknown official fields', () => {
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-agent-phase',
+      owner: null,
+      thread: {
+        id: 'thread-agent-phase',
+        turns: [
+          {
+            id: 'turn-agent-phase',
+            items: [
+              {
+                type: 'agentMessage',
+                id: 'item-final',
+                text: 'final answer',
+                phase: 'final_answer',
+                memoryCitation: { source: 'memory-a' },
+                traceToken: 'official-extra',
+              },
+              {
+                type: 'agentMessage',
+                id: 'item-unknown-phase',
+                text: 'unknown phase',
+                phase: 'diagnostic',
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.turns[0]?.items).toMatchObject([
+      {
+        type: 'agentMessage',
+        id: 'item-final',
+        text: 'final answer',
+        phase: 'final_answer',
+        memoryCitation: { source: 'memory-a' },
+        traceToken: 'official-extra',
+      },
+      {
+        type: 'agentMessage',
+        id: 'item-unknown-phase',
+        text: 'unknown phase',
+        phase: null,
+        memoryCitation: null,
+      },
+    ])
+  })
+
+  it('preserves future official thread items without wrapping their type', () => {
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-future-item',
+      owner: null,
+      thread: {
+        id: 'thread-future-item',
+        turns: [
+          {
+            id: 'turn-future-item',
+            items: [
+              {
+                type: 'futureOfficialItem',
+                id: 'future-a',
+                text: 'future official payload',
+                extraField: { stable: true },
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.turns[0]?.items[0]).toMatchObject({
+      type: 'futureOfficialItem',
+      id: 'future-a',
+      text: 'future official payload',
+      extraField: { stable: true },
+    })
   })
 
   it('normalizes official fork source and turn timestamps', () => {
@@ -209,8 +299,14 @@ describe('domain normalization', () => {
       },
     })
 
-    expect(normalized?.turns[0]?.items).toEqual([
-      { type: 'assistant', id: 'item-agent', text: markdown },
+    expect(normalized?.turns[0]?.items).toMatchObject([
+      {
+        type: 'agentMessage',
+        id: 'item-agent',
+        text: markdown,
+        phase: null,
+        memoryCitation: null,
+      },
     ])
   })
 
@@ -257,8 +353,19 @@ describe('domain normalization', () => {
         id: 'turn-official',
         status: 'active',
         items: [
-          { type: 'user', id: 'official-user-1', text: '再整理北京的。' },
-          { type: 'assistant', id: 'assistant-1', text: '正在思考' },
+          {
+            type: 'userMessage',
+            id: 'official-user-1',
+            clientId: null,
+            content: [{ type: 'text', text: '再整理北京的。' }],
+          },
+          {
+            type: 'agentMessage',
+            id: 'assistant-1',
+            text: '正在思考',
+            phase: null,
+            memoryCitation: null,
+          },
         ],
       },
     ])
@@ -293,9 +400,20 @@ describe('domain normalization', () => {
       },
     })
 
-    expect(normalized?.turns[0]?.items).toEqual([
-      { type: 'user', id: 'item-user', text: 'hello' },
-      { type: 'assistant', id: 'item-agent', text: 'world' },
+    expect(normalized?.turns[0]?.items).toMatchObject([
+      {
+        type: 'userMessage',
+        id: 'item-user',
+        clientId: null,
+        content: [{ type: 'text', text: 'hello' }],
+      },
+      {
+        type: 'agentMessage',
+        id: 'item-agent',
+        text: 'world',
+        phase: null,
+        memoryCitation: null,
+      },
     ])
   })
 
@@ -408,22 +526,13 @@ describe('domain normalization', () => {
       },
     ])
     expect(normalized?.turns[0]?.items[0]).toMatchObject({
-      type: 'agentTask',
+      type: 'collabAgentToolCall',
       id: 'call-spawn',
-      title: 'spawnAgent',
       status: 'completed',
-      rawType: 'collabAgentToolCall',
+      tool: 'spawnAgent',
       model: 'gpt-5.5',
       reasoningEffort: 'xhigh',
-      agents: [
-        {
-          id: '00000000-0000-4000-8000-000000000001',
-          name: 'Agent 00000000',
-          status: 'pendingInit',
-          model: 'gpt-5.5',
-          reasoningEffort: 'xhigh',
-        },
-      ],
+      receiverThreadIds: ['00000000-0000-4000-8000-000000000001'],
     })
   })
 
@@ -456,18 +565,10 @@ describe('domain normalization', () => {
     })
 
     expect(normalized?.turns[0]?.items[0]).toMatchObject({
-      type: 'agentTask',
+      type: 'agentMessage',
       id: 'item-agent-text',
-      title: 'spawnAgent',
-      status: 'active',
-      rawType: 'agentMessage',
-      agents: [
-        {
-          id: 'item-agent-text-agent',
-          name: 'Agent',
-          status: 'active',
-        },
-      ],
+      phase: null,
+      memoryCitation: null,
     })
   })
 
@@ -529,10 +630,11 @@ describe('domain normalization', () => {
                     path: 'C:\\workspace\\codex_web\\docs\\implementation_status.md',
                     kind: { type: 'update', move_path: null },
                     diff: '@@\n+sentinel\n-old',
+                    futurePatchField: { kept: true },
                   },
                   {
                     path: 'docs/mvp_gap_tracker.md',
-                    kind: { type: 'create' },
+                    kind: { type: 'add' },
                     diff: '@@\n+todo',
                   },
                 ],
@@ -544,42 +646,32 @@ describe('domain normalization', () => {
     })
 
     expect(normalized?.turns[0]?.items[0]).toMatchObject({
-      type: 'user',
+      type: 'userMessage',
       id: 'steer-user-a',
-      text: '这里是不是少了一部分东西？',
       intent: 'guidance',
-      images: [
-        { url: 'data:image/png;base64,one', path: null },
-        { url: 'data:image/png;base64,two', path: null, alt: 'image.png' },
-      ],
+      content: [{ type: 'text', text: '这里是不是少了一部分东西？', text_elements: [] }],
     })
     expect(normalized?.turns[0]?.items[1]).toMatchObject({
-      type: 'user',
+      type: 'userMessage',
       id: 'legacy-steer-user',
-      text: '旧缓存里的引导消息',
       intent: 'guidance',
-      images: [
-        { url: 'data:image/png;base64,legacy', path: null, alt: 'legacy.png' },
-      ],
+      content: [{ type: 'text', text: '旧缓存里的引导消息', text_elements: [] }],
     })
     expect(normalized?.turns[0]?.items[2]).toEqual({
       type: 'fileChange',
       id: 'file-change-array',
-      path: 'C:\\workspace\\codex_web\\docs\\implementation_status.md',
-      diff: '@@\n+sentinel\n-old',
       status: 'completed',
       changes: [
         {
           path: 'C:\\workspace\\codex_web\\docs\\implementation_status.md',
           diff: '@@\n+sentinel\n-old',
-          status: 'completed',
-          kind: 'update',
+          futurePatchField: { kept: true },
+          kind: { type: 'update', move_path: null },
         },
         {
           path: 'docs/mvp_gap_tracker.md',
           diff: '@@\n+todo',
-          status: 'completed',
-          kind: 'create',
+          kind: { type: 'add' },
         },
       ],
     })
@@ -625,7 +717,7 @@ describe('domain normalization', () => {
                 id: 'cmd-running',
                 command: 'pnpm build',
                 status: { type: 'running' },
-                stdout: 'building',
+                aggregatedOutput: 'building',
                 exitCode: null,
               },
               {
@@ -656,7 +748,7 @@ describe('domain normalization', () => {
     expect(normalized?.turns[0]?.status).toBe('active')
     expect(normalized?.turns[0]?.items).toMatchObject([
       {
-        type: 'command',
+        type: 'commandExecution',
         id: 'cmd-running',
         status: 'running',
         exitCode: null,
@@ -665,7 +757,12 @@ describe('domain normalization', () => {
         type: 'fileChange',
         id: 'file-editing',
         status: 'editing',
-        changes: [{ status: 'editing' }],
+        changes: [
+          {
+            path: 'docs/implementation_status.md',
+            diff: '@@\n+active edit',
+          },
+        ],
       },
       {
         type: 'reasoning',
@@ -751,7 +848,8 @@ describe('domain normalization', () => {
                 id: 'search-a',
                 query: 'codex desktop ipc',
                 results: [{ title: 'IPC notes', url: 'https://example.test' }],
-                status: 'completed',
+                state: { type: 'futureWebSearchState' },
+                futureSearchField: { kept: true },
               },
             ],
           },
@@ -759,16 +857,17 @@ describe('domain normalization', () => {
       },
     })
 
-    expect(normalized?.turns[0]?.items).toEqual([
+    expect(normalized?.turns[0]?.items).toMatchObject([
       {
-        type: 'command',
+        type: 'commandExecution',
         id: 'cmd-a',
         command: 'pnpm test',
         status: 'completed',
-        output: 'ok',
-        stdout: 'ok',
-        stderr: '',
+        aggregatedOutput: 'ok',
         cwd: 'C:\\workspace\\codex_web',
+        processId: null,
+        source: null,
+        commandActions: [],
         durationMs: 1234,
         exitCode: 0,
       },
@@ -831,21 +930,59 @@ describe('domain normalization', () => {
         detail: null,
       },
       {
-        type: 'toolOutput',
+        type: 'mcpToolCall',
         id: 'tool-a',
-        title: 'filesystem',
-        text: 'listed files',
+        server: 'filesystem',
+        tool: 'mcpToolOutput',
+        result: 'listed files',
         status: 'completed',
-        rawType: 'mcpToolOutput',
       },
       {
-        type: 'toolOutput',
+        type: 'webSearch',
         id: 'search-a',
-        title: 'Web search: codex desktop ipc',
-        text: '',
-        status: 'completed',
-        rawType: 'webSearch',
+        query: 'codex desktop ipc',
+        state: { type: 'futureWebSearchState' },
+        futureSearchField: { kept: true },
       },
     ])
+    expect(normalized?.turns[0]?.items[0]).not.toHaveProperty('stdout')
+    expect(normalized?.turns[0]?.items[0]).not.toHaveProperty('stderr')
+    expect(normalized?.turns[0]?.items[8]).not.toHaveProperty('status')
+  })
+
+  it('keeps official commandExecution aggregatedOutput whitespace intact', () => {
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-command-output',
+      owner: null,
+      thread: {
+        id: 'thread-command-output',
+        turns: [
+          {
+            id: 'turn-command-output',
+            items: [
+              {
+                type: 'commandExecution',
+                id: 'cmd-output',
+                command: 'printf',
+                status: 'completed',
+                cwd: 'C:\\workspace\\codex_web',
+                processId: null,
+                source: 'agent',
+                commandActions: [],
+                aggregatedOutput: '  indented output\n\n',
+                exitCode: 0,
+                durationMs: 10,
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.turns[0]?.items[0]).toMatchObject({
+      type: 'commandExecution',
+      id: 'cmd-output',
+      aggregatedOutput: '  indented output\n\n',
+    })
   })
 })

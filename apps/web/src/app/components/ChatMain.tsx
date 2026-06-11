@@ -80,6 +80,17 @@ import {
   type TextReference,
   type TextReferenceSourceSurface,
 } from "../textReferences";
+import {
+  asThreadItemRecord,
+  isAgentMessageLikeItem,
+  isUserMessageLikeItem,
+  readCommandOutput,
+  readFileChangeEntries,
+  readMessageImages,
+  readMessageItemStatus,
+  readMessageItemText,
+  readThreadItemString,
+} from "../officialThreadItems";
 import styles from "../App.module.css";
 import { Composer, type SendOptions } from "./Composer";
 import { ApprovalCard, MessageAuthor, renderTurnItems } from "./MessageBlocks";
@@ -125,11 +136,9 @@ type DraftThreadView = {
 type ThreadTurn = ThreadDetail["turns"][number];
 type SideConversation = ThreadDetail["sideConversations"][number];
 type TurnItem = ThreadTurn["items"][number];
-type UserMessageItem = Extract<TurnItem, { type: "user" }>;
-type CommandMessageItem = Extract<TurnItem, { type: "command" }>;
 type FileChangeMessageItem = Extract<TurnItem, { type: "fileChange" }>;
 type PlanMessageItem = Extract<TurnItem, { type: "plan" }>;
-type FileChangeEntry = NonNullable<FileChangeMessageItem["changes"]>[number];
+type FileChangeEntry = ReturnType<typeof readFileChangeEntries>[number];
 type AgentTone = "blue" | "orange" | "green" | "red" | "violet" | "neutral";
 type AgentRow = {
   name: string;
@@ -170,8 +179,9 @@ function sourceKeyLooksLikeWebSearch(value: string): boolean {
 }
 
 function turnItemUsesWebSearch(item: TurnItem): boolean {
-  const rawType = "rawType" in item ? item.rawType : "";
-  const title = "title" in item ? item.title : "";
+  const record = asThreadItemRecord(item);
+  const rawType = readThreadItemString(record?.rawType ?? record?.type);
+  const title = readThreadItemString(record?.title ?? record?.query);
   return (
     sourceKeyLooksLikeWebSearch(rawType) ||
     sourceKeyLooksLikeWebSearch(title)
@@ -334,51 +344,23 @@ function asMainTextReferenceRows(
 }
 
 function itemScrollSignature(item: TurnItem): string {
-  if (item.type === "user" || item.type === "assistant") {
-    return `${item.type}:${item.id}:${item.text.length}:${item.text.slice(-32)}:${
-      item.images?.length ?? 0
-    }`;
-  }
-  if (item.type === "reasoning") {
-    return `${item.type}:${item.id}:${item.status ?? ""}:${item.text.length}:${item.text.slice(
-      -24,
-    )}`;
-  }
-  if (item.type === "command") {
-    return `${item.type}:${item.id}:${item.status}:${item.exitCode ?? ""}:${
-      item.output.length
-    }:${item.stdout.length}:${item.stderr.length}`;
+  const text = readMessageItemText(item);
+  const status = readMessageItemStatus(item) ?? "";
+  const command = readCommandOutput(item);
+  if (command) {
+    return `${item.type}:${item.id}:${command.status ?? ""}:${command.exitCode ?? ""}:${
+      command.output.length
+    }:${command.stdout.length}:${command.stderr.length}`;
   }
   if (item.type === "fileChange") {
-    return `${item.type}:${item.id}:${item.status ?? ""}:${item.diff.length}:${
-      item.changes?.length ?? 0
-    }`;
-  }
-  if (item.type === "plan") {
-    return `${item.type}:${item.id}:${item.status ?? ""}:${item.steps
-      .map((step) => `${step.status ?? ""}:${step.text.length}`)
+    const entries = readFileChangeEntries(item);
+    return `${item.type}:${item.id}:${status}:${entries
+      .map((entry) => `${entry.path}:${entry.diff.length}`)
       .join("|")}`;
   }
-  if (item.type === "agentTask") {
-    return `${item.type}:${item.id}:${item.status ?? ""}:${item.prompt.length}:${
-      item.agents
-        .map((agent) => `${agent.id}:${agent.status ?? ""}:${agent.prompt.length}`)
-        .join("|")
-    }`;
-  }
-  if (item.type === "approval") {
-    return `${item.type}:${item.id}:${item.status ?? ""}:${item.title.length}`;
-  }
-  if (item.type === "image") {
-    return `${item.type}:${item.id}:${item.image.url ?? ""}:${item.image.path ?? ""}`;
-  }
-  if (item.type === "error") {
-    return `${item.type}:${item.id}:${item.code ?? ""}:${item.message.length}`;
-  }
-  if (item.type === "toolOutput") {
-    return `${item.type}:${item.id}:${item.status ?? ""}:${item.text.length}`;
-  }
-  return `${item.type}:${item.id}:${item.rawType}`;
+  return `${item.type}:${item.id}:${status}:${text.length}:${text.slice(-32)}:${
+    readMessageImages(item).length
+  }`;
 }
 
 function turnsScrollSignature(turns: ThreadTurn[]): string {
@@ -431,35 +413,28 @@ async function writeClipboardText(text: string): Promise<void> {
 
 function turnCopyText(turn: ThreadTurn): string {
   const assistantText = turn.items
-    .filter((item): item is Extract<TurnItem, { type: "assistant" }> => item.type === "assistant")
-    .map((item) => item.text.trim())
+    .filter(isAgentMessageLikeItem)
+    .map((item) => readMessageItemText(item).trim())
     .filter(Boolean)
     .join("\n\n");
   if (assistantText) return assistantText;
   return turn.items
-    .flatMap((item) => {
-      if (item.type === "user" || item.type === "reasoning" || item.type === "toolOutput")
-        return item.text.trim();
-      if (item.type === "plan") return item.steps.map((step) => step.text).join("\n");
-      if (item.type === "command") return item.output.trim();
-      if (item.type === "fileChange") return item.diff.trim();
-      if (item.type === "error") return item.message.trim();
-      return [];
-    })
+    .map((item) => readMessageItemText(item).trim())
     .filter(Boolean)
     .join("\n\n");
 }
 
 function hasTurnActionRow(turn: ThreadTurn): boolean {
-  return turn.status === "completed" && turn.items.some((item) => item.type !== "user");
+  return turn.status === "completed" && turn.items.some((item) => !isUserMessageLikeItem(item));
 }
 
 function isTerminalTurnStatus(status: ThreadTurn["status"]): boolean {
   return status === "completed" || status === "failed" || status === "interrupted";
 }
 
-function isOrdinaryUserMessageItem(item: TurnItem): item is UserMessageItem {
-  return item.type === "user" && item.intent !== "guidance";
+function isOrdinaryUserMessageItem(item: TurnItem): boolean {
+  const record = asThreadItemRecord(item);
+  return isUserMessageLikeItem(item) && record?.intent !== "guidance";
 }
 
 function timestampMs(value?: string | null): number | null {
@@ -1921,10 +1896,7 @@ function latestActivityTurn(
 }
 
 function fileChangeEntries(item: FileChangeMessageItem): FileChangeEntry[] {
-  const entries = item.changes?.length
-    ? item.changes
-    : [{ path: item.path, diff: item.diff, status: item.status, kind: null }];
-  return entries.filter((entry) => entry.path || entry.diff);
+  return readFileChangeEntries(item);
 }
 
 function fileChangeStats(diff: string): {
@@ -1979,21 +1951,21 @@ function summarizeFileActivity(turn: ThreadTurn): ComposerActivityRow | null {
 function summarizeCommandActivity(
   turn: ThreadTurn,
 ): ComposerActivityRow | null {
-  const items = turn.items.filter(
-    (item): item is CommandMessageItem => item.type === "command",
-  );
-  if (items.length === 0) return null;
+  const commands = turn.items
+    .map(readCommandOutput)
+    .filter((item): item is NonNullable<ReturnType<typeof readCommandOutput>> => Boolean(item));
+  if (commands.length === 0) return null;
   const active =
     isActiveStatus(turn.status) &&
-    items.some((item) => isActiveStatus(item.status) || item.exitCode === null);
-  const durationMs = items.reduce(
+    commands.some((item) => isActiveStatus(item.status) || item.exitCode === null);
+  const durationMs = commands.reduce(
     (total, item) => total + (item.durationMs ?? 0),
     0,
   );
   return {
     key: "commands",
     icon: <Command size={14} />,
-    label: `${active ? "正在运行" : "已运行"} ${items.length} 条命令`,
+    label: `${active ? "正在运行" : "已运行"} ${commands.length} 条命令`,
     meta:
       active && durationMs > 0
         ? `已持续 ${formatDurationMs(durationMs)}`
@@ -2011,14 +1983,17 @@ function latestPlanProgress(threadDetail: ThreadDetail | null): ProgressItem[] {
       .reverse()
       .find(
         (item): item is PlanMessageItem =>
-          item.type === "plan" && item.steps.length > 0,
+          item.type === "plan" && Array.isArray(asThreadItemRecord(item)?.steps) && (asThreadItemRecord(item)?.steps as unknown[]).length > 0,
       ) ?? null;
+  const steps = Array.isArray(asThreadItemRecord(planItem)?.steps)
+    ? (asThreadItemRecord(planItem)?.steps as Array<{ text?: unknown; status?: unknown }>)
+    : [];
   return (
-    planItem?.steps
+    steps
       .map((step) => ({
-        label: step.text.trim(),
-        done: isDoneStatus(step.status),
-        active: isActiveStatus(step.status),
+        label: readThreadItemString(step.text),
+        done: isDoneStatus(readThreadItemString(step.status)),
+        active: isActiveStatus(readThreadItemString(step.status)),
       }))
       .filter((item) => item.label.length > 0) ?? []
   );
@@ -2349,12 +2324,13 @@ function DesktopActivityPanel({
       )
       .at(-1);
     if (!latestFileChange) return selectedThread?.id ?? "none";
+    const entries = readFileChangeEntries(latestFileChange);
     return [
       selectedThread?.id ?? "",
       latestFileChange.id,
       latestFileChange.status ?? "",
-      latestFileChange.diff.length,
-      latestFileChange.changes?.length ?? 0,
+      entries.map((entry) => entry.diff.length).join("|"),
+      entries.length,
     ].join(":");
   }, [selectedThread?.id, threadDetail?.turns]);
   const showWorkspaceDelta =
@@ -2713,8 +2689,9 @@ export function ChatMain({
       if (!turn || !isTerminalTurnStatus(turn.status)) continue;
       for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
         const item = turn.items[itemIndex];
-        if (!item || item.type !== "user") continue;
-        return item.intent === "guidance" ? null : item.id;
+        const itemRecord = asThreadItemRecord(item);
+        if (!item || !isUserMessageLikeItem(item)) continue;
+        return readThreadItemString(itemRecord?.intent) === "guidance" ? null : item.id;
       }
     }
     return null;
@@ -2745,8 +2722,9 @@ export function ChatMain({
       const timeLabel = formatClockTime(turn.startedAtIso ?? turn.completedAtIso);
       for (const item of turn.items) {
         if (!isOrdinaryUserMessageItem(item)) continue;
-        const referencedPrompt = parseReferencedPrompt(item.text);
-        const editableText = referencedPrompt?.request ?? item.text;
+        const itemText = readMessageItemText(item);
+        const referencedPrompt = parseReferencedPrompt(itemText);
+        const editableText = referencedPrompt?.request ?? itemText;
         const canEdit =
           Boolean(selectedThreadId) &&
           item.id === lastEditableUserItemId &&

@@ -1058,6 +1058,41 @@ function richerItemTextValue(primaryValue: unknown, liveValue: unknown): unknown
     : liveValue;
 }
 
+function preferNonNullRicherValue(primaryValue: unknown, liveValue: unknown): unknown {
+  if (primaryValue === null || primaryValue === undefined) return liveValue;
+  if (liveValue === null || liveValue === undefined) return primaryValue;
+  return richerItemTextValue(primaryValue, liveValue);
+}
+
+function mergeMessagePhase(primaryValue: unknown, liveValue: unknown): unknown {
+  if (primaryValue === "final_answer" || liveValue !== "final_answer") {
+    return primaryValue ?? liveValue;
+  }
+  return liveValue;
+}
+
+function mergeOfficialItemFields(
+  merged: Record<string, unknown>,
+  primaryRecord: Record<string, unknown>,
+  liveRecord: Record<string, unknown>,
+): void {
+  const type = readString(primaryRecord.type) || readString(liveRecord.type);
+  if (type === "agentMessage") {
+    if ("phase" in primaryRecord || "phase" in liveRecord) {
+      merged.phase = mergeMessagePhase(primaryRecord.phase, liveRecord.phase);
+    }
+    if ("memoryCitation" in primaryRecord || "memoryCitation" in liveRecord) {
+      merged.memoryCitation = preferNonNullRicherValue(
+        primaryRecord.memoryCitation,
+        liveRecord.memoryCitation,
+      );
+    }
+  }
+  if (type === "webSearch" && ("action" in primaryRecord || "action" in liveRecord)) {
+    merged.action = preferNonNullRicherValue(primaryRecord.action, liveRecord.action);
+  }
+}
+
 function mergeItemWithRicherText(
   primary: unknown,
   live: unknown,
@@ -1076,6 +1111,8 @@ function mergeItemWithRicherText(
     if (!(key in primaryRecord) && !(key in liveRecord)) continue;
     merged[key] = richerItemTextValue(primaryRecord[key], liveRecord[key]);
   }
+
+  mergeOfficialItemFields(merged, primaryRecord, liveRecord);
 
   return merged;
 }
@@ -1662,9 +1699,9 @@ export async function createServer(
   officialIpc.setRawFrameLogging(config.diagnostics.rawFrameLogging);
   const clearedDerivedCaches = database.clearDerivedCaches();
   const clearedDerivedCacheCount =
-    clearedDerivedCaches.projectCount +
-    clearedDerivedCaches.threadCount +
-    clearedDerivedCaches.threadDetailCount +
+    clearedDerivedCaches.legacyProjectCount +
+    clearedDerivedCaches.legacyThreadCount +
+    clearedDerivedCaches.legacyThreadDetailCount +
     clearedDerivedCaches.legacyOfficialStreamStateCount;
   if (clearedDerivedCacheCount > 0) {
     database.compactStorage();
@@ -2267,15 +2304,10 @@ export async function createServer(
       normalizeProjectPath(rawRoot) || normalizeProjectPath(config.projectRoot);
     const configuredFavorites = readFavoriteProjectPaths(config);
     const desktopWorkspaceRoots = readDesktopWorkspaceRoots();
-    const knownProjectPaths = database
-      .listProjects()
-      .map((project) => project.path)
-      .filter((path): path is string => Boolean(path));
     const allowedRoots = [
       config.projectRoot,
       ...desktopWorkspaceRoots,
       ...configuredFavorites,
-      ...knownProjectPaths,
     ];
     if (
       !allowedRoots.some((allowedRoot) => sameProjectPath(allowedRoot, root))
@@ -2291,17 +2323,12 @@ export async function createServer(
   const allowedFilePreviewRoots = (extraRoot?: string | null): string[] => {
     const configuredFavorites = readFavoriteProjectPaths(config);
     const desktopWorkspaceRoots = readDesktopWorkspaceRoots();
-    const knownProjectPaths = database
-      .listProjects()
-      .map((project) => project.path)
-      .filter((path): path is string => Boolean(path));
     return [
       config.dataDir,
       config.projectRoot,
       ...(extraRoot ? [extraRoot] : []),
       ...desktopWorkspaceRoots,
       ...configuredFavorites,
-      ...knownProjectPaths,
     ];
   };
 

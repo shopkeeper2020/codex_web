@@ -1,4 +1,9 @@
-import type { MessageItem, ThreadDetail, Turn } from "../api";
+import {
+  normalizeMessageItem,
+  type MessageItem,
+  type ThreadDetail,
+  type Turn,
+} from "@codex-web/domain";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -14,6 +19,10 @@ function readString(value: unknown): string {
 
 function readDeltaString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function readItemType(value: unknown): string {
+  return readString(asRecord(value)?.type);
 }
 
 function readTextContent(value: unknown): string {
@@ -123,14 +132,20 @@ function isPendingTurnId(turnId: string): boolean {
 }
 
 function normalizedUserText(item: MessageItem): string {
-  return item.type === "user" ? item.text.replace(/\s+/g, " ").trim() : "";
+  const record = asRecord(item);
+  const type = readString(record?.type);
+  if (type === "userMessage") return readTextContent(record?.content).replace(/\s+/g, " ").trim();
+  if (type === "user") return readTextContent(record?.text).replace(/\s+/g, " ").trim();
+  return "";
 }
 
 function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number {
-  if (item.type !== "user") return -1;
+  const itemType = readItemType(item);
+  if (itemType !== "userMessage" && itemType !== "user") return -1;
   const text = normalizedUserText(item);
   return items.findIndex((entry) => {
-    if (entry.type !== "user") return false;
+    const entryType = readItemType(entry);
+    if (entryType !== "userMessage" && entryType !== "user") return false;
     if (entry.id === item.id) return true;
     return text.length > 0 && normalizedUserText(entry) === text;
   });
@@ -151,117 +166,22 @@ function adoptPendingTurn(
     );
 }
 
-function normalizeItem(value: unknown, fallbackId: string): MessageItem {
-  const record = asRecord(value);
-  const rawType = readString(record?.type);
-  const type = rawType.toLowerCase().replace(/[-_]/g, "");
-  const id = readString(record?.id) || fallbackId;
-
-  if (type === "usermessage" || type === "user") {
-    const intent = readString(record?.intent);
-    return {
-      type: "user",
-      id,
-      text: readTextContent(record?.content) || readString(record?.text),
-      ...(intent === "guidance" ? { intent } : {}),
-    };
-  }
-  if (type === "agentmessage" || type === "assistantmessage" || type === "assistant") {
-    return {
-      type: "assistant",
-      id,
-      text: readString(record?.text) || readTextContent(record?.content),
-    };
-  }
-  if (type === "reasoning" || type.includes("thinking")) {
-    return {
-      type: "reasoning",
-      id,
-      text: readString(record?.text) || readTextContent(record?.content),
-      collapsed: true,
-      status: readString(record?.status) || readString(record?.state) || null,
-    };
-  }
-  if (type === "plan") {
-    return {
-      type: "plan",
-      id,
-      text: readString(record?.text) || readTextContent(record?.content),
-      steps: [],
-      status: readString(record?.status) || null,
-    };
-  }
-  if (type === "commandexecution" || type === "command") {
-    const output = readTextContent(record?.output);
-    return {
-      type: "command",
-      id,
-      command:
-        readString(record?.command) ||
-        readString(record?.cmd) ||
-        readString(record?.commandLine),
-      status: readString(record?.status) || "unknown",
-      output,
-      stdout: output,
-      stderr: "",
-      cwd: readString(record?.cwd) || null,
-      durationMs: null,
-      exitCode: null,
-    };
-  }
-  if (type === "filechange" || type.includes("patch")) {
-    return {
-      type: "fileChange",
-      id,
-      path: readString(record?.path),
-      diff: readTextContent(record?.diff ?? record?.output),
-      status: readString(record?.status) || null,
-    };
-  }
-  if (type === "websearch" || type.includes("websearch")) {
-    const query = readWebSearchQuery(record);
-    return {
-      type: "toolOutput",
-      id,
-      title: query ? `Web search: ${query}` : "Web search",
-      text: readTextContent(
-        record?.output ??
-          record?.results ??
-          record?.content ??
-          record?.text ??
-          record?.result,
-      ),
-      status: readStatusString(record?.status) || null,
-      rawType: rawType || "webSearch",
-    };
-  }
-  if (type.includes("tool") || type.includes("mcp") || type.includes("function")) {
-    return {
-      type: "toolOutput",
-      id,
-      title: readString(record?.title) || readString(record?.name) || rawType || "Tool output",
-      text: readTextContent(
-        record?.output ?? record?.content ?? record?.text ?? record?.result,
-      ),
-      status: readStatusString(record?.status) || null,
-      rawType: rawType || "unknown",
-    };
-  }
-  return { type: "unknown", id, rawType: rawType || "unknown", raw: value };
-}
+const OFFICIAL_ITEM_TYPES_WITH_STATUS = new Set([
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "collabAgentToolCall",
+  "imageGeneration",
+]);
 
 function markItemStarted(item: MessageItem): MessageItem {
-  if (
-    (item.type === "toolOutput" ||
-      item.type === "fileChange" ||
-      item.type === "plan" ||
-      item.type === "reasoning") &&
-    !item.status
-  ) {
-    return { ...item, status: "active" };
-  }
-  if (item.type === "command" && item.status === "unknown") {
-    return { ...item, status: "active" };
+  const record = asRecord(item);
+  const type = readString(record?.type);
+  if (!OFFICIAL_ITEM_TYPES_WITH_STATUS.has(type)) return item;
+  const status = readStatusString(record?.status);
+  if (!status || status === "unknown") {
+    return { ...item, status: "inProgress" } as MessageItem;
   }
   return item;
 }
@@ -309,46 +229,149 @@ function upsertItem(turn: Turn, item: MessageItem): Turn {
     }
     return { ...turn, items: [...items, item] };
   }
-  items[existingIndex] = item;
+  items[existingIndex] = mergeItem(items[existingIndex]!, item);
   return { ...turn, items };
+}
+
+function jsonValueScore(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (value === null || value === undefined) return 0;
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return 1;
+  }
+}
+
+function richerValue(incomingValue: unknown, currentValue: unknown): unknown {
+  if (incomingValue === null || incomingValue === undefined) return currentValue;
+  if (currentValue === null || currentValue === undefined) return incomingValue;
+  return jsonValueScore(currentValue) > jsonValueScore(incomingValue)
+    ? currentValue
+    : incomingValue;
+}
+
+function mergeMessagePhase(incomingValue: unknown, currentValue: unknown): unknown {
+  if (incomingValue === "final_answer" || currentValue !== "final_answer") {
+    return incomingValue ?? currentValue;
+  }
+  return currentValue;
+}
+
+function mergeOfficialItemFields(
+  merged: Record<string, unknown>,
+  currentRecord: Record<string, unknown> | null,
+  incomingRecord: Record<string, unknown> | null,
+): void {
+  const currentType = readString(currentRecord?.type);
+  const incomingType = readString(incomingRecord?.type);
+  if (currentType === "agentMessage" && incomingType === "agentMessage") {
+    if ("phase" in (currentRecord ?? {}) || "phase" in (incomingRecord ?? {})) {
+      merged.phase = mergeMessagePhase(incomingRecord?.phase, currentRecord?.phase);
+    }
+    if ("memoryCitation" in (currentRecord ?? {}) || "memoryCitation" in (incomingRecord ?? {})) {
+      merged.memoryCitation = richerValue(
+        incomingRecord?.memoryCitation,
+        currentRecord?.memoryCitation,
+      );
+    }
+  }
+  if (currentType === "webSearch" && incomingType === "webSearch") {
+    if ("action" in (currentRecord ?? {}) || "action" in (incomingRecord ?? {})) {
+      merged.action = richerValue(incomingRecord?.action, currentRecord?.action);
+    }
+  }
+}
+
+function mergeItem(current: MessageItem, incoming: MessageItem): MessageItem {
+  const currentRecord = asRecord(current);
+  const incomingRecord = asRecord(incoming);
+  const merged = { ...currentRecord, ...incomingRecord } as Record<string, unknown>;
+  const currentType = readString(currentRecord?.type);
+  const incomingType = readString(incomingRecord?.type);
+  if (
+    currentType === "agentMessage" &&
+    incomingType === "agentMessage" &&
+    !readTextContent(incomingRecord?.text) &&
+    readTextContent(currentRecord?.text)
+  ) {
+    merged.text = readTextContent(currentRecord?.text);
+  }
+  if (
+    currentType === "commandExecution" &&
+    incomingType === "commandExecution" &&
+    !readTextContent(incomingRecord?.aggregatedOutput) &&
+    readTextContent(currentRecord?.aggregatedOutput)
+  ) {
+    merged.aggregatedOutput = currentRecord?.aggregatedOutput;
+  }
+  mergeOfficialItemFields(merged, currentRecord, incomingRecord);
+  return merged as MessageItem;
 }
 
 function appendDeltaToItem(
   item: MessageItem,
-  kind: "assistant" | "reasoning" | "plan" | "command" | "fileChange",
+  kind: "agentMessage" | "reasoning" | "plan" | "commandExecution" | "fileChange",
   delta: string,
 ): MessageItem {
-  if ((kind === "assistant" && item.type === "assistant") || (kind === "reasoning" && item.type === "reasoning")) {
-    return { ...item, text: item.text + delta };
+  const record = asRecord(item);
+  const type = readString(record?.type);
+  if (kind === "agentMessage" && type === "agentMessage") {
+    return { ...item, text: readTextContent(record?.text) + delta } as MessageItem;
   }
-  if (kind === "plan" && item.type === "plan") {
-    return { ...item, text: item.text + delta };
-  }
-  if (kind === "command" && item.type === "command") {
+  if (kind === "reasoning" && type === "reasoning") {
+    const content = Array.isArray(record?.content) ? record.content : [];
+    const text = readTextContent(record?.text);
     return {
       ...item,
-      output: item.output + delta,
-      stdout: item.stdout + delta,
-    };
+      content: [...content, delta],
+      ...(text ? { text: text + delta } : {}),
+    } as MessageItem;
   }
-  if (kind === "fileChange" && item.type === "fileChange") {
-    return { ...item, diff: item.diff + delta };
+  if (kind === "plan" && type === "plan") {
+    return { ...item, text: readTextContent(record?.text) + delta } as MessageItem;
+  }
+  if (kind === "commandExecution" && type === "commandExecution") {
+    return {
+      ...item,
+      aggregatedOutput: `${readTextContent(record?.aggregatedOutput)}${delta}`,
+    } as MessageItem;
+  }
+  if (kind === "fileChange" && type === "fileChange") {
+    const existingChanges = Array.isArray(record?.changes) ? record.changes : [];
+    const changes = existingChanges.length
+      ? existingChanges.map((change, index) => {
+          const changeRecord = asRecord(change) ?? {};
+          return index === 0
+            ? { ...changeRecord, diff: readTextContent(changeRecord.diff) + delta }
+            : change;
+        })
+      : [{ path: "", diff: delta, kind: { type: "update", move_path: null } }];
+    return { ...item, changes } as MessageItem;
   }
   return item;
 }
 
 function createDeltaItem(
-  kind: "assistant" | "reasoning" | "plan" | "command" | "fileChange",
+  kind: "agentMessage" | "reasoning" | "plan" | "commandExecution" | "fileChange",
   itemId: string,
   delta: string,
 ): MessageItem {
-  if (kind === "assistant") return { type: "assistant", id: itemId, text: delta };
+  if (kind === "agentMessage") {
+    return {
+      type: "agentMessage",
+      id: itemId,
+      text: delta,
+      phase: null,
+      memoryCitation: null,
+    };
+  }
   if (kind === "reasoning") {
     return {
       type: "reasoning",
       id: itemId,
-      text: delta,
-      collapsed: true,
+      summary: [],
+      content: [delta],
       status: "active",
     };
   }
@@ -361,16 +384,17 @@ function createDeltaItem(
       status: "active",
     };
   }
-  if (kind === "command") {
+  if (kind === "commandExecution") {
     return {
-      type: "command",
+      type: "commandExecution",
       id: itemId,
       command: "",
-      status: "active",
-      output: delta,
-      stdout: delta,
-      stderr: "",
       cwd: null,
+      processId: null,
+      source: null,
+      status: "inProgress",
+      aggregatedOutput: delta,
+      commandActions: [],
       durationMs: null,
       exitCode: null,
     };
@@ -380,14 +404,14 @@ function createDeltaItem(
     id: itemId,
     path: "",
     diff: delta,
-    status: "active",
+    status: "inProgress",
   };
 }
 
 function appendDelta(
   detail: ThreadDetail,
   params: unknown,
-  kind: "assistant" | "reasoning" | "plan" | "command" | "fileChange",
+  kind: "agentMessage" | "reasoning" | "plan" | "commandExecution" | "fileChange",
 ): ThreadDetail {
   const record = asRecord(params);
   const turnId = readTurnId(params);
@@ -441,7 +465,7 @@ export function applyAppServerRealtimeNotification(
   }
 
   if (method === "item/started" || method === "item/completed") {
-    const normalizedItem = normalizeItem(record?.item, "item-live");
+    const normalizedItem = normalizeMessageItem(record?.item, 0);
     const item =
       method === "item/started"
         ? markItemStarted(normalizedItem)
@@ -456,7 +480,7 @@ export function applyAppServerRealtimeNotification(
   }
 
   if (method === "item/agentMessage/delta") {
-    return appendDelta(detail, params, "assistant");
+    return appendDelta(detail, params, "agentMessage");
   }
   if (method === "item/plan/delta") {
     return appendDelta(detail, params, "plan");
@@ -468,7 +492,7 @@ export function applyAppServerRealtimeNotification(
     return appendDelta(detail, params, "reasoning");
   }
   if (method === "item/commandExecution/outputDelta") {
-    return appendDelta(detail, params, "command");
+    return appendDelta(detail, params, "commandExecution");
   }
   if (method === "item/fileChange/outputDelta") {
     return appendDelta(detail, params, "fileChange");

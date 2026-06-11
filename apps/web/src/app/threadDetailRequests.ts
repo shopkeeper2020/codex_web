@@ -1,4 +1,11 @@
 import type { MessageItem, ThreadDetail, Turn } from '../api'
+import {
+  isLiveOperationItem as isOfficialLiveOperationItem,
+  isUserMessageLikeItem as isUserMessageItem,
+  readCommandOutput,
+  readFileChangeEntries,
+  readMessageItemText,
+} from './officialThreadItems'
 
 export type ThreadDetailRequestState = {
   activeRequestId: number
@@ -53,6 +60,14 @@ const RICH_ITEM_KEYS = [
   'stdoutText',
   'stderr',
   'stderrText',
+  'phase',
+  'memoryCitation',
+  'clientId',
+  'aggregatedOutput',
+  'commandActions',
+  'result',
+  'error',
+  'action',
   'diff',
   'patch',
   'command',
@@ -60,6 +75,14 @@ const RICH_ITEM_KEYS = [
   'path',
   'images',
 ]
+
+const INCOMING_PREFERRED_ITEM_KEYS = new Set([
+  'id',
+  'type',
+  'status',
+  'state',
+  'kind',
+])
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -85,48 +108,77 @@ function richerValue(incomingValue: unknown, currentValue: unknown): unknown {
     : incomingValue
 }
 
+function richerNonNullValue(incomingValue: unknown, currentValue: unknown): unknown {
+  if (incomingValue === null || incomingValue === undefined) return currentValue
+  if (currentValue === null || currentValue === undefined) return incomingValue
+  return richerValue(incomingValue, currentValue)
+}
+
+function mergedMessagePhase(incomingValue: unknown, currentValue: unknown): unknown {
+  if (incomingValue === 'final_answer' || currentValue !== 'final_answer') {
+    return incomingValue ?? currentValue
+  }
+  return currentValue
+}
+
+function mergedItemValue(
+  itemType: string,
+  key: string,
+  incomingValue: unknown,
+  currentValue: unknown,
+): unknown {
+  if (incomingValue === undefined) return currentValue
+  if (currentValue === undefined) return incomingValue
+  if (itemType === 'agentMessage') {
+    if (key === 'text') return incomingValue
+    if (key === 'phase') return mergedMessagePhase(incomingValue, currentValue)
+    if (key === 'memoryCitation') {
+      return richerNonNullValue(incomingValue, currentValue)
+    }
+  }
+  return richerValue(incomingValue, currentValue)
+}
+
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
 function itemDedupeSignature(item: MessageItem): string {
-  switch (item.type) {
-    case 'assistant':
-    case 'reasoning':
-    case 'toolOutput':
-    case 'plan':
-      return `${item.type}:${normalizeText(item.text)}`
-    case 'command':
-      return [
-        item.type,
-        item.command,
-        item.output,
-        item.stdout,
-        item.stderr,
-      ].map(normalizeText).join(':')
-    case 'fileChange':
-      return `${item.type}:${normalizeText(item.path)}:${normalizeText(item.diff)}`
-    default:
-      return ''
+  if (isUserMessageItem(item)) return ''
+  const command = readCommandOutput(item)
+  if (command) {
+    return [
+      item.type,
+      command.command,
+      command.output,
+      command.stdout,
+      command.stderr,
+    ].map(normalizeText).join(':')
   }
+  if (item.type === 'fileChange') {
+    const entries = readFileChangeEntries(item)
+    return `${item.type}:${entries.map((entry) => `${entry.path}:${entry.diff}`).join('|')}`
+  }
+  const text = readMessageItemText(item)
+  return text ? `${item.type}:${normalizeText(text)}` : ''
 }
 
 function userDedupeSignature(item: MessageItem): string {
-  return item.type === 'user' ? normalizeText(item.text) : ''
+  return isUserMessageItem(item) ? normalizeText(readMessageItemText(item)) : ''
 }
 
 function duplicateUserItemIndex(item: MessageItem, items: MessageItem[]): number {
   const signature = userDedupeSignature(item)
   if (!signature) return -1
   return items.findIndex((candidate) => {
-    if (candidate.type !== 'user') return false
+    if (!isUserMessageItem(candidate)) return false
     if (candidate.id === item.id) return true
     return userDedupeSignature(candidate) === signature
   })
 }
 
 function duplicateOutputItemIndex(item: MessageItem, items: MessageItem[]): number {
-  if (item.type === 'user') return -1
+  if (isUserMessageItem(item)) return -1
   const signature = itemDedupeSignature(item)
   if (!signature) return -1
   return items.findIndex((candidate) => {
@@ -136,25 +188,27 @@ function duplicateOutputItemIndex(item: MessageItem, items: MessageItem[]): numb
   })
 }
 
-function isDuplicateOutputItem(item: MessageItem, items: MessageItem[]): boolean {
-  return duplicateOutputItemIndex(item, items) >= 0
-}
-
 function mergeItemWithLiveData(incomingItem: MessageItem, currentItem: MessageItem): MessageItem {
   const incomingRecord = asRecord(incomingItem)
   const currentRecord = asRecord(currentItem)
   if (!incomingRecord || !currentRecord) return incomingItem
+  const itemType = typeof incomingRecord.type === 'string' ? incomingRecord.type : ''
 
   const merged: Record<string, unknown> = { ...currentRecord, ...incomingRecord }
-  for (const key of RICH_ITEM_KEYS) {
+  const keys = new Set([
+    ...Object.keys(currentRecord),
+    ...Object.keys(incomingRecord),
+    ...RICH_ITEM_KEYS,
+  ])
+  for (const key of keys) {
     if (!(key in incomingRecord) && !(key in currentRecord)) continue
-    merged[key] = richerValue(incomingRecord[key], currentRecord[key])
+    if (INCOMING_PREFERRED_ITEM_KEYS.has(key)) {
+      merged[key] = incomingRecord[key] === undefined ? currentRecord[key] : incomingRecord[key]
+      continue
+    }
+    merged[key] = mergedItemValue(itemType, key, incomingRecord[key], currentRecord[key])
   }
   return merged as MessageItem
-}
-
-function isLiveOperationItem(item: MessageItem): boolean {
-  return item.type === 'command' || item.type === 'fileChange' || item.type === 'toolOutput'
 }
 
 function isPendingTurnId(turnId: string): boolean {
@@ -225,7 +279,17 @@ function mergeTurnItems(incomingTurn: Turn, currentTurn: Turn): MessageItem[] {
       }
       continue
     }
-    if (isDuplicateOutputItem(currentItem, merged)) continue
+    const duplicateOutputIndex = duplicateOutputItemIndex(currentItem, merged)
+    if (duplicateOutputIndex >= 0) {
+      const duplicateOutputItem = merged[duplicateOutputIndex]
+      if (duplicateOutputItem) {
+        merged[duplicateOutputIndex] = mergeItemWithLiveData(
+          duplicateOutputItem,
+          currentItem,
+        )
+      }
+      continue
+    }
     merged.splice(
       currentItemInsertionIndex(currentIndex, currentTurn.items, merged),
       0,
@@ -250,13 +314,13 @@ function shouldCarryCurrentTurn(
   if (isPendingTurnId(turn.id)) return false
   return (
     turn.status === 'active' ||
-    turn.items.some(isLiveOperationItem) ||
+    turn.items.some(isOfficialLiveOperationItem) ||
     (preserveCurrentHistory && turn.items.length > 0)
   )
 }
 
 function hasLiveCarryReason(turn: Turn): boolean {
-  return turn.status === 'active' || turn.items.some(isLiveOperationItem)
+  return turn.status === 'active' || turn.items.some(isOfficialLiveOperationItem)
 }
 
 function mergedTurnAnchorIndex(turn: Turn, mergedTurns: Turn[]): number {

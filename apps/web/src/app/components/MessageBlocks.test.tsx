@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { MessageItem } from "../../api";
 import { formatReferencedPrompt } from "../textReferences";
+import { CommandBlockDetails } from "./messageBlocks/CommandExecutionBlock";
 import { renderMessageItem, renderTurnItems } from "./MessageBlocks";
 
 vi.mock("../../i18n/useI18n", () => ({
@@ -30,6 +31,19 @@ describe("MessageBlocks file references", () => {
     expect(html).toContain("15:31");
     expect(html).toContain("复制用户消息");
     expect(html).toContain("编辑用户消息");
+  });
+
+  it("keeps canonical userMessage text whitespace intact", () => {
+    const item: MessageItem = {
+      type: "userMessage",
+      id: "user-whitespace",
+      clientId: null,
+      content: [{ type: "text", text: "  keep surrounding whitespace  " }],
+    };
+
+    const html = renderToStaticMarkup(renderMessageItem(item, "completed")!);
+
+    expect(html).toContain("  keep surrounding whitespace  ");
   });
 
   it("keeps steering guidance messages without user action rows", () => {
@@ -292,5 +306,209 @@ describe("MessageBlocks file references", () => {
     expect(html).not.toContain("2 个工具输出");
     expect(html).not.toContain("未知内容");
     expect(html).not.toContain("webSearch");
+  });
+
+  it("summarizes canonical web search items without dropping them", () => {
+    const items: MessageItem[] = [
+      {
+        type: "webSearch",
+        id: "search-official-a",
+        query: "codex desktop ipc",
+        action: null,
+      },
+      {
+        type: "webSearch",
+        id: "search-official-b",
+        query: "agent message phase",
+        action: { type: "search", query: "agent message phase" },
+      },
+    ];
+
+    const html = renderToStaticMarkup(<>{renderTurnItems(items, "completed")}</>);
+
+    expect(html).toContain("已搜索网页");
+    expect(html).toContain("2 次");
+    expect(html).not.toContain("unsupported-message-item");
+    expect(html).not.toContain("未知内容");
+  });
+
+  it("does not infer active state for statusless canonical web search items", () => {
+    const items: MessageItem[] = [
+      {
+        type: "webSearch",
+        id: "search-statusless",
+        query: "codex desktop ipc",
+        action: null,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<>{renderTurnItems(items, "active")}</>);
+
+    expect(html).toContain("已搜索网页");
+    expect(html).not.toContain("正在搜索网页");
+  });
+
+  it("shows canonical active web search items as still searching", () => {
+    const items: MessageItem[] = [
+      {
+        type: "webSearch",
+        id: "search-active",
+        query: "codex desktop ipc",
+        action: null,
+        status: "active",
+      },
+    ];
+
+    const html = renderToStaticMarkup(<>{renderTurnItems(items, "active")}</>);
+
+    expect(html).toContain("正在搜索网页");
+    expect(html).not.toContain("已搜索网页");
+  });
+
+  it("renders canonical MCP and dynamic tool call items", () => {
+    const mcpItem: MessageItem = {
+      type: "mcpToolCall",
+      id: "mcp-tool-a",
+      server: "filesystem",
+      tool: "read_file",
+      status: "completed",
+      arguments: { path: "README.md" },
+      pluginId: null,
+      result: { content: "ok" },
+      error: null,
+      durationMs: null,
+    };
+    const dynamicItem: MessageItem = {
+      type: "dynamicToolCall",
+      id: "dynamic-tool-a",
+      namespace: "web",
+      tool: "search_query",
+      arguments: { q: "codex" },
+      status: "completed",
+      contentItems: [{ type: "text", text: "done" }],
+      success: true,
+      durationMs: null,
+    };
+
+    const html = renderToStaticMarkup(
+      <>
+        {renderMessageItem(mcpItem, "completed")}
+        {renderMessageItem(dynamicItem, "completed")}
+      </>,
+    );
+
+    expect(html).toContain("filesystem / read_file");
+    expect(html).toContain("web / search_query");
+    expect(html).not.toContain("unsupported-message-item");
+  });
+
+  it("renders future official item types through the diagnostic fallback", () => {
+    const item = {
+      type: "futureOfficialItem",
+      id: "future-official-a",
+      status: "completed",
+      futurePayload: { value: "kept" },
+    } as unknown as MessageItem;
+
+    const html = renderToStaticMarkup(renderMessageItem(item, "completed")!);
+
+    expect(html).toContain("未知官方内容");
+    expect(html).toContain("futureOfficialItem");
+    expect(html).not.toContain("unsupported-message-item");
+  });
+
+  it("shows declined commands as rejected instead of successful", () => {
+    const item: MessageItem = {
+      type: "commandExecution",
+      id: "command-declined",
+      command: "rm -rf tmp",
+      status: "declined",
+      aggregatedOutput: null,
+      cwd: null,
+      processId: null,
+      source: null,
+      commandActions: [],
+      durationMs: null,
+      exitCode: null,
+    };
+
+    const html = renderToStaticMarkup(<CommandBlockDetails item={item} />);
+
+    expect(html).toContain("已拒绝");
+    expect(html).not.toContain("成功");
+  });
+
+  it("collapses completed process items once a final answer starts", () => {
+    const items: MessageItem[] = [
+      {
+        type: "userMessage",
+        id: "user-final-collapse",
+        clientId: null,
+        content: [{ type: "text", text: "跑一下测试。" }],
+      },
+      {
+        type: "commandExecution",
+        id: "command-final-collapse",
+        command: "pnpm test",
+        status: "completed",
+        aggregatedOutput: "ok",
+        cwd: null,
+        processId: null,
+        source: null,
+        commandActions: [],
+        durationMs: null,
+        exitCode: 0,
+      },
+      {
+        type: "agentMessage",
+        id: "final-answer",
+        text: "测试已经通过。",
+        phase: "final_answer",
+        memoryCitation: null,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<>{renderTurnItems(items, "active")}</>);
+
+    expect(html).toContain("已处理");
+    expect(html).toContain("测试已经通过。");
+    expect(html).toContain("跑一下测试。");
+    expect(html).not.toContain("pnpm test");
+  });
+
+  it("renders statusless reasoning as completed inside processed context", () => {
+    const items: MessageItem[] = [
+      {
+        type: "reasoning",
+        id: "reasoning-processed",
+        summary: ["检查测试输出"],
+        content: [],
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <>{renderTurnItems(items, "active", { disableProcessCollapse: true, processedContext: true })}</>,
+    );
+
+    expect(html).toContain("已思考");
+    expect(html).not.toContain("正在思考");
+  });
+
+  it("keeps the latest statusless reasoning active in a normal active turn", () => {
+    const items: MessageItem[] = [
+      {
+        type: "reasoning",
+        id: "reasoning-active",
+        summary: ["检查测试输出"],
+        content: [],
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <>{renderTurnItems(items, "active", { disableProcessCollapse: true })}</>,
+    );
+
+    expect(html).toContain("正在思考");
+    expect(html).not.toContain("已思考");
   });
 });

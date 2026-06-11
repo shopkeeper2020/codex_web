@@ -59,8 +59,14 @@ describe("app-server realtime reducer", () => {
       },
     );
 
-    expect(second?.turns[0]?.items).toEqual([
-      { type: "assistant", id: "assistant-a", text: "清晨的車站" },
+    expect(second?.turns[0]?.items).toMatchObject([
+      {
+        type: "agentMessage",
+        id: "assistant-a",
+        text: "清晨的車站",
+        phase: null,
+        memoryCitation: null,
+      },
     ]);
   });
 
@@ -79,13 +85,16 @@ describe("app-server realtime reducer", () => {
       );
     }
 
-    expect(detail?.turns[0]?.items).toEqual([
+    expect(detail?.turns[0]?.items).toMatchObject([
       {
-        type: "assistant",
+        type: "agentMessage",
         id: "assistant-a",
         text: "清单：\n\n- **stream-bold**\n- `inline-code`\n",
+        phase: null,
+        memoryCitation: null,
       },
     ]);
+    expect(detail?.turns[0]?.items[0]).not.toHaveProperty("status");
   });
 
   it("preserves markdown table line breaks from live assistant content arrays", () => {
@@ -107,11 +116,13 @@ describe("app-server realtime reducer", () => {
       },
     );
 
-    expect(detail?.turns[0]?.items).toEqual([
+    expect(detail?.turns[0]?.items).toMatchObject([
       {
-        type: "assistant",
+        type: "agentMessage",
         id: "assistant-a",
         text: "| 日期 | 北京 |\n| --- | --- |\n| 6月4日 | 多云 |",
+        phase: null,
+        memoryCitation: null,
       },
     ]);
   });
@@ -137,8 +148,91 @@ describe("app-server realtime reducer", () => {
       },
     );
 
-    expect(completed?.turns[0]?.items).toEqual([
-      { type: "assistant", id: "assistant-a", text: "final" },
+    expect(completed?.turns[0]?.items).toMatchObject([
+      {
+        type: "agentMessage",
+        id: "assistant-a",
+        text: "final",
+        phase: null,
+        memoryCitation: null,
+      },
+    ]);
+  });
+
+  it("keeps richer official fields across same-id item updates", () => {
+    const agentStarted = applyAppServerRealtimeNotification(
+      createDetail(),
+      "item/started",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "agentMessage",
+          id: "assistant-a",
+          text: "",
+          phase: "final_answer",
+          memoryCitation: { title: "live citation" },
+        },
+      },
+    );
+    const agentCompleted = applyAppServerRealtimeNotification(
+      agentStarted,
+      "item/completed",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "agentMessage",
+          id: "assistant-a",
+          text: "final",
+          phase: null,
+          memoryCitation: null,
+        },
+      },
+    );
+    const searchStarted = applyAppServerRealtimeNotification(
+      agentCompleted,
+      "item/started",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "webSearch",
+          id: "search-a",
+          query: "codex desktop ipc",
+          action: { type: "search", query: "codex desktop ipc" },
+        },
+      },
+    );
+    const searchCompleted = applyAppServerRealtimeNotification(
+      searchStarted,
+      "item/completed",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "webSearch",
+          id: "search-a",
+          query: "codex desktop ipc",
+          action: null,
+        },
+      },
+    );
+
+    expect(searchCompleted?.turns[0]?.items).toMatchObject([
+      {
+        type: "agentMessage",
+        id: "assistant-a",
+        text: "final",
+        phase: "final_answer",
+        memoryCitation: { title: "live citation" },
+      },
+      {
+        type: "webSearch",
+        id: "search-a",
+        query: "codex desktop ipc",
+        action: { type: "search", query: "codex desktop ipc" },
+      },
     ]);
   });
 
@@ -173,24 +267,52 @@ describe("app-server realtime reducer", () => {
       },
     );
 
-    expect(second?.turns[0]?.items).toEqual([
+    expect(second?.turns[0]?.items).toMatchObject([
       {
-        type: "toolOutput",
+        type: "mcpToolCall",
         id: "tool-a",
-        title: "weather.lookup",
-        text: "南京 29C",
-        status: "active",
-        rawType: "mcpToolOutput",
+        server: "weather.lookup",
+        tool: "mcpToolOutput",
+        result: "南京 29C",
+        status: "inProgress",
       },
       {
-        type: "toolOutput",
+        type: "webSearch",
         id: "search-a",
-        title: "Web search: 南京天气",
-        text: "未来一周有雨",
+        query: "南京天气",
+        results: [{ text: "未来一周有雨" }],
         status: "completed",
-        rawType: "webSearch",
+        action: null,
       },
     ]);
+    expect(second?.turns[0]?.items[1]).toHaveProperty("status", "completed");
+  });
+
+  it("does not synthesize status for statusless completed web search items", () => {
+    const detail = applyAppServerRealtimeNotification(
+      createDetail(),
+      "item/completed",
+      {
+        threadId: "thread-a",
+        turnId: "turn-a",
+        item: {
+          type: "webSearch",
+          id: "search-a",
+          query: "南京天气",
+          action: null,
+        },
+      },
+    );
+
+    expect(detail?.turns[0]?.items).toMatchObject([
+      {
+        type: "webSearch",
+        id: "search-a",
+        query: "南京天气",
+        action: null,
+      },
+    ]);
+    expect(detail?.turns[0]?.items[0]).not.toHaveProperty("status");
   });
 
   it("normalizes started web search items before completion", () => {
@@ -211,16 +333,18 @@ describe("app-server realtime reducer", () => {
       },
     );
 
-    expect(detail?.turns[0]?.items).toEqual([
+    expect(detail?.turns[0]?.items).toMatchObject([
       {
-        type: "toolOutput",
+        type: "webSearch",
         id: "search-a",
-        title: "Web search: https://m.nmc.cn/publish/forecast/AGD/shenzhen.html",
-        text: "",
-        status: "active",
-        rawType: "webSearch",
+        query: "https://m.nmc.cn/publish/forecast/AGD/shenzhen.html",
+        action: {
+          type: "openPage",
+          url: "https://m.nmc.cn/publish/forecast/AGD/shenzhen.html",
+        },
       },
     ]);
+    expect(detail?.turns[0]?.items[0]).not.toHaveProperty("status");
   });
 
   it("waits for official user items instead of adopting pending turns", () => {
@@ -266,12 +390,17 @@ describe("app-server realtime reducer", () => {
         items: [],
       },
     ]);
-    expect(userStarted?.turns).toEqual([
+    expect(userStarted?.turns).toMatchObject([
       {
         id: "turn-official",
         status: "active",
         items: [
-          { type: "user", id: "official-user-1", text: "再整理北京的。" },
+          {
+            type: "userMessage",
+            id: "official-user-1",
+            clientId: null,
+            content: [{ type: "text", text: "再整理北京的。" }],
+          },
         ],
       },
     ]);

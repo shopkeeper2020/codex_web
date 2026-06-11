@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ThreadDetail } from '../api'
+import type { MessageItem, ThreadDetail } from '../api'
 import {
   INITIAL_THREAD_DETAIL_REQUEST_STATE,
   beginThreadDetailRequest,
@@ -201,6 +201,206 @@ describe('thread detail request ordering', () => {
     ])
   })
 
+  it('merges richer live official fields into duplicate output items with different ids', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            {
+              type: 'agentMessage',
+              id: 'agent-live',
+              text: 'streamed answer',
+              phase: 'final_answer',
+              memoryCitation: { title: 'live citation' },
+              futureTrace: 'rich-live-field',
+            },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: false,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'completed',
+          items: [
+            {
+              type: 'agentMessage',
+              id: 'agent-final',
+              text: 'streamed answer',
+              phase: null,
+              memoryCitation: null,
+              futureTrace: '',
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items).toEqual([
+      {
+        type: 'agentMessage',
+        id: 'agent-final',
+        text: 'streamed answer',
+        phase: 'final_answer',
+        memoryCitation: { title: 'live citation' },
+        futureTrace: 'rich-live-field',
+      },
+    ])
+  })
+
+  it('prefers authoritative incoming agent text over longer stale live text', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            {
+              type: 'agentMessage',
+              id: 'agent-a',
+              text: 'long stale streamed answer that should not win',
+              phase: 'final_answer',
+              memoryCitation: { title: 'live citation' },
+            },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: false,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'completed',
+          items: [
+            {
+              type: 'agentMessage',
+              id: 'agent-a',
+              text: 'short final',
+              phase: null,
+              memoryCitation: null,
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items[0]).toMatchObject({
+      type: 'agentMessage',
+      id: 'agent-a',
+      text: 'short final',
+      phase: 'final_answer',
+      memoryCitation: { title: 'live citation' },
+    })
+  })
+
+  it('preserves final answer phase over incoming commentary snapshots', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            {
+              type: 'agentMessage',
+              id: 'agent-a',
+              text: 'streamed final text',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: false,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'completed',
+          items: [
+            {
+              type: 'agentMessage',
+              id: 'agent-a',
+              text: 'authoritative final text',
+              phase: 'commentary',
+              memoryCitation: null,
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items[0]).toMatchObject({
+      type: 'agentMessage',
+      id: 'agent-a',
+      text: 'authoritative final text',
+      phase: 'final_answer',
+    })
+  })
+
+  it('preserves richer live memory citations over sparse detail snapshots', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            {
+              type: 'agentMessage',
+              id: 'agent-a',
+              text: 'streamed final text',
+              phase: 'final_answer',
+              memoryCitation: {
+                title: 'rich live citation',
+                source: 'memory',
+                metadata: { line: 12 },
+              },
+            },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: false,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'completed',
+          items: [
+            {
+              type: 'agentMessage',
+              id: 'agent-a',
+              text: 'authoritative final text',
+              phase: null,
+              memoryCitation: {},
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items[0]).toMatchObject({
+      type: 'agentMessage',
+      id: 'agent-a',
+      text: 'authoritative final text',
+      phase: 'final_answer',
+      memoryCitation: {
+        title: 'rich live citation',
+        source: 'memory',
+        metadata: { line: 12 },
+      },
+    })
+  })
+
   it('does not duplicate same streamed command output when ids differ', () => {
     const current = detail('thread-a', {
       inProgress: true,
@@ -303,6 +503,118 @@ describe('thread detail request ordering', () => {
       { type: 'user', id: 'user-final', text: '同一条用户输入为什么出现2次？', images: [image] },
       { type: 'assistant', id: 'assistant-a', text: '我来检查。' },
     ])
+  })
+
+  it('does not duplicate the same official userMessage when live and detail ids differ', () => {
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            {
+              type: 'userMessage',
+              id: 'user-live',
+              clientId: null,
+              content: [{ type: 'text', text: '同一条 official 用户输入。' }],
+            },
+            {
+              type: 'agentMessage',
+              id: 'assistant-a',
+              text: '我来检查。',
+              phase: null,
+              memoryCitation: null,
+            },
+          ],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [
+            {
+              type: 'userMessage',
+              id: 'user-final',
+              clientId: null,
+              content: [{ type: 'text', text: '同一条 official 用户输入。' }],
+            },
+            {
+              type: 'agentMessage',
+              id: 'assistant-a',
+              text: '我来检查。',
+              phase: null,
+              memoryCitation: null,
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items).toEqual([
+      {
+        type: 'userMessage',
+        id: 'user-final',
+        clientId: null,
+        content: [{ type: 'text', text: '同一条 official 用户输入。' }],
+      },
+      {
+        type: 'agentMessage',
+        id: 'assistant-a',
+        text: '我来检查。',
+        phase: null,
+        memoryCitation: null,
+      },
+    ])
+  })
+
+  it('preserves richer unknown official fields while merging detail snapshots', () => {
+    const liveFutureItem = {
+      type: 'futureOfficialItem',
+      id: 'future-a',
+      status: 'active',
+      futurePayload: { entries: ['live-a', 'live-b'], note: 'richer live payload' },
+      diagnosticTrace: 'richer-live-trace',
+    } as unknown as MessageItem
+    const sparseFutureItem = {
+      type: 'futureOfficialItem',
+      id: 'future-a',
+      status: 'completed',
+      futurePayload: null,
+      diagnosticTrace: '',
+    } as unknown as MessageItem
+    const current = detail('thread-a', {
+      inProgress: true,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'active',
+          items: [liveFutureItem],
+        },
+      ],
+    })
+    const incoming = detail('thread-a', {
+      inProgress: false,
+      turns: [
+        {
+          id: 'turn-a',
+          status: 'completed',
+          items: [sparseFutureItem],
+        },
+      ],
+    })
+
+    expect(mergeThreadDetailWithLiveItems(current, incoming)?.turns[0]?.items[0]).toMatchObject({
+      type: 'futureOfficialItem',
+      id: 'future-a',
+      status: 'completed',
+      futurePayload: { entries: ['live-a', 'live-b'], note: 'richer live payload' },
+      diagnosticTrace: 'richer-live-trace',
+    })
   })
 
   it('preserves existing history when an in-progress detail snapshot only has the active turn', () => {

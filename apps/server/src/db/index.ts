@@ -4,27 +4,19 @@ import {
   drizzle,
   type BetterSQLite3Database,
 } from "drizzle-orm/better-sqlite3";
-import type {
-  Attachment,
-  Project,
-  Thread,
-  ThreadDetail,
-} from "@codex-web/domain";
+import type { Attachment } from "@codex-web/domain";
 import { ensureDirectory, type RuntimeConfig } from "@codex-web/config";
 import * as schema from "./schema.js";
 
 export type DatabaseStoreStatus = {
   path: string;
-  projectCount: number;
-  threadCount: number;
-  threadDetailCount: number;
   attachmentCount: number;
 };
 
 export type DerivedCacheCleanupResult = {
-  projectCount: number;
-  threadCount: number;
-  threadDetailCount: number;
+  legacyProjectCount: number;
+  legacyThreadCount: number;
+  legacyThreadDetailCount: number;
   legacyOfficialStreamStateCount: number;
 };
 
@@ -50,122 +42,20 @@ export class DatabaseStore {
     this.sqlite.close();
   }
 
-  upsertProjects(projects: Project[]): void {
-    const nowIso = new Date().toISOString();
-    const statement = this.sqlite.prepare(`
-      INSERT INTO projects (id, name, path, source, updated_at_iso)
-      VALUES (@id, @name, @path, @source, @updatedAtIso)
-      ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        path = excluded.path,
-        source = excluded.source,
-        updated_at_iso = excluded.updated_at_iso
-    `);
-    const transaction = this.sqlite.transaction((items: Project[]) => {
-      for (const project of items) {
-        statement.run({ ...project, updatedAtIso: nowIso });
-      }
-    });
-    transaction(projects);
-  }
-
-  listProjects(): Project[] {
-    const rows = this.sqlite
-      .prepare(
-        `SELECT * FROM projects ORDER BY name COLLATE NOCASE ASC LIMIT 500`,
-      )
-      .all();
-    return rows.map((row) => this.mapProjectRow(row));
-  }
-
-  upsertThreads(threads: Thread[]): void {
-    const nowIso = new Date().toISOString();
-    const statement = this.sqlite.prepare(`
-      INSERT INTO threads (
-        id, title, project_id, path, updated_at_iso, in_progress,
-        owner_client_id, owner_kind, owner_source, cached_at_iso
-      )
-      VALUES (
-        @id, @title, @projectId, @path, @updatedAtIso, @inProgress,
-        @ownerClientId, @ownerKind, @ownerSource, @cachedAtIso
-      )
-      ON CONFLICT(id) DO UPDATE SET
-        title = excluded.title,
-        project_id = excluded.project_id,
-        path = excluded.path,
-        updated_at_iso = excluded.updated_at_iso,
-        in_progress = excluded.in_progress,
-        owner_client_id = excluded.owner_client_id,
-        owner_kind = excluded.owner_kind,
-        owner_source = excluded.owner_source,
-        cached_at_iso = excluded.cached_at_iso
-    `);
-    const transaction = this.sqlite.transaction((items: Thread[]) => {
-      for (const thread of items) {
-        statement.run({
-          id: thread.id,
-          title: thread.title,
-          projectId: thread.projectId,
-          path: thread.path,
-          updatedAtIso: thread.updatedAtIso,
-          inProgress: thread.inProgress ? 1 : 0,
-          ownerClientId: thread.owner?.clientId ?? null,
-          ownerKind: thread.owner?.kind ?? null,
-          ownerSource: thread.owner?.source ?? null,
-          cachedAtIso: nowIso,
-        });
-      }
-    });
-    transaction(threads);
-  }
-
-  upsertThreadDetail(
-    threadId: string,
-    detail: ThreadDetail,
-    source: string,
-  ): void {
-    this.sqlite
-      .prepare(
-        `
-      INSERT INTO thread_details (thread_id, source, detail_json, cached_at_iso)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(thread_id) DO UPDATE SET
-        source = excluded.source,
-        detail_json = excluded.detail_json,
-        cached_at_iso = excluded.cached_at_iso
-    `,
-      )
-      .run(threadId, source, JSON.stringify(detail), new Date().toISOString());
-  }
-
-  readThreadDetail(threadId: string): ThreadDetail | null {
-    const normalizedThreadId = threadId.trim();
-    if (!normalizedThreadId) return null;
-    const row = this.sqlite
-      .prepare("SELECT detail_json FROM thread_details WHERE thread_id = ?")
-      .get(normalizedThreadId) as { detail_json?: unknown } | undefined;
-    if (typeof row?.detail_json !== "string") return null;
-    try {
-      return JSON.parse(row.detail_json) as ThreadDetail;
-    } catch {
-      return null;
-    }
-  }
-
   clearDerivedCaches(): DerivedCacheCleanupResult {
     const before = {
-      projectCount: this.readCount("projects"),
-      threadCount: this.readCount("threads"),
-      threadDetailCount: this.readCount("thread_details"),
+      legacyProjectCount: this.readCountIfTableExists("projects"),
+      legacyThreadCount: this.readCountIfTableExists("threads"),
+      legacyThreadDetailCount: this.readCountIfTableExists("thread_details"),
       legacyOfficialStreamStateCount: this.readCountIfTableExists(
         "official_stream_states",
       ),
     };
     const transaction = this.sqlite.transaction(() => {
       this.sqlite.exec("DROP TABLE IF EXISTS official_stream_states");
-      this.sqlite.prepare("DELETE FROM thread_details").run();
-      this.sqlite.prepare("DELETE FROM threads").run();
-      this.sqlite.prepare("DELETE FROM projects").run();
+      this.sqlite.exec("DROP TABLE IF EXISTS thread_details");
+      this.sqlite.exec("DROP TABLE IF EXISTS threads");
+      this.sqlite.exec("DROP TABLE IF EXISTS projects");
     });
     transaction();
     return before;
@@ -216,10 +106,6 @@ export class DatabaseStore {
   deleteThread(threadId: string): void {
     const transaction = this.sqlite.transaction((id: string) => {
       this.sqlite.prepare("DELETE FROM pinned_threads WHERE thread_id = ?").run(id);
-      this.sqlite
-        .prepare("DELETE FROM thread_details WHERE thread_id = ?")
-        .run(id);
-      this.sqlite.prepare("DELETE FROM threads WHERE id = ?").run(id);
     });
     transaction(threadId);
   }
@@ -355,9 +241,6 @@ export class DatabaseStore {
   status(): DatabaseStoreStatus {
     return {
       path: this.path,
-      projectCount: this.readCount("projects"),
-      threadCount: this.readCount("threads"),
-      threadDetailCount: this.readCount("thread_details"),
       attachmentCount: this.readCount("attachments"),
     };
   }
@@ -365,37 +248,6 @@ export class DatabaseStore {
   private migrate(): void {
     this.sqlite.pragma("journal_mode = WAL");
     this.sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        path TEXT,
-        source TEXT NOT NULL,
-        updated_at_iso TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS threads (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        project_id TEXT,
-        path TEXT,
-        updated_at_iso TEXT,
-        in_progress INTEGER NOT NULL,
-        owner_client_id TEXT,
-        owner_kind TEXT,
-        owner_source TEXT,
-        cached_at_iso TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_threads_project_id ON threads(project_id);
-      CREATE INDEX IF NOT EXISTS idx_threads_updated_at_iso ON threads(updated_at_iso);
-
-      CREATE TABLE IF NOT EXISTS thread_details (
-        thread_id TEXT PRIMARY KEY,
-        source TEXT NOT NULL,
-        detail_json TEXT NOT NULL,
-        cached_at_iso TEXT NOT NULL
-      );
-
       CREATE TABLE IF NOT EXISTS pinned_threads (
         thread_id TEXT PRIMARY KEY,
         pinned_at_iso TEXT NOT NULL
@@ -433,16 +285,6 @@ export class DatabaseStore {
       )
       .get(table);
     return tableRow ? this.readCount(table) : 0;
-  }
-
-  private mapProjectRow(row: unknown): Project {
-    const record = row as Record<string, unknown>;
-    return {
-      id: String(record.id ?? ""),
-      name: String(record.name ?? ""),
-      path: typeof record.path === "string" ? record.path : null,
-      source: record.source === "web-favorite" ? "web-favorite" : "official",
-    };
   }
 
   private mapAttachmentRow(row: unknown): Attachment {

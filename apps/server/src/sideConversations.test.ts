@@ -131,8 +131,8 @@ describe("attachOfficialSideConversations", () => {
       "ui和ux有什么区别？",
     ]);
     expect(hydrated?.sideConversations[0]?.turns[0]?.items).toMatchObject([
-      { type: "user", text: "ui和ux有什么区别？" },
-      { type: "assistant", text: "UI 是界面，UX 是体验。" },
+      { type: "userMessage" },
+      { type: "agentMessage", text: "UI 是界面，UX 是体验。" },
     ]);
   });
 

@@ -304,7 +304,6 @@ describe("thread detail route", () => {
         turns: [{ id: "turn-app-server" }],
       },
     });
-    expect(context.database.status().threadDetailCount).toBe(0);
   });
 
   it("does not expose pending local turn snapshots as Web domain detail", async () => {
@@ -340,7 +339,7 @@ describe("thread detail route", () => {
         turns: [
           {
             id: "turn-app-server",
-            items: [{ type: "assistant", text: "persisted" }],
+            items: [{ type: "agentMessage", text: "persisted" }],
           },
         ],
       },
@@ -381,8 +380,12 @@ describe("thread detail route", () => {
           {
             id: "turn-sparse",
             items: [
-              { type: "user", id: "item-user", text: "hello" },
-              { type: "assistant", id: "item-agent", text: "world" },
+              {
+                type: "userMessage",
+                id: "item-user",
+                content: [{ type: "text", text: "hello" }],
+              },
+              { type: "agentMessage", id: "item-agent", text: "world" },
             ],
           },
         ],
@@ -413,7 +416,6 @@ describe("thread detail route", () => {
         params: { threadId: "thread-app-server", includeTurns: true },
       },
     ]);
-    expect(context.database.status().threadDetailCount).toBe(0);
     expect(officialIpc.isOwnedConversation("thread-app-server")).toBe(true);
     expect(
       officialIpc.canBroadcastOwnedConversation("thread-app-server"),
@@ -422,27 +424,6 @@ describe("thread detail route", () => {
 
   it("does not use cached app-server detail during transient empty rollout reads", async () => {
     const { context, appServer } = await createHarness();
-    context.database.upsertThreadDetail(
-      "thread-created",
-      {
-        thread: {
-          id: "thread-created",
-          title: "Untitled",
-          projectId: "C:\\workspace\\codex_web",
-          path: "C:\\workspace\\codex_web",
-          updatedAtIso: "2026-06-01T00:00:00.000Z",
-          inProgress: false,
-          pinned: false,
-          gitInfo: null,
-          owner: null,
-        },
-        goal: null,
-        turns: [],
-        subAgents: [],
-        sideConversations: [],
-      },
-      "app-server",
-    );
     appServer.threadReadError = new Error(
       "failed to read thread: thread-store internal error: failed to read thread C:\\Users\\lwm\\.codex\\sessions\\2026\\06\\01\\rollout-thread-created.jsonl: rollout at C:\\Users\\lwm\\.codex\\sessions\\2026\\06\\01\\rollout-thread-created.jsonl is empty",
     );
@@ -533,7 +514,7 @@ describe("thread detail route", () => {
           {
             id: "turn-active-filled",
             status: "active",
-            items: [{ type: "assistant", text: "live tail" }],
+            items: [{ type: "agentMessage", text: "live tail" }],
           },
         ],
       },
@@ -555,7 +536,6 @@ describe("thread detail route", () => {
         ],
       },
     });
-    expect(context.database.status().threadDetailCount).toBe(0);
   });
 
   it("preserves official live state when readonly app-server detail is stale", async () => {
@@ -625,7 +605,6 @@ describe("thread detail route", () => {
         },
       },
     );
-    expect(context.database.status().threadDetailCount).toBe(0);
   });
 
   it("keeps app-server item order while merging richer official live items", async () => {
@@ -654,13 +633,21 @@ describe("thread detail route", () => {
                 type: "agentMessage",
                 id: "assistant-final",
                 text: "live partial",
+                phase: "final_answer",
+                memoryCitation: { source: "live-memory" },
               },
               {
                 type: "commandExecution",
                 id: "command-live",
                 command: "pnpm --filter @codex-web/web test",
                 status: "completed",
-                output: "ok",
+                aggregatedOutput: "ok",
+              },
+              {
+                type: "webSearch",
+                id: "search-live",
+                query: "codex desktop ipc",
+                action: { type: "search", query: "codex desktop ipc" },
               },
             ],
           },
@@ -701,6 +688,14 @@ describe("thread detail route", () => {
                 type: "agentMessage",
                 id: "assistant-final",
                 text: "app-server final answer",
+                phase: null,
+                memoryCitation: null,
+              },
+              {
+                type: "webSearch",
+                id: "search-live",
+                query: "codex desktop ipc",
+                action: null,
               },
             ],
           },
@@ -728,20 +723,28 @@ describe("thread detail route", () => {
             status: "active",
             items: [
               {
-                type: "user",
+                type: "userMessage",
                 id: "user-final",
-                text: "同一条用户输入为什么出现2次？",
+                content: [{ type: "text", text: "同一条用户输入为什么出现2次？" }],
               },
               {
-                type: "assistant",
+                type: "agentMessage",
                 id: "assistant-final",
                 text: "app-server final answer",
+                phase: "final_answer",
+                memoryCitation: { source: "live-memory" },
               },
               {
-                type: "command",
+                type: "commandExecution",
                 id: "command-live",
                 command: "pnpm --filter @codex-web/web test",
-                output: "ok",
+                aggregatedOutput: "ok",
+              },
+              {
+                type: "webSearch",
+                id: "search-live",
+                query: "codex desktop ipc",
+                action: { type: "search", query: "codex desktop ipc" },
               },
             ],
           },
@@ -830,9 +833,9 @@ describe("thread detail route", () => {
             id: "turn-live",
             status: "active",
             items: [
-              { type: "assistant", text: "live intro" },
+              { type: "agentMessage", text: "live intro" },
               {
-                type: "command",
+                type: "commandExecution",
                 id: "call-live-command",
                 command: "pnpm --filter @codex-web/web typecheck",
               },
@@ -938,9 +941,9 @@ describe("thread detail route", () => {
             id: "turn-live",
             status: "active",
             items: [
-              { type: "assistant", id: "msg-live-text", text: liveText },
+              { type: "agentMessage", id: "msg-live-text", text: liveText },
               {
-                type: "command",
+                type: "commandExecution",
                 id: "call-live-command",
                 command: "rg adapter apps/server/src",
               },
@@ -1034,7 +1037,7 @@ describe("thread detail route", () => {
           {
             id: "turn-stale-active",
             status: "completed",
-            items: [{ type: "assistant", text: "finished" }],
+            items: [{ type: "agentMessage", text: "finished" }],
           },
         ],
       },

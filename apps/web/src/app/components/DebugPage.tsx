@@ -243,7 +243,7 @@ export function DebugPage({ onBack }: { onBack: () => void }): ReactElement {
           <DebugCard
             icon={<Database size={17} />}
             title="SQLite cache"
-            value={cache ? `${cache.threadCount} threads` : "loading"}
+            value={cache ? `${cache.attachmentCount} attachments` : "loading"}
             detail={cache?.path ?? "cache status pending"}
           />
           <DebugCard

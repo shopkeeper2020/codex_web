@@ -203,7 +203,7 @@ describe("thread rename route", () => {
         name: "Renamed official thread",
       },
     });
-    expect(context.database.readThreadDetail("thread-official")).toBeNull();
+    expect(context.database.status().attachmentCount).toBe(0);
   });
 
   it("does not write detail cache when external ownership disappears during rename refresh", async () => {
@@ -231,7 +231,7 @@ describe("thread rename route", () => {
 
     expect(response.statusCode).toBe(200);
     expect(officialIpc.getThreadStreamState("thread-official")).toBeNull();
-    expect(context.database.readThreadDetail("thread-official")).toBeNull();
+    expect(context.database.status().attachmentCount).toBe(0);
   });
 
   it("rebroadcasts rename snapshots only for already Web-owned threads", async () => {

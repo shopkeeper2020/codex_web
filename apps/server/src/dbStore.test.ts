@@ -37,31 +37,29 @@ afterEach(async () => {
 });
 
 describe("database store", () => {
-  it("does not create an official stream state table for new databases", async () => {
+  it("creates only Web-owned tables for new databases", async () => {
     const root = await createTempRoot();
     const config = loadRuntimeConfig(root);
     const database = DatabaseStore.open(config);
     try {
       expect(database.status()).toEqual({
         path: join(config.dataDir, "codex_web.sqlite"),
-        projectCount: 0,
-        threadCount: 0,
-        threadDetailCount: 0,
         attachmentCount: 0,
       });
     } finally {
       database.close();
     }
 
-    expect(
-      tableExists(
-        join(config.dataDir, "codex_web.sqlite"),
-        "official_stream_states",
-      ),
-    ).toBe(false);
+    const dbPath = join(config.dataDir, "codex_web.sqlite");
+    expect(tableExists(dbPath, "pinned_threads")).toBe(true);
+    expect(tableExists(dbPath, "attachments")).toBe(true);
+    expect(tableExists(dbPath, "projects")).toBe(false);
+    expect(tableExists(dbPath, "threads")).toBe(false);
+    expect(tableExists(dbPath, "thread_details")).toBe(false);
+    expect(tableExists(dbPath, "official_stream_states")).toBe(false);
   });
 
-  it("drops the legacy official stream state table during derived cache cleanup", async () => {
+  it("drops legacy official derived cache tables during cleanup", async () => {
     const root = await createTempRoot();
     const config = loadRuntimeConfig(root);
     await mkdir(config.dataDir, { recursive: true });
@@ -69,6 +67,47 @@ describe("database store", () => {
     const sqlite = new SqliteDatabase(dbPath);
     try {
       sqlite.exec(`
+        CREATE TABLE projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          path TEXT,
+          source TEXT NOT NULL,
+          updated_at_iso TEXT NOT NULL
+        );
+        INSERT INTO projects (id, name, path, source, updated_at_iso)
+        VALUES ('project-1', 'Project', 'C:\\workspace\\project', 'official', '2026-06-01T00:00:00.000Z');
+
+        CREATE TABLE threads (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          project_id TEXT,
+          path TEXT,
+          updated_at_iso TEXT,
+          in_progress INTEGER NOT NULL,
+          owner_client_id TEXT,
+          owner_kind TEXT,
+          owner_source TEXT,
+          cached_at_iso TEXT NOT NULL
+        );
+        INSERT INTO threads (
+          id, title, project_id, path, updated_at_iso, in_progress,
+          owner_client_id, owner_kind, owner_source, cached_at_iso
+        )
+        VALUES (
+          'thread-1', 'Thread', 'project-1', 'C:\\workspace\\project',
+          '2026-06-01T00:00:00.000Z', 0, NULL, NULL, NULL,
+          '2026-06-01T00:00:00.000Z'
+        );
+
+        CREATE TABLE thread_details (
+          thread_id TEXT PRIMARY KEY,
+          source TEXT NOT NULL,
+          detail_json TEXT NOT NULL,
+          cached_at_iso TEXT NOT NULL
+        );
+        INSERT INTO thread_details (thread_id, source, detail_json, cached_at_iso)
+        VALUES ('thread-1', 'app-server', '{}', '2026-06-01T00:00:00.000Z');
+
         CREATE TABLE official_stream_states (
           thread_id TEXT PRIMARY KEY,
           conversation_id TEXT NOT NULL,
@@ -87,15 +126,18 @@ describe("database store", () => {
     const database = DatabaseStore.open(config);
     try {
       expect(database.clearDerivedCaches()).toMatchObject({
-        projectCount: 0,
-        threadCount: 0,
-        threadDetailCount: 0,
+        legacyProjectCount: 1,
+        legacyThreadCount: 1,
+        legacyThreadDetailCount: 1,
         legacyOfficialStreamStateCount: 1,
       });
     } finally {
       database.close();
     }
 
+    expect(tableExists(dbPath, "projects")).toBe(false);
+    expect(tableExists(dbPath, "threads")).toBe(false);
+    expect(tableExists(dbPath, "thread_details")).toBe(false);
     expect(tableExists(dbPath, "official_stream_states")).toBe(false);
   });
 });

@@ -438,7 +438,14 @@ describe("API contract schemas", () => {
             {
               id: "turn-a",
               status: "completed",
-              items: [{ type: "user", id: "item-a", text: "hello" }],
+              items: [
+                {
+                  type: "userMessage",
+                  id: "item-a",
+                  clientId: null,
+                  content: [{ type: "text", text: "hello" }],
+                },
+              ],
             },
           ],
         },
@@ -473,13 +480,20 @@ describe("API contract schemas", () => {
             {
               id: "turn-a",
               status: "completed",
-              items: [{ type: "user", id: "item-a", text: "hello" }],
+              items: [
+                {
+                  type: "userMessage",
+                  id: "item-a",
+                  clientId: null,
+                  content: [{ type: "text", text: "hello" }],
+                },
+              ],
             },
           ],
         },
         source: "app-server",
       }).data?.turns[0]?.items[0]?.type,
-    ).toBe("user");
+    ).toBe("userMessage");
 
     expect(
       threadDetailResponseSchema.parse({
@@ -605,9 +619,6 @@ describe("API contract schemas", () => {
           appServer: appServerStatus,
           cache: {
             path: "C:\\workspace\\codex_web\\data\\cache.sqlite",
-            projectCount: 1,
-            threadCount: 2,
-            threadDetailCount: 1,
             attachmentCount: 0,
           },
           diagnostics: [
@@ -643,13 +654,10 @@ describe("API contract schemas", () => {
       cacheStatusResponseSchema.parse({
         data: {
           path: "C:\\workspace\\codex_web\\data\\cache.sqlite",
-          projectCount: 1,
-          threadCount: 2,
-          threadDetailCount: 1,
           attachmentCount: 0,
         },
-      }).data.threadCount,
-    ).toBe(2);
+      }).data.attachmentCount,
+    ).toBe(0);
 
     expect(
       fileBrowserListingResponseSchema.parse({
@@ -736,10 +744,7 @@ describe("API contract schemas", () => {
       cacheStatusResponseSchema.safeParse({
         data: {
           path: "cache.sqlite",
-          projectCount: -1,
-          threadCount: 0,
-          threadDetailCount: 0,
-          attachmentCount: 0,
+          attachmentCount: -1,
         },
       }).success,
     ).toBe(false);
@@ -1157,17 +1162,26 @@ describe("API contract schemas", () => {
     };
 
     const validItems = [
-      { type: "user" as const, id: "user-a", text: "hello", images: [image] },
       {
-        type: "user" as const,
+        type: "userMessage" as const,
+        id: "user-a",
+        clientId: null,
+        content: [{ type: "text", text: "hello" }],
+        images: [image],
+      },
+      {
+        type: "userMessage" as const,
         id: "user-guidance",
-        text: "guide current turn",
+        clientId: null,
+        content: [{ type: "text", text: "guide current turn" }],
         intent: "guidance" as const,
       },
       {
-        type: "assistant" as const,
+        type: "agentMessage" as const,
         id: "assistant-a",
         text: "hi",
+        phase: null,
+        memoryCitation: null,
         images: [image],
       },
       {
@@ -1194,6 +1208,14 @@ describe("API contract schemas", () => {
         path: "src/index.ts",
         diff: "@@",
         status: "applied",
+        changes: [
+          {
+            path: "src/index.ts",
+            diff: "@@",
+            kind: { type: "update", move_path: "src/main.ts" },
+            futurePatchField: { kept: true },
+          },
+        ],
       },
       {
         type: "plan" as const,
@@ -1260,9 +1282,34 @@ describe("API contract schemas", () => {
     for (const item of validItems) {
       expect(messageItemSchema.parse(item).type).toBe(item.type);
     }
+    expect(messageItemSchema.parse(validItems[5])).toMatchObject({
+      type: "fileChange",
+      changes: [
+        {
+          kind: { type: "update", move_path: "src/main.ts" },
+          futurePatchField: { kept: true },
+        },
+      ],
+    });
   });
 
   it("rejects malformed concrete message item shapes", () => {
+    expect(
+      messageItemSchema.safeParse({
+        type: "user",
+        id: "user-a",
+        text: "legacy user",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      messageItemSchema.safeParse({
+        type: "assistant",
+        id: "assistant-a",
+        text: "legacy assistant",
+      }).success,
+    ).toBe(false);
+
     expect(
       messageItemSchema.safeParse({
         type: "command",
@@ -1274,12 +1321,16 @@ describe("API contract schemas", () => {
     ).toBe(false);
 
     expect(
-      messageItemSchema.safeParse({
+      messageItemSchema.parse({
         type: "futureItem",
         id: "future-a",
-        text: "must be normalized to unknown first",
-      }).success,
-    ).toBe(false);
+        text: "future official fields passthrough",
+      }),
+    ).toMatchObject({
+      type: "futureItem",
+      id: "future-a",
+      text: "future official fields passthrough",
+    });
   });
 
   it("validates protocol compatibility response envelopes", () => {

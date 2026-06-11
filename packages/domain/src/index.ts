@@ -61,11 +61,16 @@ export type MessageImageContent = {
   alt: string | null
 }
 
+export type FileChangeKind = {
+  type: string
+  [key: string]: unknown
+}
+
 export type FileChangeContent = {
   path: string
   diff: string
-  status: string | null
-  kind: string | null
+  kind: FileChangeKind | null
+  [key: string]: unknown
 }
 
 export type PlanStep = {
@@ -82,7 +87,197 @@ export type AgentTask = {
   reasoningEffort: string | null
 }
 
-export type MessageItem =
+export type MessagePhase = 'commentary' | 'final_answer'
+
+export type OfficialThreadItemBase = {
+  type: string
+  id?: string
+  [key: string]: unknown
+}
+
+export type UserMessageItem = {
+  type: 'userMessage'
+  id: string
+  clientId: string | null
+  content: unknown[]
+  intent?: 'message' | 'guidance'
+  [key: string]: unknown
+}
+
+export type AgentMessageItem = {
+  type: 'agentMessage'
+  id: string
+  text: string
+  phase: MessagePhase | null
+  memoryCitation: unknown | null
+  [key: string]: unknown
+}
+
+export type HookPromptItem = {
+  type: 'hookPrompt'
+  id: string
+  fragments: unknown[]
+  [key: string]: unknown
+}
+
+export type ReasoningItem = {
+  type: 'reasoning'
+  id: string
+  summary: string[]
+  content: string[]
+  status?: string | null
+  [key: string]: unknown
+}
+
+export type PlanItem = {
+  type: 'plan'
+  id: string
+  text: string
+  steps?: PlanStep[]
+  status?: string | null
+  [key: string]: unknown
+}
+
+export type CommandExecutionItem = {
+  type: 'commandExecution'
+  id: string
+  command: string
+  cwd: string | null
+  processId: string | null
+  source: string | null
+  status: string
+  commandActions: unknown[]
+  aggregatedOutput: string | null
+  exitCode: number | null
+  durationMs: number | null
+  [key: string]: unknown
+}
+
+export type FileChangeItem = {
+  type: 'fileChange'
+  id: string
+  changes: FileChangeContent[]
+  status: string | null
+  path?: string
+  diff?: string
+  [key: string]: unknown
+}
+
+export type McpToolCallItem = {
+  type: 'mcpToolCall'
+  id: string
+  server: string
+  tool: string
+  status: string
+  arguments: unknown
+  mcpAppResourceUri?: string
+  pluginId: string | null
+  result: unknown | null
+  error: unknown | null
+  durationMs: number | null
+  [key: string]: unknown
+}
+
+export type DynamicToolCallItem = {
+  type: 'dynamicToolCall'
+  id: string
+  namespace: string | null
+  tool: string
+  arguments: unknown
+  status: string
+  contentItems: unknown[] | null
+  success: boolean | null
+  durationMs: number | null
+  [key: string]: unknown
+}
+
+export type CollabAgentToolCallItem = {
+  type: 'collabAgentToolCall'
+  id: string
+  tool: string
+  status: string
+  senderThreadId: string
+  receiverThreadIds: string[]
+  prompt: string | null
+  model: string | null
+  reasoningEffort: string | null
+  agentsStates: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export type WebSearchItem = {
+  type: 'webSearch'
+  id: string
+  query: string
+  action: unknown | null
+  [key: string]: unknown
+}
+
+export type ImageViewItem = {
+  type: 'imageView'
+  id: string
+  path: string
+  [key: string]: unknown
+}
+
+export type ImageGenerationItem = {
+  type: 'imageGeneration'
+  id: string
+  status: string
+  revisedPrompt: string | null
+  result: string
+  savedPath?: string
+  [key: string]: unknown
+}
+
+export type ReviewModeItem = {
+  type: 'enteredReviewMode' | 'exitedReviewMode'
+  id: string
+  review: string
+  [key: string]: unknown
+}
+
+export type ContextCompactionItem = {
+  type: 'contextCompaction'
+  id: string
+  [key: string]: unknown
+}
+
+declare const unknownOfficialThreadItemTypeBrand: unique symbol
+
+export type UnknownOfficialThreadItemType = string & {
+  readonly [unknownOfficialThreadItemTypeBrand]: never
+}
+
+export type UnknownOfficialThreadItem = {
+  type: UnknownOfficialThreadItemType
+  id: string
+  [key: string]: unknown
+}
+
+export type OfficialThreadItem =
+  | UserMessageItem
+  | HookPromptItem
+  | AgentMessageItem
+  | PlanItem
+  | ReasoningItem
+  | CommandExecutionItem
+  | FileChangeItem
+  | McpToolCallItem
+  | DynamicToolCallItem
+  | CollabAgentToolCallItem
+  | WebSearchItem
+  | ImageViewItem
+  | ImageGenerationItem
+  | ReviewModeItem
+  | ContextCompactionItem
+  | UnknownOfficialThreadItem
+
+/**
+ * Legacy Web-only items are accepted at historical boundaries while official
+ * app-server data is canonicalized into OfficialThreadItem variants above.
+ */
+export type LegacyMessageItem =
   | { type: 'user'; id: string; text: string; images?: MessageImageContent[]; intent?: 'message' | 'guidance' }
   | { type: 'assistant'; id: string; text: string; images?: MessageImageContent[] }
   | { type: 'reasoning'; id: string; text: string; collapsed: boolean; status: string | null }
@@ -133,6 +328,8 @@ export type MessageItem =
   | { type: 'error'; id: string; message: string; code: string | null; detail: string | null }
   | { type: 'toolOutput'; id: string; title: string; text: string; status: string | null; rawType: string }
   | { type: 'unknown'; id: string; rawType: string; raw: unknown }
+
+export type MessageItem = OfficialThreadItem | LegacyMessageItem
 
 export type Turn = {
   id: string
@@ -240,6 +437,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function readRawString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function readThreadGitInfo(value: unknown): ThreadGitInfo | null {
@@ -541,38 +742,68 @@ function normalizePlanSteps(value: unknown): PlanStep[] {
     .filter((entry): entry is PlanStep => Boolean(entry))
 }
 
-function readCommandOutput(record: Record<string, unknown>): { output: string; stdout: string; stderr: string } {
-  const stdout = readString(record.stdout) || readString(record.stdoutText)
-  const stderr = readString(record.stderr) || readString(record.stderrText)
-  const output =
-    readString(record.output) ||
-    readString(record.aggregatedOutput) ||
-    readString(record.aggregated_output) ||
-    readString(record.text) ||
-    [stdout, stderr].filter(Boolean).join('\n')
-  return { output, stdout, stderr }
+function readCommandAggregatedOutput(record: Record<string, unknown>): string | null {
+  if (typeof record.aggregatedOutput === 'string') return record.aggregatedOutput
+  if (record.aggregatedOutput === null) return null
+  if (typeof record.output === 'string') return record.output
+  if (typeof record.aggregated_output === 'string') return record.aggregated_output
+  if (typeof record.text === 'string') return record.text
+
+  const streams = [record.stdout, record.stderr, record.stdoutText, record.stderrText]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+  return streams.length ? streams.join('\n') : null
 }
 
-function readFileChangeKind(value: unknown): string | null {
+function canonicalCommandExecutionFields(record: Record<string, unknown>): Record<string, unknown> {
+  const {
+    aggregated_output,
+    cmd,
+    commandLine,
+    elapsed_ms,
+    elapsedMs,
+    exit_code,
+    output,
+    stderr,
+    stderrText,
+    stdout,
+    stdoutText,
+    text,
+    working_directory,
+    workingDirectory,
+    ...fields
+  } = record
+  return fields
+}
+
+function readFileChangeKind(value: unknown): FileChangeKind | null {
   const record = asRecord(value)
-  return readString(record?.type) || readString(value) || null
+  if (record) {
+    const type = readString(record.type)
+    return type ? { ...record, type } : null
+  }
+  const type = readString(value)
+  if (!type) return null
+  if (type === 'create') return { type: 'add' }
+  if (type === 'update') return { type: 'update', move_path: null }
+  return { type }
 }
 
 function normalizeFileChanges(record: Record<string, unknown> | null): FileChangeContent[] {
-  const parentStatus = readStatusString(record?.status) || null
   const changes = readArray(record?.changes)
     .map((entry) => {
       const entryRecord = asRecord(entry)
+      const entryFields = { ...(entryRecord ?? {}) }
+      delete entryFields.status
       const path =
-        readString(entryRecord?.path) ||
-        readString(entryRecord?.filePath) ||
-        readString(entryRecord?.file_path)
-      const diff = readString(entryRecord?.diff) || readString(entryRecord?.patch)
+        readRawString(entryRecord?.path) ||
+        readRawString(entryRecord?.filePath) ||
+        readRawString(entryRecord?.file_path)
+      const diff = readRawString(entryRecord?.diff) || readRawString(entryRecord?.patch)
       if (!path && !diff) return null
       return {
+        ...entryFields,
         path,
         diff,
-        status: readStatusString(entryRecord?.status) || parentStatus,
         kind: readFileChangeKind(entryRecord?.kind),
       }
     })
@@ -581,16 +812,15 @@ function normalizeFileChanges(record: Record<string, unknown> | null): FileChang
   if (changes.length) return changes
 
   const path =
-    readString(record?.path) ||
-    readString(record?.filePath) ||
-    readString(record?.file_path)
-  const diff = readString(record?.diff) || readString(record?.patch)
+    readRawString(record?.path) ||
+    readRawString(record?.filePath) ||
+    readRawString(record?.file_path)
+  const diff = readRawString(record?.diff) || readRawString(record?.patch)
   if (!path && !diff) return []
   return [
     {
       path,
       diff,
-      status: parentStatus,
       kind: null,
     },
   ]
@@ -758,34 +988,262 @@ function normalizeAgentTaskTextMessageItem(
   }
 }
 
-function normalizeMessageItem(value: unknown, index: number): MessageItem {
+const OFFICIAL_THREAD_ITEM_TYPES = new Set([
+  'userMessage',
+  'hookPrompt',
+  'agentMessage',
+  'plan',
+  'reasoning',
+  'commandExecution',
+  'fileChange',
+  'mcpToolCall',
+  'dynamicToolCall',
+  'collabAgentToolCall',
+  'webSearch',
+  'imageView',
+  'imageGeneration',
+  'enteredReviewMode',
+  'exitedReviewMode',
+  'contextCompaction',
+])
+
+function readMessagePhase(value: unknown): MessagePhase | null {
+  return value === 'commentary' || value === 'final_answer' ? value : null
+}
+
+function isOfficialThreadItemType(type: string): boolean {
+  return OFFICIAL_THREAD_ITEM_TYPES.has(type)
+}
+
+function normalizeOfficialThreadItem(
+  record: Record<string, unknown>,
+  type: string,
+  id: string,
+): MessageItem {
+  if (type === 'userMessage') {
+    const text = readTextContent(record.content) || readString(record.text)
+    return {
+      ...record,
+      type,
+      id,
+      clientId: readString(record.clientId) || null,
+      content: Array.isArray(record.content) ? record.content : legacyContentFromText(text),
+    }
+  }
+  if (type === 'agentMessage') {
+    return {
+      ...record,
+      type,
+      id,
+      text: readTextContent(record.text) || readTextContent(record.content),
+      phase: readMessagePhase(record.phase),
+      memoryCitation: record.memoryCitation ?? null,
+    }
+  }
+  if (type === 'hookPrompt') {
+    return {
+      ...record,
+      type,
+      id,
+      fragments: readArray(record.fragments),
+    }
+  }
+  if (type === 'plan') {
+    const steps = normalizePlanSteps(record.steps ?? record.items ?? record.plan)
+    return {
+      ...record,
+      type,
+      id,
+      text: readTextContent(record.text ?? record.content ?? record.explanation ?? record.plan),
+      ...(steps.length ? { steps } : {}),
+      status: readStatusString(record.status) || null,
+    }
+  }
+  if (type === 'reasoning') {
+    const summary = readArray(record.summary).map(readTextContent).filter(Boolean)
+    const content = readArray(record.content).map(readTextContent).filter(Boolean)
+    const text = readTextContent(record.text)
+    return {
+      ...record,
+      type,
+      id,
+      summary,
+      content: content.length ? content : text ? [text] : [],
+      status: readStatusString(record.status ?? record.state) || null,
+    }
+  }
+  if (type === 'commandExecution') {
+    const commandFields = canonicalCommandExecutionFields(record)
+    return {
+      ...commandFields,
+      type,
+      id,
+      command: readString(record.command) || readString(record.cmd) || readString(record.commandLine),
+      cwd: readString(record.cwd) || readString(record.workingDirectory) || readString(record.working_directory) || null,
+      processId: readString(record.processId) || null,
+      source: readString(record.source) || null,
+      status: readStatusString(record.status) || 'unknown',
+      commandActions: readArray(record.commandActions),
+      aggregatedOutput: readCommandAggregatedOutput(record),
+      durationMs:
+        readNumber(record.durationMs) ??
+        readNumber(record.duration_ms) ??
+        readNumber(record.elapsedMs) ??
+        readNumber(record.elapsed_ms),
+      exitCode: readNumber(record.exitCode) ?? readNumber(record.exit_code),
+    }
+  }
+  if (type === 'fileChange') {
+    const changes = normalizeFileChanges(record)
+    return {
+      ...record,
+      type,
+      id,
+      changes,
+      status: readStatusString(record.status) || null,
+    }
+  }
+  if (type === 'mcpToolCall') {
+    return {
+      ...record,
+      type,
+      id,
+      server: readString(record.server),
+      tool: readString(record.tool),
+      status: readStatusString(record.status) || 'unknown',
+      arguments: record.arguments ?? null,
+      pluginId: readString(record.pluginId) || null,
+      result: record.result ?? null,
+      error: record.error ?? null,
+      durationMs: readNumber(record.durationMs) ?? readNumber(record.duration_ms),
+    }
+  }
+  if (type === 'dynamicToolCall') {
+    return {
+      ...record,
+      type,
+      id,
+      namespace: readString(record.namespace) || null,
+      tool: readString(record.tool),
+      arguments: record.arguments ?? null,
+      status: readStatusString(record.status) || 'unknown',
+      contentItems: Array.isArray(record.contentItems) ? record.contentItems : null,
+      success: typeof record.success === 'boolean' ? record.success : null,
+      durationMs: readNumber(record.durationMs) ?? readNumber(record.duration_ms),
+    }
+  }
+  if (type === 'collabAgentToolCall') {
+    return {
+      ...record,
+      type,
+      id,
+      tool: readString(record.tool),
+      status: readStatusString(record.status) || 'unknown',
+      senderThreadId: readString(record.senderThreadId),
+      receiverThreadIds: readArray(record.receiverThreadIds).map(readString).filter(Boolean),
+      prompt: readString(record.prompt) || readTextContent(record.prompt) || null,
+      model: readString(record.model) || null,
+      reasoningEffort: readString(record.reasoningEffort) || readString(record.reasoning_effort) || null,
+      agentsStates: asRecord(record.agentsStates) ?? {},
+    }
+  }
+  if (type === 'webSearch') {
+    const action = asRecord(record.action)
+    const query =
+      readString(record.query) ||
+      readString(record.searchQuery) ||
+      readString(record.search_query) ||
+      readString(action?.query) ||
+      readString(action?.url)
+    return {
+      ...record,
+      type,
+      id,
+      query,
+      action: record.action ?? null,
+    }
+  }
+  if (type === 'imageView') {
+    return {
+      ...record,
+      type,
+      id,
+      path: readString(record.path),
+    }
+  }
+  if (type === 'imageGeneration') {
+    return {
+      ...record,
+      type,
+      id,
+      status: readStatusString(record.status) || 'unknown',
+      revisedPrompt: readString(record.revisedPrompt) || null,
+      result: readString(record.result),
+    }
+  }
+  if (type === 'enteredReviewMode' || type === 'exitedReviewMode') {
+    return {
+      ...record,
+      type,
+      id,
+      review: readString(record.review),
+    }
+  }
+  if (type === 'contextCompaction') {
+    return { ...record, type, id }
+  }
+  return { type: 'unknown', id, rawType: type || 'unknown', raw: record }
+}
+
+function normalizeUnknownOfficialThreadItem(
+  record: Record<string, unknown>,
+  type: string,
+  id: string,
+): UnknownOfficialThreadItem {
+  return {
+    ...record,
+    type: type as UnknownOfficialThreadItemType,
+    id,
+  }
+}
+
+function legacyContentFromText(text: string): unknown[] {
+  return text ? [{ type: 'text', text, text_elements: [] }] : []
+}
+
+export function normalizeMessageItem(value: unknown, index = 0): MessageItem {
   const record = asRecord(value)
   const type = readString(record?.type)
   const normalizedType = type.toLowerCase()
   const compactType = normalizedType.replace(/[-_]/g, '')
   const id = readString(record?.id) || `${type || 'item'}-${index}`
 
+  if (record && isOfficialThreadItemType(type)) {
+    return normalizeOfficialThreadItem(record, type, id)
+  }
+
   if (normalizedType === 'unknown') {
     const rawRecord = asRecord(record?.raw)
     const rawType = readString(record?.rawType) || readString(rawRecord?.type)
     const compactRawType = rawType.toLowerCase().replace(/[-_]/g, '')
-    if (rawRecord && compactRawType === 'steeringusermessage') {
+    if (rawRecord && isOfficialThreadItemType(rawType)) {
       const normalizedRaw = normalizeMessageItem(rawRecord, index)
       return { ...normalizedRaw, id }
     }
-    if (rawRecord && isAgentTaskToolCall(rawRecord, rawType.toLowerCase(), compactRawType)) {
+    if (rawRecord && compactRawType === 'steeringusermessage') {
       const normalizedRaw = normalizeMessageItem(rawRecord, index)
       return { ...normalizedRaw, id }
     }
   }
 
   if (type === 'userMessage' || normalizedType === 'user') {
-    const images = readUserImages(record)
+    const text = readTextContent(record?.content) || readString(record?.text)
     return {
-      type: 'user',
+      ...record,
+      type: 'userMessage',
       id,
-      text: readTextContent(record?.content) || readString(record?.text),
-      ...(images.length ? { images } : {}),
+      clientId: readString(record?.clientId) || null,
+      content: Array.isArray(record?.content) ? record.content : legacyContentFromText(text),
     }
   }
   if (compactType === 'steeringusermessage') {
@@ -795,75 +1253,31 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
       readTextContent(record?.input) ||
       readTextContent(record?.content) ||
       readString(record?.text)
-    const images = readUserImages(record)
     return {
-      type: 'user',
+      ...record,
+      type: 'userMessage',
       id,
-      text,
+      clientId: null,
+      content: legacyContentFromText(text),
       intent: 'guidance',
-      ...(images.length ? { images } : {}),
     }
   }
   if (type === 'agentMessage' || type === 'assistantMessage' || normalizedType === 'assistant') {
-    const images = readImagesContent(record?.content)
     const text = readTextContent(record?.text) || readTextContent(record?.content)
-    const agentTaskTextItem = normalizeAgentTaskTextMessageItem(text, id, type)
-    if (agentTaskTextItem) return agentTaskTextItem
     return {
-      type: 'assistant',
+      ...record,
+      type: 'agentMessage',
       id,
       text,
-      ...(images.length ? { images } : {}),
-    }
-  }
-  if (type === 'reasoning' || normalizedType.includes('thinking')) {
-    return {
-      type: 'reasoning',
-      id,
-      text: readTextContent(record?.text) || readTextContent(record?.content),
-      collapsed: true,
-      status: readStatusString(record?.status) || readStatusString(record?.state) || null,
+      phase: readMessagePhase(record?.phase),
+      memoryCitation: record?.memoryCitation ?? null,
     }
   }
   if (type === 'command' || type === 'commandExecution') {
-    const output = readCommandOutput(record ?? {})
-    return {
-      type: 'command',
-      id,
-      command: readString(record?.command) || readString(record?.cmd) || readString(record?.commandLine),
-      status: readStatusString(record?.status) || 'unknown',
-      output: output.output,
-      stdout: output.stdout,
-      stderr: output.stderr,
-      cwd: readString(record?.cwd) || readString(record?.workingDirectory) || readString(record?.working_directory) || null,
-      durationMs:
-        readNumber(record?.durationMs) ??
-        readNumber(record?.duration_ms) ??
-        readNumber(record?.elapsedMs) ??
-        readNumber(record?.elapsed_ms),
-      exitCode: readNumber(record?.exitCode) ?? readNumber(record?.exit_code),
-    }
-  }
-  if (type === 'fileChange' || normalizedType.includes('filechange') || normalizedType.includes('patch')) {
-    const changes = normalizeFileChanges(record)
-    const firstChange = changes[0]
-    return {
-      type: 'fileChange',
-      id,
-      path: firstChange?.path ?? '',
-      diff: firstChange?.diff ?? '',
-      status: readStatusString(record?.status) || firstChange?.status || null,
-      ...(changes.length ? { changes } : {}),
-    }
+    return normalizeOfficialThreadItem(record ?? {}, 'commandExecution', id)
   }
   if (normalizedType.includes('plan') || normalizedType === 'todo-list' || normalizedType === 'todo_list' || normalizedType === 'todolist') {
-    return {
-      type: 'plan',
-      id,
-      text: readTextContent(record?.text ?? record?.content ?? record?.explanation ?? record?.plan),
-      steps: normalizePlanSteps(record?.steps ?? record?.items ?? record?.plan),
-      status: readStatusString(record?.status) || null,
-    }
+    return normalizeOfficialThreadItem(record ?? {}, 'plan', id)
   }
   if (normalizedType.includes('approval') || normalizedType.includes('permission')) {
     const kind = normalizedType.includes('file') ? 'fileChange' : normalizedType.includes('command') ? 'command' : 'unknown'
@@ -898,28 +1312,25 @@ function normalizeMessageItem(value: unknown, index: number): MessageItem {
     }
   }
   if (normalizedType === 'websearch' || normalizedType === 'web_search' || normalizedType.includes('websearch')) {
-    const query = readString(record?.query) || readString(record?.searchQuery) || readString(record?.search_query)
+    return normalizeOfficialThreadItem(record ?? {}, 'webSearch', id)
+  }
+  if (normalizedType.includes('mcp') || normalizedType.includes('function')) {
     return {
-      type: 'toolOutput',
+      ...record,
+      type: 'mcpToolCall',
       id,
-      title: query ? `Web search: ${query}` : 'Web search',
-      text: readTextContent(record?.output ?? record?.results ?? record?.content ?? record?.text ?? record?.result),
-      status: readStatusString(record?.status) || null,
-      rawType: type || 'webSearch',
+      server: readString(record?.server) || readString(record?.name),
+      tool: readString(record?.tool) || readString(record?.title) || type || 'tool',
+      status: readStatusString(record?.status) || 'unknown',
+      arguments: record?.arguments ?? null,
+      pluginId: readString(record?.pluginId) || null,
+      result: record?.result ?? record?.output ?? record?.content ?? null,
+      error: record?.error ?? null,
+      durationMs: readNumber(record?.durationMs) ?? readNumber(record?.duration_ms),
     }
   }
-  if (isAgentTaskToolCall(record, normalizedType, compactType)) {
-    return normalizeAgentTaskMessageItem(record ?? {}, id, type)
-  }
-  if (normalizedType.includes('tool') || normalizedType.includes('mcp') || normalizedType.includes('function')) {
-    return {
-      type: 'toolOutput',
-      id,
-      title: readString(record?.title) || readString(record?.name) || type || 'Tool output',
-      text: readTextContent(record?.output ?? record?.content ?? record?.text ?? record?.result),
-      status: readStatusString(record?.status) || null,
-      rawType: type || 'unknown',
-    }
+  if (record && type && normalizedType !== 'unknown') {
+    return normalizeUnknownOfficialThreadItem(record, type, id)
   }
   return { type: 'unknown', id, rawType: type || 'unknown', raw: value }
 }
@@ -929,14 +1340,21 @@ function isPendingTurnId(turnId: string): boolean {
 }
 
 function normalizedUserText(item: MessageItem): string {
-  return item.type === 'user' ? item.text.replace(/\s+/g, ' ').trim() : ''
+  if (item.type === 'userMessage') {
+    return readTextContent(asRecord(item)?.content).replace(/\s+/g, ' ').trim()
+  }
+  if (item.type === 'user') {
+    const record = asRecord(item)
+    return readTextContent(record?.text).replace(/\s+/g, ' ').trim()
+  }
+  return ''
 }
 
 function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number {
-  if (item.type !== 'user') return -1
+  if (item.type !== 'userMessage' && item.type !== 'user') return -1
   const text = normalizedUserText(item)
   return items.findIndex((entry) => {
-    if (entry.type !== 'user') return false
+    if (entry.type !== 'userMessage' && entry.type !== 'user') return false
     if (entry.id === item.id) return true
     return text.length > 0 && normalizedUserText(entry) === text
   })

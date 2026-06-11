@@ -276,29 +276,187 @@ const agentTaskSchema = z.object({
   reasoningEffort: z.string().nullable(),
 });
 
-const textMessageItemFields = {
-  id: z.string(),
-  text: z.string(),
-  images: z.array(messageImageContentSchema).optional(),
-};
+const fileChangeKindSchema = z
+  .object({
+    type: z.string(),
+  })
+  .catchall(z.unknown());
 
 const fileChangeContentSchema = z.object({
   path: z.string(),
   diff: z.string(),
-  status: z.string().nullable(),
-  kind: z.string().nullable(),
-});
+  kind: fileChangeKindSchema.nullable(),
+}).catchall(z.unknown());
 
-export const messageItemSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("user"),
-    ...textMessageItemFields,
+const messagePhaseSchema = z.enum(["commentary", "final_answer"]);
+
+const officialUserMessageItemSchema = z
+  .object({
+    type: z.literal("userMessage"),
+    id: z.string(),
+    clientId: z.string().nullable(),
+    content: z.array(z.unknown()),
     intent: z.enum(["message", "guidance"]).optional(),
-  }),
-  z.object({
-    type: z.literal("assistant"),
-    ...textMessageItemFields,
-  }),
+  })
+  .catchall(z.unknown());
+
+const officialAgentMessageItemSchema = z
+  .object({
+    type: z.literal("agentMessage"),
+    id: z.string(),
+    text: z.string(),
+    phase: messagePhaseSchema.nullable(),
+    memoryCitation: z.unknown().nullable(),
+  })
+  .catchall(z.unknown());
+
+const officialHookPromptItemSchema = z
+  .object({
+    type: z.literal("hookPrompt"),
+    id: z.string(),
+    fragments: z.array(z.unknown()),
+  })
+  .catchall(z.unknown());
+
+const officialPlanItemSchema = z
+  .object({
+    type: z.literal("plan"),
+    id: z.string(),
+    text: z.string(),
+    steps: z.array(planStepSchema).optional(),
+    status: z.string().nullable().optional(),
+  })
+  .catchall(z.unknown());
+
+const officialReasoningItemSchema = z
+  .object({
+    type: z.literal("reasoning"),
+    id: z.string(),
+    summary: z.array(z.string()),
+    content: z.array(z.string()),
+    status: z.string().nullable().optional(),
+  })
+  .catchall(z.unknown());
+
+const officialCommandExecutionItemSchema = z
+  .object({
+    type: z.literal("commandExecution"),
+    id: z.string(),
+    command: z.string(),
+    cwd: z.string().nullable(),
+    processId: z.string().nullable(),
+    source: z.string().nullable(),
+    status: z.string(),
+    commandActions: z.array(z.unknown()),
+    aggregatedOutput: z.string().nullable(),
+    exitCode: z.number().nullable(),
+    durationMs: z.number().nullable(),
+  })
+  .catchall(z.unknown());
+
+const officialFileChangeItemSchema = z
+  .object({
+    type: z.literal("fileChange"),
+    id: z.string(),
+    changes: z.array(fileChangeContentSchema),
+    status: z.string().nullable(),
+    path: z.string().optional(),
+    diff: z.string().optional(),
+  })
+  .catchall(z.unknown());
+
+const officialMcpToolCallItemSchema = z
+  .object({
+    type: z.literal("mcpToolCall"),
+    id: z.string(),
+    server: z.string(),
+    tool: z.string(),
+    status: z.string(),
+    arguments: z.unknown(),
+    mcpAppResourceUri: z.string().optional(),
+    pluginId: z.string().nullable(),
+    result: z.unknown().nullable(),
+    error: z.unknown().nullable(),
+    durationMs: z.number().nullable(),
+  })
+  .catchall(z.unknown());
+
+const officialDynamicToolCallItemSchema = z
+  .object({
+    type: z.literal("dynamicToolCall"),
+    id: z.string(),
+    namespace: z.string().nullable(),
+    tool: z.string(),
+    arguments: z.unknown(),
+    status: z.string(),
+    contentItems: z.array(z.unknown()).nullable(),
+    success: z.boolean().nullable(),
+    durationMs: z.number().nullable(),
+  })
+  .catchall(z.unknown());
+
+const officialCollabAgentToolCallItemSchema = z
+  .object({
+    type: z.literal("collabAgentToolCall"),
+    id: z.string(),
+    tool: z.string(),
+    status: z.string(),
+    senderThreadId: z.string(),
+    receiverThreadIds: z.array(z.string()),
+    prompt: z.string().nullable(),
+    model: z.string().nullable(),
+    reasoningEffort: z.string().nullable(),
+    agentsStates: z.record(z.string(), z.unknown()),
+  })
+  .catchall(z.unknown());
+
+const officialWebSearchItemSchema = z
+  .object({
+    type: z.literal("webSearch"),
+    id: z.string(),
+    query: z.string(),
+    action: z.unknown().nullable(),
+  })
+  .catchall(z.unknown());
+
+const officialImageViewItemSchema = z
+  .object({
+    type: z.literal("imageView"),
+    id: z.string(),
+    path: z.string(),
+  })
+  .catchall(z.unknown());
+
+const officialImageGenerationItemSchema = z
+  .object({
+    type: z.literal("imageGeneration"),
+    id: z.string(),
+    status: z.string(),
+    revisedPrompt: z.string().nullable(),
+    result: z.string(),
+    savedPath: z.string().optional(),
+  })
+  .catchall(z.unknown());
+
+const officialReviewModeItemSchema = z
+  .object({
+    type: z.union([
+      z.literal("enteredReviewMode"),
+      z.literal("exitedReviewMode"),
+    ]),
+    id: z.string(),
+    review: z.string(),
+  })
+  .catchall(z.unknown());
+
+const officialContextCompactionItemSchema = z
+  .object({
+    type: z.literal("contextCompaction"),
+    id: z.string(),
+  })
+  .catchall(z.unknown());
+
+const legacyMessageItemSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("reasoning"),
     id: z.string(),
@@ -381,7 +539,65 @@ export const messageItemSchema = z.discriminatedUnion("type", [
     rawType: z.string(),
     raw: z.unknown(),
   }),
-]) satisfies z.ZodType<MessageItem>;
+]);
+
+const knownMessageItemTypes = new Set([
+  "userMessage",
+  "hookPrompt",
+  "agentMessage",
+  "plan",
+  "reasoning",
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "collabAgentToolCall",
+  "webSearch",
+  "imageView",
+  "imageGeneration",
+  "enteredReviewMode",
+  "exitedReviewMode",
+  "contextCompaction",
+  "user",
+  "assistant",
+  "command",
+  "agentTask",
+  "approval",
+  "image",
+  "error",
+  "toolOutput",
+  "unknown",
+]);
+
+const unknownOfficialThreadItemSchema = z
+  .object({
+    type: z.string().min(1),
+    id: z.string(),
+  })
+  .catchall(z.unknown())
+  .refine((item) => !knownMessageItemTypes.has(item.type), {
+    message: "Known message item type failed its schema",
+  });
+
+export const messageItemSchema = z.union([
+  officialUserMessageItemSchema,
+  officialHookPromptItemSchema,
+  officialAgentMessageItemSchema,
+  officialPlanItemSchema,
+  officialReasoningItemSchema,
+  officialCommandExecutionItemSchema,
+  officialFileChangeItemSchema,
+  officialMcpToolCallItemSchema,
+  officialDynamicToolCallItemSchema,
+  officialCollabAgentToolCallItemSchema,
+  officialWebSearchItemSchema,
+  officialImageViewItemSchema,
+  officialImageGenerationItemSchema,
+  officialReviewModeItemSchema,
+  officialContextCompactionItemSchema,
+  legacyMessageItemSchema,
+  unknownOfficialThreadItemSchema,
+]) as unknown as z.ZodType<MessageItem>;
 
 export const turnSchema: z.ZodType<Turn> = z.object({
   id: z.string(),
@@ -673,9 +889,6 @@ const requestHandlerSchema = z.object({
 
 export const cacheStatusSchema = z.object({
   path: z.string(),
-  projectCount: z.number().int().nonnegative(),
-  threadCount: z.number().int().nonnegative(),
-  threadDetailCount: z.number().int().nonnegative(),
   attachmentCount: z.number().int().nonnegative(),
 });
 

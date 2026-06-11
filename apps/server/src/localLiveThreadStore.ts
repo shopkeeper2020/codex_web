@@ -4,6 +4,7 @@ import type {
   ThreadDetail,
   Turn,
 } from "@codex-web/domain";
+import { normalizeMessageItem } from "@codex-web/domain";
 
 type AppServerNotificationLike = {
   method: string;
@@ -42,6 +43,10 @@ function readString(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : "";
+}
+
+function readItemType(value: unknown): string {
+  return readString(asRecord(value)?.type);
 }
 
 function readDeltaString(value: unknown): string {
@@ -111,95 +116,6 @@ function isActiveStatus(value: unknown): boolean {
   );
 }
 
-function readWebSearchQuery(record: Record<string, unknown> | null): string {
-  const action = asRecord(record?.action);
-  return (
-    readString(record?.query) ||
-    readString(record?.searchQuery) ||
-    readString(record?.search_query) ||
-    readString(action?.query) ||
-    readString(action?.url)
-  );
-}
-
-function normalizeLiveItem(value: unknown, fallbackId: string): MessageItem {
-  const record = asRecord(value);
-  const rawType = readString(record?.type);
-  const type = rawType.toLowerCase().replace(/[-_]/g, "");
-  const id = readString(record?.id) || fallbackId;
-
-  if (type === "usermessage" || type === "user") {
-    const intent = readString(record?.intent);
-    return {
-      type: "user",
-      id,
-      text: readTextContent(record?.content),
-      ...(intent === "guidance" ? { intent } : {}),
-    };
-  }
-  if (type === "agentmessage" || type === "assistantmessage" || type === "assistant") {
-    return {
-      type: "assistant",
-      id,
-      text: readString(record?.text) || readTextContent(record?.content),
-    };
-  }
-  if (type === "reasoning" || type.includes("thinking")) {
-    return {
-      type: "reasoning",
-      id,
-      text: readString(record?.text) || readTextContent(record?.content),
-      collapsed: true,
-      status: readString(record?.status) || readString(record?.state) || null,
-    };
-  }
-  if (type === "commandexecution" || type === "command") {
-    const output = readTextContent(record?.output);
-    return {
-      type: "command",
-      id,
-      command:
-        readString(record?.command) ||
-        readString(record?.cmd) ||
-        readString(record?.commandLine),
-      status: readString(record?.status) || "unknown",
-      output,
-      stdout: output,
-      stderr: "",
-      cwd: readString(record?.cwd) || null,
-      durationMs: null,
-      exitCode: null,
-    };
-  }
-  if (type === "filechange" || type.includes("patch")) {
-    return {
-      type: "fileChange",
-      id,
-      path: readString(record?.path),
-      diff: readTextContent(record?.diff ?? record?.output),
-      status: readString(record?.status) || null,
-    };
-  }
-  if (type === "websearch" || type.includes("websearch")) {
-    const query = readWebSearchQuery(record);
-    return {
-      type: "toolOutput",
-      id,
-      title: query ? `Web search: ${query}` : "Web search",
-      text: readTextContent(
-        record?.output ??
-          record?.results ??
-          record?.content ??
-          record?.text ??
-          record?.result,
-      ),
-      status: readString(record?.status) || null,
-      rawType: rawType || "webSearch",
-    };
-  }
-  return { type: "unknown", id, rawType: rawType || "unknown", raw: value };
-}
-
 function readThreadIdFromParams(value: unknown): string {
   const record = asRecord(value);
   if (!record) return "";
@@ -235,17 +151,119 @@ function itemIndex(turn: Turn, itemId: string): number {
 }
 
 function normalizedUserText(item: MessageItem): string {
-  return item.type === "user" ? item.text.replace(/\s+/g, " ").trim() : "";
+  const record = asRecord(item);
+  const type = readString(record?.type);
+  if (type === "userMessage") return readTextContent(record?.content).replace(/\s+/g, " ").trim();
+  if (type === "user") return readTextContent(record?.text).replace(/\s+/g, " ").trim();
+  return "";
 }
 
 function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number {
-  if (item.type !== "user") return -1;
+  const itemType = readItemType(item);
+  if (itemType !== "userMessage" && itemType !== "user") return -1;
   const text = normalizedUserText(item);
   return items.findIndex((entry) => {
-    if (entry.type !== "user") return false;
+    const entryType = readItemType(entry);
+    if (entryType !== "userMessage" && entryType !== "user") return false;
     if (entry.id === item.id) return true;
     return text.length > 0 && normalizedUserText(entry) === text;
   });
+}
+
+const OFFICIAL_ITEM_TYPES_WITH_STATUS = new Set([
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "collabAgentToolCall",
+  "imageGeneration",
+]);
+
+function markItemStarted(item: MessageItem): MessageItem {
+  const record = asRecord(item);
+  const type = readString(record?.type);
+  if (!OFFICIAL_ITEM_TYPES_WITH_STATUS.has(type)) return item;
+  const status = readString(record?.status);
+  if (!status || status === "unknown") {
+    return { ...item, status: "inProgress" } as MessageItem;
+  }
+  return item;
+}
+
+function jsonValueScore(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (value === null || value === undefined) return 0;
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return 1;
+  }
+}
+
+function richerValue(incomingValue: unknown, currentValue: unknown): unknown {
+  if (incomingValue === null || incomingValue === undefined) return currentValue;
+  if (currentValue === null || currentValue === undefined) return incomingValue;
+  return jsonValueScore(currentValue) > jsonValueScore(incomingValue)
+    ? currentValue
+    : incomingValue;
+}
+
+function mergeMessagePhase(incomingValue: unknown, currentValue: unknown): unknown {
+  if (incomingValue === "final_answer" || currentValue !== "final_answer") {
+    return incomingValue ?? currentValue;
+  }
+  return currentValue;
+}
+
+function mergeOfficialItemFields(
+  merged: Record<string, unknown>,
+  currentRecord: Record<string, unknown> | null,
+  incomingRecord: Record<string, unknown> | null,
+): void {
+  const currentType = readString(currentRecord?.type);
+  const incomingType = readString(incomingRecord?.type);
+  if (currentType === "agentMessage" && incomingType === "agentMessage") {
+    if ("phase" in (currentRecord ?? {}) || "phase" in (incomingRecord ?? {})) {
+      merged.phase = mergeMessagePhase(incomingRecord?.phase, currentRecord?.phase);
+    }
+    if ("memoryCitation" in (currentRecord ?? {}) || "memoryCitation" in (incomingRecord ?? {})) {
+      merged.memoryCitation = richerValue(
+        incomingRecord?.memoryCitation,
+        currentRecord?.memoryCitation,
+      );
+    }
+  }
+  if (currentType === "webSearch" && incomingType === "webSearch") {
+    if ("action" in (currentRecord ?? {}) || "action" in (incomingRecord ?? {})) {
+      merged.action = richerValue(incomingRecord?.action, currentRecord?.action);
+    }
+  }
+}
+
+function mergeItem(current: MessageItem, incoming: MessageItem): MessageItem {
+  const currentRecord = asRecord(current);
+  const incomingRecord = asRecord(incoming);
+  const merged = { ...currentRecord, ...incomingRecord } as Record<string, unknown>;
+  const currentType = readString(currentRecord?.type);
+  const incomingType = readString(incomingRecord?.type);
+  if (
+    currentType === "agentMessage" &&
+    incomingType === "agentMessage" &&
+    !readTextContent(incomingRecord?.text) &&
+    readTextContent(currentRecord?.text)
+  ) {
+    merged.text = readTextContent(currentRecord?.text);
+  }
+  if (
+    currentType === "commandExecution" &&
+    incomingType === "commandExecution" &&
+    !readTextContent(incomingRecord?.aggregatedOutput) &&
+    readTextContent(currentRecord?.aggregatedOutput)
+  ) {
+    merged.aggregatedOutput = currentRecord?.aggregatedOutput;
+  }
+  mergeOfficialItemFields(merged, currentRecord, incomingRecord);
+  return merged as MessageItem;
 }
 
 export class LocalLiveThreadStore {
@@ -280,7 +298,9 @@ export class LocalLiveThreadStore {
           readTurnStatus(turn?.status) || "active",
         );
         activeTurn.items = activeTurn.items.filter(
-          (item) => item.type !== "user" || !item.id.startsWith("pending-"),
+          (item) =>
+            (item.type !== "user" && item.type !== "userMessage") ||
+            !item.id.startsWith("pending-"),
         );
       }
       state.detail.thread.inProgress = true;
@@ -309,7 +329,7 @@ export class LocalLiveThreadStore {
         readTurnIdFromParams(notification.params) || state.activeTurnId,
         "active",
       );
-      const item = normalizeLiveItem(record?.item, `item-${turn.items.length + 1}`);
+      const item = markItemStarted(normalizeMessageItem(record?.item, turn.items.length));
       this.upsertItem(turn, item);
       state.detail.thread.inProgress = true;
       changed = true;
@@ -320,12 +340,12 @@ export class LocalLiveThreadStore {
         readTurnIdFromParams(notification.params) || state.activeTurnId,
         state.detail.thread.inProgress ? "active" : "unknown",
       );
-      const item = normalizeLiveItem(record?.item, `item-${turn.items.length + 1}`);
+      const item = normalizeMessageItem(record?.item, turn.items.length);
       this.upsertItem(turn, item);
       changed = true;
     } else if (notification.method === "item/agentMessage/delta") {
       state = this.ensureState(threadId, notification.atIso);
-      this.appendTextDelta(state, "assistant", notification.params);
+      this.appendTextDelta(state, "agentMessage", notification.params);
       changed = true;
     } else if (
       notification.method === "item/reasoning/textDelta" ||
@@ -336,7 +356,7 @@ export class LocalLiveThreadStore {
       changed = true;
     } else if (notification.method === "item/commandExecution/outputDelta") {
       state = this.ensureState(threadId, notification.atIso);
-      this.appendTextDelta(state, "command", notification.params);
+      this.appendTextDelta(state, "commandExecution", notification.params);
       changed = true;
     } else if (notification.method === "item/fileChange/outputDelta") {
       state = this.ensureState(threadId, notification.atIso);
@@ -422,7 +442,7 @@ export class LocalLiveThreadStore {
   private upsertItem(turn: Turn, item: MessageItem): void {
     const existingIndex = itemIndex(turn, item.id);
     if (existingIndex >= 0) {
-      turn.items[existingIndex] = item;
+      turn.items[existingIndex] = mergeItem(turn.items[existingIndex]!, item);
       return;
     }
     const duplicateUserIndex = duplicateUserItemIndex(turn.items, item);
@@ -435,7 +455,7 @@ export class LocalLiveThreadStore {
 
   private appendTextDelta(
     state: LiveThreadState,
-    kind: "assistant" | "reasoning" | "command" | "fileChange",
+    kind: "agentMessage" | "reasoning" | "commandExecution" | "fileChange",
     params: unknown,
   ): void {
     const turn = this.ensureTurn(
@@ -449,26 +469,33 @@ export class LocalLiveThreadStore {
     const delta = readDeltaString(record?.delta) || readTextContent(record?.text);
     const existingIndex = itemIndex(turn, itemId);
     if (existingIndex < 0) {
-      if (kind === "assistant") {
-        turn.items.push({ type: "assistant", id: itemId, text: delta });
+      if (kind === "agentMessage") {
+        turn.items.push({
+          type: "agentMessage",
+          id: itemId,
+          text: delta,
+          phase: null,
+          memoryCitation: null,
+        });
       } else if (kind === "reasoning") {
         turn.items.push({
           type: "reasoning",
           id: itemId,
-          text: delta,
-          collapsed: true,
+          summary: [],
+          content: [delta],
           status: "active",
         });
-      } else if (kind === "command") {
+      } else if (kind === "commandExecution") {
         turn.items.push({
-          type: "command",
+          type: "commandExecution",
           id: itemId,
           command: "",
-          status: "active",
-          output: delta,
-          stdout: delta,
-          stderr: "",
           cwd: null,
+          processId: null,
+          source: null,
+          status: "inProgress",
+          aggregatedOutput: delta,
+          commandActions: [],
           durationMs: null,
           exitCode: null,
         });
@@ -478,23 +505,42 @@ export class LocalLiveThreadStore {
           id: itemId,
           path: "",
           diff: delta,
-          status: "active",
+          status: "inProgress",
         });
       }
       return;
     }
     const item = turn.items[existingIndex];
     if (!item) return;
-    if (item.type === "assistant" || item.type === "reasoning") {
-      turn.items[existingIndex] = { ...item, text: item.text + delta };
-    } else if (item.type === "command") {
+    const itemRecord = asRecord(item);
+    const itemType = readString(itemRecord?.type);
+    if (itemType === "agentMessage") {
+      turn.items[existingIndex] = { ...item, text: readTextContent(itemRecord?.text) + delta } as MessageItem;
+    } else if (itemType === "reasoning") {
+      const itemRecord = asRecord(item);
+      const content = Array.isArray(itemRecord?.content) ? itemRecord.content : [];
+      const text = readTextContent(itemRecord?.text);
       turn.items[existingIndex] = {
         ...item,
-        output: item.output + delta,
-        stdout: item.stdout + delta,
-      };
-    } else if (item.type === "fileChange") {
-      turn.items[existingIndex] = { ...item, diff: item.diff + delta };
+        content: [...content, delta],
+        ...(text ? { text: text + delta } : {}),
+      } as MessageItem;
+    } else if (itemType === "commandExecution") {
+      turn.items[existingIndex] = {
+        ...item,
+        aggregatedOutput: `${readTextContent(itemRecord?.aggregatedOutput)}${delta}`,
+      } as MessageItem;
+    } else if (itemType === "fileChange") {
+      const existingChanges = Array.isArray(itemRecord?.changes) ? itemRecord.changes : [];
+      const changes = existingChanges.length
+        ? existingChanges.map((change, index) => {
+            const changeRecord = asRecord(change) ?? {};
+            return index === 0
+              ? { ...changeRecord, diff: readTextContent(changeRecord.diff) + delta }
+              : change;
+          })
+        : [{ path: "", diff: delta, kind: { type: "update", move_path: null } }];
+      turn.items[existingIndex] = { ...item, changes } as MessageItem;
     }
     state.detail.thread.inProgress = true;
   }

@@ -116,6 +116,33 @@ function readString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function readTextContent(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        const record = asRecord(entry);
+        return (
+          readString(record?.text) ||
+          readString(record?.content) ||
+          readString(record?.value) ||
+          readTextContent(record?.content)
+        );
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  const record = asRecord(value);
+  if (!record) return "";
+  return (
+    readString(record.text) ||
+    readTextContent(record.content) ||
+    readTextContent(record.input) ||
+    readString(record.message) ||
+    readString(record.value)
+  );
+}
+
 function readBoolean(value: unknown): boolean {
   return value === true;
 }
@@ -199,8 +226,8 @@ function hasExplicitMainLink(
 function firstUserText(turns: Turn[]): string {
   for (const turn of turns) {
     for (const item of turn.items) {
-      if (item.type !== "user") continue;
-      const text = item.text.replace(/\s+/g, " ").trim();
+      if (item.type !== "user" && item.type !== "userMessage") continue;
+      const text = readTextContent(item).replace(/\s+/g, " ").trim();
       if (text) return text;
     }
   }
@@ -208,7 +235,10 @@ function firstUserText(turns: Turn[]): string {
 }
 
 function isSideConversationBoundaryItem(item: Turn["items"][number]): boolean {
-  return item.type === "user" && item.text.trim().startsWith(SIDE_CONVERSATION_BOUNDARY_PREFIX);
+  return (
+    (item.type === "user" || item.type === "userMessage") &&
+    readTextContent(item).startsWith(SIDE_CONVERSATION_BOUNDARY_PREFIX)
+  );
 }
 
 function visibleSideConversationTurns(turns: Turn[]): Turn[] {
@@ -229,20 +259,36 @@ function fallbackSideTitle(index: number): string {
 }
 
 function turnItemText(item: Turn["items"][number]): string {
-  switch (item.type) {
+  const record = asRecord(item);
+  switch (readString(record?.type)) {
     case "user":
+    case "userMessage":
     case "assistant":
+    case "agentMessage":
     case "reasoning":
     case "toolOutput":
-      return item.text;
+      return readTextContent(item);
+    case "mcpToolCall":
+    case "dynamicToolCall":
+    case "webSearch":
+    case "commandExecution":
+    case "fileChange":
+      return readTextContent(item);
     case "agentTask":
-      return [item.prompt, ...item.agents.map((agent) => agent.prompt)]
+      return [
+        readTextContent(record?.prompt),
+        ...(Array.isArray(record?.agents)
+          ? record.agents.map((agent) => readTextContent(asRecord(agent)?.prompt))
+          : []),
+      ]
         .filter(Boolean)
         .join("\n");
     case "error":
-      return item.message;
+      return readTextContent(record?.message);
     case "plan":
-      return item.steps.map((step) => step.text).join("\n");
+      return (Array.isArray(record?.steps) ? record.steps : [])
+        .map((step) => readTextContent(asRecord(step)?.text))
+        .join("\n") || readTextContent(record?.text);
     default:
       return "";
   }

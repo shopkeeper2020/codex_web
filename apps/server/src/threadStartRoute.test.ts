@@ -250,8 +250,7 @@ describe("thread start route", () => {
     ]);
     expect(officialIpc.isOwnedConversation("thread-web-created")).toBe(false);
     expect(context.database.status()).toMatchObject({
-      threadCount: 0,
-      threadDetailCount: 0,
+      attachmentCount: 0,
     });
     expect(context.diagnostics.list().at(-1)).toMatchObject({
       level: "warn",

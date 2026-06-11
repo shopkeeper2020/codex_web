@@ -65,11 +65,23 @@ describe("LocalLiveThreadStore", () => {
       isInProgress: true,
       activeTurnId: "turn-1",
     });
-    expect(itemStarted?.detail.turns[0]?.items).toEqual([
-      { type: "assistant", id: "assistant-1", text: "" },
+    expect(itemStarted?.detail.turns[0]?.items).toMatchObject([
+      {
+        type: "agentMessage",
+        id: "assistant-1",
+        text: "",
+        phase: null,
+        memoryCitation: null,
+      },
     ]);
-    expect(delta?.detail.turns[0]?.items).toEqual([
-      { type: "assistant", id: "assistant-1", text: "你好" },
+    expect(delta?.detail.turns[0]?.items).toMatchObject([
+      {
+        type: "agentMessage",
+        id: "assistant-1",
+        text: "你好",
+        phase: null,
+        memoryCitation: null,
+      },
     ]);
     expect(delta?.source).toBe("app-server-live");
   });
@@ -109,11 +121,13 @@ describe("LocalLiveThreadStore", () => {
       },
     });
 
-    expect(finalDelta?.detail.turns[0]?.items).toEqual([
+    expect(finalDelta?.detail.turns[0]?.items).toMatchObject([
       {
-        type: "assistant",
+        type: "agentMessage",
         id: "assistant-1",
         text: "清单：\n\n- **stream-bold**\n- `inline-code`\n结尾",
+        phase: null,
+        memoryCitation: null,
       },
     ]);
   });
@@ -142,11 +156,13 @@ describe("LocalLiveThreadStore", () => {
       },
     });
 
-    expect(completed?.detail.turns[0]?.items).toEqual([
+    expect(completed?.detail.turns[0]?.items).toMatchObject([
       {
-        type: "assistant",
+        type: "agentMessage",
         id: "assistant-1",
         text: "| 日期 | 北京 |\n| --- | --- |\n| 6月4日 | 多云 |",
+        phase: null,
+        memoryCitation: null,
       },
     ]);
   });
@@ -174,14 +190,95 @@ describe("LocalLiveThreadStore", () => {
       },
     });
 
-    expect(itemStarted?.detail.turns[0]?.items).toEqual([
+    expect(itemStarted?.detail.turns[0]?.items).toMatchObject([
       {
-        type: "toolOutput",
+        type: "webSearch",
         id: "search-1",
-        title: "Web search: https://m.nmc.cn/publish/forecast/AGD/shenzhen.html",
-        text: "",
-        status: null,
-        rawType: "webSearch",
+        query: "https://m.nmc.cn/publish/forecast/AGD/shenzhen.html",
+        action: {
+          type: "openPage",
+          url: "https://m.nmc.cn/publish/forecast/AGD/shenzhen.html",
+        },
+      },
+    ]);
+    expect(itemStarted?.detail.turns[0]?.items[0]).not.toHaveProperty("status");
+  });
+
+  it("keeps richer official fields across same-id item updates", () => {
+    const store = new LocalLiveThreadStore({
+      isLocalOwner: (threadId) => threadId === "thread-1",
+      readInitialDetail: () => initialDetail,
+      readOwner: () => null,
+    });
+
+    store.handle({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "agentMessage",
+          id: "assistant-1",
+          text: "",
+          phase: "final_answer",
+          memoryCitation: { title: "live citation" },
+        },
+      },
+    });
+    store.handle({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "agentMessage",
+          id: "assistant-1",
+          text: "final",
+          phase: null,
+          memoryCitation: null,
+        },
+      },
+    });
+    store.handle({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "webSearch",
+          id: "search-1",
+          query: "codex desktop ipc",
+          action: { type: "search", query: "codex desktop ipc" },
+        },
+      },
+    });
+    const completed = store.handle({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "webSearch",
+          id: "search-1",
+          query: "codex desktop ipc",
+          action: null,
+        },
+      },
+    });
+
+    expect(completed?.detail.turns[0]?.items).toMatchObject([
+      {
+        type: "agentMessage",
+        id: "assistant-1",
+        text: "final",
+        phase: "final_answer",
+        memoryCitation: { title: "live citation" },
+      },
+      {
+        type: "webSearch",
+        id: "search-1",
+        query: "codex desktop ipc",
+        action: { type: "search", query: "codex desktop ipc" },
       },
     ]);
   });
@@ -233,12 +330,17 @@ describe("LocalLiveThreadStore", () => {
         items: [],
       },
     ]);
-    expect(userStarted?.detail.turns).toEqual([
+    expect(userStarted?.detail.turns).toMatchObject([
       {
         id: "turn-official",
         status: "active",
         items: [
-          { type: "user", id: "official-user-1", text: "再整理北京的。" },
+          {
+            type: "userMessage",
+            id: "official-user-1",
+            clientId: null,
+            content: [{ type: "text", text: "再整理北京的。" }],
+          },
         ],
       },
     ]);
@@ -295,7 +397,7 @@ describe("LocalLiveThreadStore", () => {
       },
     });
 
-    expect(replacement?.detail.turns).toEqual([
+    expect(replacement?.detail.turns).toMatchObject([
       {
         id: "turn-before",
         status: "completed",
@@ -304,7 +406,14 @@ describe("LocalLiveThreadStore", () => {
       {
         id: "turn-new",
         status: "active",
-        items: [{ type: "user", id: "user-new", text: "新疆的呢？" }],
+        items: [
+          {
+            type: "userMessage",
+            id: "user-new",
+            clientId: null,
+            content: [{ type: "text", text: "新疆的呢？" }],
+          },
+        ],
       },
     ]);
   });
