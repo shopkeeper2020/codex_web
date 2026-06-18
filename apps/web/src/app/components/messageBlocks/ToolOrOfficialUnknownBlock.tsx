@@ -1,9 +1,4 @@
-import {
-  ChevronDown,
-  ChevronRight,
-  Code2,
-  Globe2,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Code2, Globe2 } from "lucide-react";
 import type { ReactElement } from "react";
 import { useState } from "react";
 import type { MessageItem } from "../../../api";
@@ -18,10 +13,22 @@ import {
 import { UserMessageBlock } from "./UserMessageBlock";
 
 export type ToolOutputBlockItem = Extract<MessageItem, { type: "toolOutput" }>;
-export type UnknownOfficialBlockItem = Extract<MessageItem, { type: "unknown" }>;
-export type OfficialWebSearchBlockItem = Extract<MessageItem, { type: "webSearch" }>;
-export type OfficialToolCallBlockItem = Extract<MessageItem, { type: "mcpToolCall" | "dynamicToolCall" }>;
-export type WebSearchRenderItem = ToolOutputBlockItem | UnknownOfficialBlockItem | OfficialWebSearchBlockItem;
+export type UnknownOfficialBlockItem = Extract<
+  MessageItem,
+  { type: "unknown" }
+>;
+export type OfficialWebSearchBlockItem = Extract<
+  MessageItem,
+  { type: "webSearch" }
+>;
+export type OfficialToolCallBlockItem = Extract<
+  MessageItem,
+  { type: "mcpToolCall" | "dynamicToolCall" }
+>;
+export type WebSearchRenderItem =
+  | ToolOutputBlockItem
+  | UnknownOfficialBlockItem
+  | OfficialWebSearchBlockItem;
 export type ToolOrOfficialUnknownBlockItem = MessageItem;
 
 function sourceKeyLooksLikeWebSearch(value?: string | null): boolean {
@@ -32,7 +39,8 @@ function sourceKeyLooksLikeWebSearch(value?: string | null): boolean {
 
 function unknownPayload(item: MessageItem): unknown {
   const record = asUnknownRecord(item);
-  return readUnknownString(record?.type) === "unknown" && "raw" in (record ?? {})
+  return readUnknownString(record?.type) === "unknown" &&
+    "raw" in (record ?? {})
     ? record?.raw
     : item;
 }
@@ -120,14 +128,17 @@ function readUnknownImage(value: unknown): MessageImage | null {
     readUnknownString(record.mediaType) ||
     readUnknownString(record.media_type) ||
     null;
-  const alt = readUnknownString(record.alt) || readUnknownString(record.filename) || null;
+  const alt =
+    readUnknownString(record.alt) || readUnknownString(record.filename) || null;
   if (!url && !path && !type.includes("image")) return null;
   return { url, path, mimeType, alt };
 }
 
 function readUnknownImages(value: unknown): MessageImage[] {
   const values = Array.isArray(value) ? value : [value];
-  return values.map(readUnknownImage).filter((entry): entry is MessageImage => Boolean(entry));
+  return values
+    .map(readUnknownImage)
+    .filter((entry): entry is MessageImage => Boolean(entry));
 }
 
 function compactMessageImages(images: MessageImage[]): MessageImage[] {
@@ -141,7 +152,10 @@ function compactMessageImages(images: MessageImage[]): MessageImage[] {
 }
 
 function isWebSearchToolOutput(item: ToolOutputBlockItem): boolean {
-  return sourceKeyLooksLikeWebSearch(item.rawType) || sourceKeyLooksLikeWebSearch(item.title);
+  return (
+    sourceKeyLooksLikeWebSearch(item.rawType) ||
+    sourceKeyLooksLikeWebSearch(item.title)
+  );
 }
 
 function isUnknownWebSearchItem(item: MessageItem): boolean {
@@ -154,12 +168,16 @@ function isUnknownWebSearchItem(item: MessageItem): boolean {
   );
 }
 
-export function isWebSearchRenderItem(item: MessageItem): item is WebSearchRenderItem {
+export function isWebSearchRenderItem(
+  item: MessageItem,
+): item is WebSearchRenderItem {
   const type = readUnknownString(asUnknownRecord(item)?.type);
   return (
     type === "webSearch" ||
-    (type === "toolOutput" && isWebSearchToolOutput(item as ToolOutputBlockItem)) ||
-    (type === "unknown" && isUnknownWebSearchItem(item as UnknownOfficialBlockItem))
+    (type === "toolOutput" &&
+      isWebSearchToolOutput(item as ToolOutputBlockItem)) ||
+    (type === "unknown" &&
+      isUnknownWebSearchItem(item as UnknownOfficialBlockItem))
   );
 }
 
@@ -191,7 +209,10 @@ function webSearchQuery(item: WebSearchRenderItem): string {
       ? item.title || item.rawType || "网页搜索"
       : item.type === "webSearch"
         ? officialWebSearchRawQuery(item) || "网页搜索"
-        : webSearchRawQuery(item) || item.rawType || unknownRawType(item) || "网页搜索";
+        : webSearchRawQuery(item) ||
+          item.rawType ||
+          unknownRawType(item) ||
+          "网页搜索";
   return (
     title
       .replace(/^\s*web\s*search\s*:\s*/i, "")
@@ -206,7 +227,10 @@ function webSearchSummary(
 ): { label: string; meta: string; active: boolean } {
   const active = items.some((item) => {
     const record = asUnknownRecord(item);
-    return isItemActive?.(item) ?? isActiveMessageStatus(readUnknownString(record?.status));
+    return (
+      isItemActive?.(item) ??
+      isActiveMessageStatus(readUnknownString(record?.status))
+    );
   });
   return {
     label: active ? "正在搜索网页" : "已搜索网页",
@@ -241,7 +265,10 @@ export function WebSearchSummaryMessage({
     forceComplete ? () => false : isItemActive,
   );
   return (
-    <article className={styles.assistantMessage} key={`web-search-group-${items.map((item) => item.id).join("-")}`}>
+    <article
+      className={styles.assistantMessage}
+      key={`web-search-group-${items.map((item) => item.id).join("-")}`}
+    >
       <CollapsedMessageToggle
         active={summary.active}
         expanded={expanded}
@@ -288,13 +315,19 @@ export function ToolOutputBlockDetails({
   );
 }
 
-function ToolOutputMessage({ item }: { item: ToolOutputBlockItem }): ReactElement {
+function ToolOutputMessage({
+  item,
+}: {
+  item: ToolOutputBlockItem;
+}): ReactElement {
   const [expanded, setExpanded] = useState(false);
   if (isWebSearchToolOutput(item)) {
     return (
       <WebSearchSummaryMessage
         forceComplete={false}
-        isItemActive={(candidate) => isWebSearchActiveForTurn(candidate, item.status ?? "completed")}
+        isItemActive={(candidate) =>
+          isWebSearchActiveForTurn(candidate, item.status ?? "completed")
+        }
         items={[item]}
         key={item.id}
         turnStatus={item.status ?? "completed"}
@@ -365,7 +398,11 @@ function officialToolPayload(item: OfficialToolCallBlockItem): string {
   return lines.join("\n\n") || "暂无工具输出";
 }
 
-function OfficialToolCallMessage({ item }: { item: OfficialToolCallBlockItem }): ReactElement {
+function OfficialToolCallMessage({
+  item,
+}: {
+  item: OfficialToolCallBlockItem;
+}): ReactElement {
   const [expanded, setExpanded] = useState(false);
   const status = readUnknownString(asUnknownRecord(item)?.status) || null;
   const title = officialToolTitle(item);
@@ -406,7 +443,8 @@ function UnknownMessage({
 }): ReactElement {
   const [expanded, setExpanded] = useState(false);
   const rawType = unknownRawType(item);
-  const rawText = stringifyToolPayload(unknownPayload(item)) || stringifyToolPayload(item);
+  const rawText =
+    stringifyToolPayload(unknownPayload(item)) || stringifyToolPayload(item);
   return (
     <article className={styles.assistantMessage} key={item.id}>
       <CollapsedMessageToggle
@@ -432,11 +470,15 @@ function UnknownMessage({
   );
 }
 
-function ContextCompactionMessage(): ReactElement {
+function ContextCompactionMessage({
+  active,
+}: {
+  active: boolean;
+}): ReactElement {
   return (
     <article className={styles.contextCompactionMessage}>
       <span />
-      <strong>上下文已自动压缩</strong>
+      <strong>{active ? "正在压缩上下文" : "上下文已压缩"}</strong>
       <span />
     </article>
   );
@@ -444,12 +486,18 @@ function ContextCompactionMessage(): ReactElement {
 
 function isContextCompactionItem(item: MessageItem): boolean {
   const rawType = unknownRawType(item).toLowerCase();
-  return rawType.includes("contextcompaction") || rawType.includes("context_compaction") || rawType.includes("compact");
+  return (
+    rawType.includes("contextcompaction") ||
+    rawType.includes("context_compaction") ||
+    rawType.includes("compact")
+  );
 }
 
 export function isSilentUnknownItem(item: MessageItem): boolean {
   const rawType = compactProtocolType(unknownRawType(item));
-  const declaredType = compactProtocolType(readUnknownString(asUnknownRecord(unknownPayload(item))?.type));
+  const declaredType = compactProtocolType(
+    readUnknownString(asUnknownRecord(unknownPayload(item))?.type),
+  );
   return (
     rawType === "steered" ||
     declaredType === "steered" ||
@@ -461,11 +509,15 @@ export function isSilentUnknownItem(item: MessageItem): boolean {
 function isUnknownSteeringUserMessage(item: MessageItem): boolean {
   return (
     compactProtocolType(unknownRawType(item)) === "steeringusermessage" ||
-    compactProtocolType(readUnknownString(asUnknownRecord(unknownPayload(item))?.type)) === "steeringusermessage"
+    compactProtocolType(
+      readUnknownString(asUnknownRecord(unknownPayload(item))?.type),
+    ) === "steeringusermessage"
   );
 }
 
-function readSteeringUserMessage(item: MessageItem): { text: string; images: MessageImage[] } | null {
+function readSteeringUserMessage(
+  item: MessageItem,
+): { text: string; images: MessageImage[] } | null {
   if (!isUnknownSteeringUserMessage(item)) return null;
   const raw = asUnknownRecord(unknownPayload(item));
   const restoreMessage = asUnknownRecord(raw?.restoreMessage);
@@ -497,12 +549,17 @@ export function ToolOrOfficialUnknownBlock({
   turnStatus: string;
 }): ReactElement | null {
   const type = readUnknownString(asUnknownRecord(item)?.type);
-  if (type === "toolOutput") return <ToolOutputMessage item={item as ToolOutputBlockItem} key={item.id} />;
+  if (type === "toolOutput")
+    return (
+      <ToolOutputMessage item={item as ToolOutputBlockItem} key={item.id} />
+    );
   if (type === "webSearch") {
     return (
       <WebSearchSummaryMessage
         forceComplete={false}
-        isItemActive={(candidate) => isWebSearchActiveForTurn(candidate, turnStatus)}
+        isItemActive={(candidate) =>
+          isWebSearchActiveForTurn(candidate, turnStatus)
+        }
         items={[item as OfficialWebSearchBlockItem]}
         key={item.id}
         turnStatus={turnStatus}
@@ -510,14 +567,21 @@ export function ToolOrOfficialUnknownBlock({
     );
   }
   if (type === "mcpToolCall" || type === "dynamicToolCall") {
-    return <OfficialToolCallMessage item={item as OfficialToolCallBlockItem} key={item.id} />;
+    return (
+      <OfficialToolCallMessage
+        item={item as OfficialToolCallBlockItem}
+        key={item.id}
+      />
+    );
   }
 
   if (type === "unknown" && isUnknownWebSearchItem(item)) {
     return (
       <WebSearchSummaryMessage
         forceComplete={false}
-        isItemActive={(candidate) => isWebSearchActiveForTurn(candidate, turnStatus)}
+        isItemActive={(candidate) =>
+          isWebSearchActiveForTurn(candidate, turnStatus)
+        }
         items={[item as UnknownOfficialBlockItem]}
         key={item.id}
         turnStatus={turnStatus}
@@ -542,6 +606,13 @@ export function ToolOrOfficialUnknownBlock({
     );
   }
   if (isSilentUnknownItem(item)) return null;
-  if (isContextCompactionItem(item)) return <ContextCompactionMessage key={item.id} />;
+  if (isContextCompactionItem(item)) {
+    return (
+      <ContextCompactionMessage
+        active={isActiveMessageStatus(turnStatus)}
+        key={item.id}
+      />
+    );
+  }
   return <UnknownMessage item={item} key={item.id} turnStatus={turnStatus} />;
 }

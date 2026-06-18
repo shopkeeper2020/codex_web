@@ -13,6 +13,7 @@ import type {
 import { IMPORTANT_APP_SERVER_NOTIFICATION_METHODS } from "@codex-web/protocol";
 import { toOfficialTurnSteerParams } from "./appServerParams.js";
 import { editLocalLastUserTurn, startLocalTurn } from "./threadActions.js";
+import { preserveOwnedSnapshotWorkspaceFields } from "./threadWorkspaceFields.js";
 
 type RequestHandler = {
   canHandle?: (params: unknown) => boolean | Promise<boolean>;
@@ -22,7 +23,9 @@ type RequestHandler = {
 export type LocalOwnerOfficialIpc = {
   registerRequestHandler(method: string, handler: RequestHandler): void;
   isOwnedConversation(conversationId: string): boolean;
-  getThreadStreamState?(threadId: string): { conversationState: unknown } | null;
+  getThreadStreamState?(
+    threadId: string,
+  ): { conversationState: unknown } | null;
   canBroadcastOwnedConversation?(conversationId: string): boolean;
   broadcastConversationSnapshot(
     threadId: string,
@@ -144,7 +147,10 @@ async function listThreadTurns(
 }
 
 export async function readAppServerThreadSnapshot(
-  appServer: Pick<LocalOwnerAppServer, "rpc" | "threadRead" | "threadTurnsList">,
+  appServer: Pick<
+    LocalOwnerAppServer,
+    "rpc" | "threadRead" | "threadTurnsList"
+  >,
   threadId: string,
 ): Promise<Record<string, unknown> | null> {
   try {
@@ -372,15 +378,17 @@ export function installLocalOwnerSnapshotSync(input: {
         const threadId = readOfficialConversationId(record);
         if (!threadId) throw new Error("Missing conversationId");
         if (!isLocalOwner(threadId)) throw new Error("no-local-owner");
-        const turnId = readString(record?.turnId) || readString(record?.turn_id);
+        const turnId =
+          readString(record?.turnId) || readString(record?.turn_id);
         const message = readString(record?.message);
         if (!turnId) throw new Error("Missing turnId");
         if (!message) throw new Error("Missing message");
         const streamState = input.officialIpc.getThreadStreamState?.(threadId);
         const conversationState =
           streamState?.conversationState ??
-          asRecord(await input.appServer.threadRead({ threadId, includeTurns: true }))
-            ?.thread;
+          asRecord(
+            await input.appServer.threadRead({ threadId, includeTurns: true }),
+          )?.thread;
         const result = await editLocalLastUserTurn(input.appServer, {
           threadId,
           turnId,
@@ -416,13 +424,17 @@ export function installLocalOwnerSnapshotSync(input: {
       );
       if (!thread) return;
       if (!canBroadcastLocalOwner(threadId)) return;
+      const existingState =
+        input.officialIpc.getThreadStreamState?.(threadId) ?? null;
       input.officialIpc.broadcastConversationSnapshot(
         threadId,
         preserveSideConversationMetadata({
           threadId,
-          conversationState: thread,
-          existingState:
-            input.officialIpc.getThreadStreamState?.(threadId) ?? null,
+          conversationState: preserveOwnedSnapshotWorkspaceFields({
+            conversationState: thread,
+            existingState,
+          }),
+          existingState,
         }),
       );
     } catch (error) {
@@ -446,7 +458,8 @@ export function installLocalOwnerSnapshotSync(input: {
     const dueAt = Date.now() + delay;
     const existingTimer = timers.get(threadId);
     if (existingTimer) {
-      const existingDueAt = timerDueAt.get(threadId) ?? Number.POSITIVE_INFINITY;
+      const existingDueAt =
+        timerDueAt.get(threadId) ?? Number.POSITIVE_INFINITY;
       if (existingDueAt <= dueAt) return;
       clearTimeout(existingTimer);
     }

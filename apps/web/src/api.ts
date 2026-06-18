@@ -405,9 +405,14 @@ export async function getSyncReadiness(
   return payload.data;
 }
 
-export async function getRuntimeOptions(): Promise<RuntimeOptions> {
+export async function getRuntimeOptions(
+  input: { cwd?: string | null } = {},
+): Promise<RuntimeOptions> {
+  const params = new URLSearchParams();
+  if (input.cwd) params.set("cwd", input.cwd);
+  const query = params.toString();
   const payload = runtimeOptionsResponseSchema.parse(
-    await readJson<unknown>("/api/runtime-options"),
+    await readJson<unknown>(`/api/runtime-options${query ? `?${query}` : ""}`),
   );
   return payload.data;
 }
@@ -586,6 +591,7 @@ export async function startTurn(
     | "skills"
     | "collaborationMode"
     | "permissionMode"
+    | "permissionProfile"
   >,
 ): Promise<{ mode: string; result: unknown }> {
   const payload = await writeJson<{ data: { mode: string; result: unknown } }>(
@@ -636,6 +642,7 @@ export async function editLastUserTurn(
     | "skills"
     | "collaborationMode"
     | "permissionMode"
+    | "permissionProfile"
   >,
 ): Promise<{ mode: string; result: unknown }> {
   const payload = turnEditLastUserResponseSchema.parse(

@@ -84,17 +84,15 @@ export function formatReferencedPrompt(
 }
 
 export function parseReferencedPrompt(text: string): ParsedReferencedPrompt | null {
-  const normalized = text.replace(/\r\n?/g, "\n");
+  const normalized = text.replace(/\r\n?/g, "\n").trimStart();
   if (!normalized.startsWith(`${SELECTED_TEXT_HEADER}\n`)) return null;
 
   const body = normalized.slice(SELECTED_TEXT_HEADER.length + 1);
-  const requestHeaderPattern = new RegExp(`\\n\\n${escapeRegExp(REQUEST_HEADER)}\\n?`, "g");
-  const requestHeaderMatches = Array.from(body.matchAll(requestHeaderPattern));
-  const requestHeaderMatch = requestHeaderMatches.at(-1);
-  if (!requestHeaderMatch || requestHeaderMatch.index === undefined) return null;
+  const requestHeaderMatch = findLastRequestHeader(body);
+  if (!requestHeaderMatch) return null;
 
-  const selectionsBlock = body.slice(0, requestHeaderMatch.index);
-  const request = body.slice(requestHeaderMatch.index + requestHeaderMatch[0].length).trimEnd();
+  const selectionsBlock = body.slice(0, requestHeaderMatch.headerIndex);
+  const request = body.slice(requestHeaderMatch.afterHeaderIndex).trimEnd();
   const selectionMatches = Array.from(selectionsBlock.matchAll(SELECTION_HEADER_PATTERN));
   if (selectionMatches.length === 0) return null;
 
@@ -131,7 +129,7 @@ export function userRequestTextFromReferencedPrompt(text: string): string {
 }
 
 function requestTextFromStructuredUserPrompt(text: string): string | null {
-  const normalized = text.replace(/\r\n?/g, "\n");
+  const normalized = text.replace(/\r\n?/g, "\n").trimStart();
   if (
     !normalized.startsWith(`${SELECTED_TEXT_HEADER}\n`) &&
     !normalized.startsWith(`${FILES_MENTIONED_HEADER}\n`)
@@ -139,21 +137,33 @@ function requestTextFromStructuredUserPrompt(text: string): string | null {
     return null;
   }
 
+  const requestHeaderMatch = findLastRequestHeader(normalized);
+  if (!requestHeaderMatch) return null;
+
+  return normalized
+    .slice(requestHeaderMatch.afterHeaderIndex)
+    .trimEnd();
+}
+
+function findLastRequestHeader(
+  text: string,
+): { headerIndex: number; afterHeaderIndex: number } | null {
   const requestHeaderPattern = new RegExp(
-    `\\n\\n${escapeRegExp(REQUEST_HEADER)}\\n?`,
+    `(^|\\n)${escapeRegExp(REQUEST_HEADER)}(?:\\n|$)`,
     "g",
   );
-  const requestHeaderMatches = Array.from(
-    normalized.matchAll(requestHeaderPattern),
-  );
+  const requestHeaderMatches = Array.from(text.matchAll(requestHeaderPattern));
   const requestHeaderMatch = requestHeaderMatches.at(-1);
   if (!requestHeaderMatch || requestHeaderMatch.index === undefined) {
     return null;
   }
 
-  return normalized
-    .slice(requestHeaderMatch.index + requestHeaderMatch[0].length)
-    .trimEnd();
+  const linePrefixLength = requestHeaderMatch[1] ? 1 : 0;
+  const headerIndex = requestHeaderMatch.index + linePrefixLength;
+  const afterLabelIndex = headerIndex + REQUEST_HEADER.length;
+  const afterHeaderIndex =
+    text[afterLabelIndex] === "\n" ? afterLabelIndex + 1 : afterLabelIndex;
+  return { headerIndex, afterHeaderIndex };
 }
 
 function escapeRegExp(value: string): string {

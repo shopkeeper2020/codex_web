@@ -119,4 +119,23 @@ describe("textReferences", () => {
     );
     expect(parseReferencedPrompt(prompt)).toBeNull();
   });
+
+  it("hides files-mentioned scaffolding when official content loses the blank separator", () => {
+    const prompt = [
+      "",
+      "# Files mentioned by the user:",
+      "",
+      "## codex-clipboard-ca7e04e6-f581-435f-8cf7-e75ea70382b0.png:",
+      "C:/Users/user/AppData/Local/Temp/codex-clipboard-ca7e04e6-f581-435f-8cf7-e75ea70382b0.png",
+      "## My request for Codex:",
+      "我希望給圖片預覽的時候，增加鼠標滾輪可以放大縮小拖動的功能",
+    ].join("\n");
+
+    expect(displayTextFromReferencedPrompt(prompt)).toBe(
+      "我希望給圖片預覽的時候，增加鼠標滾輪可以放大縮小拖動的功能",
+    );
+    expect(userRequestTextFromReferencedPrompt(prompt)).toBe(
+      "我希望給圖片預覽的時候，增加鼠標滾輪可以放大縮小拖動的功能",
+    );
+  });
 });

@@ -4,6 +4,7 @@ import {
   normalizeOfficialConversationState,
   normalizeOfficialThreadDetail,
   normalizeOfficialThreadList,
+  normalizeOfficialThreadSummary,
 } from './index.js'
 
 describe('domain normalization', () => {
@@ -14,6 +15,7 @@ describe('domain normalization', () => {
           id: 'thread-a',
           name: 'Build web shell',
           cwd: 'C:\\workspace\\codex_web',
+          workspaceKind: 'project',
           updatedAt: 1_779_998_000,
           status: { type: 'notLoaded' },
           gitInfo: { sha: 'abcdef1234567890', branch: 'main', originUrl: null },
@@ -22,6 +24,7 @@ describe('domain normalization', () => {
           id: 'thread-b',
           preview: 'Lowercase duplicate',
           cwd: 'c:\\workspace\\codex_web',
+          workspaceKind: 'project',
           updatedAt: '2026-05-29T00:00:00.000Z',
           status: { type: 'active' },
         },
@@ -49,6 +52,40 @@ describe('domain normalization', () => {
     expect(normalized.backwardsCursor).toBe('back')
   })
 
+  it('does not infer a project workspace from app-server cwd alone', () => {
+    const normalized = normalizeOfficialThreadSummary({
+      id: 'thread-cwd-only',
+      name: 'Managed working directory',
+      cwd: 'C:\\Users\\user\\.codex\\threads',
+    })
+
+    expect(normalized).toMatchObject({
+      id: 'thread-cwd-only',
+      projectId: null,
+      path: null,
+      workspaceKind: 'unknown',
+      effectiveCwd: 'C:\\Users\\user\\.codex\\threads',
+    })
+  })
+
+  it('keeps official projectless workspace kind separate from cwd', () => {
+    const normalized = normalizeOfficialThreadSummary({
+      id: 'thread-projectless',
+      name: 'Pure chat',
+      cwd: 'C:\\Users\\user\\.codex\\threads',
+      path: 'C:\\Users\\user\\.codex\\threads',
+      workspaceKind: 'projectless',
+    })
+
+    expect(normalized).toMatchObject({
+      id: 'thread-projectless',
+      projectId: null,
+      path: 'C:\\Users\\user\\.codex\\threads',
+      workspaceKind: 'projectless',
+      effectiveCwd: 'C:\\Users\\user\\.codex\\threads',
+    })
+  })
+
   it('merges web favorite projects without duplicating official projects', () => {
     const normalized = normalizeOfficialThreadList({
       data: [
@@ -56,6 +93,7 @@ describe('domain normalization', () => {
           id: 'thread-a',
           name: 'Build web shell',
           cwd: 'C:\\workspace\\codex_web',
+          workspaceKind: 'project',
         },
       ],
     })
@@ -81,11 +119,13 @@ describe('domain normalization', () => {
           id: 'thread-a',
           name: 'Build web shell',
           cwd: 'C:\\workspace\\codex_web',
+          workspaceKind: 'project',
         },
         {
           id: 'thread-old',
           name: 'Old project',
           cwd: 'C:\\Users\\lwm\\Documents\\Codex\\2026-04-18-python',
+          workspaceKind: 'project',
         },
       ],
     })
@@ -120,6 +160,7 @@ describe('domain normalization', () => {
         id: 'thread-a',
         name: 'Demo',
         cwd: 'C:\\workspace\\codex_web',
+        workspaceKind: 'project',
         turns: [
           {
             id: 'turn-a',
@@ -522,6 +563,8 @@ describe('domain normalization', () => {
         name: 'Agent 00000000',
         role: 'spawnAgent',
         status: 'pendingInit',
+        model: 'gpt-5.5',
+        reasoningEffort: 'xhigh',
         source: 'official-ipc',
       },
     ])
@@ -534,6 +577,46 @@ describe('domain normalization', () => {
       reasoningEffort: 'xhigh',
       receiverThreadIds: ['00000000-0000-4000-8000-000000000001'],
     })
+  })
+
+  it('keeps official failed collab agent states as terminal over running snapshots', () => {
+    const normalized = normalizeOfficialThreadDetail({
+      fallbackThreadId: 'thread-collab-agent-failed',
+      owner: null,
+      source: 'official-ipc',
+      thread: {
+        id: 'thread-collab-agent-failed',
+        turns: [
+          {
+            id: 'turn-running',
+            items: [
+              {
+                type: 'collabAgentToolCall',
+                id: 'call-running',
+                tool: 'spawnAgent',
+                status: 'completed',
+                receiverThreadIds: ['00000000-0000-4000-8000-000000000001'],
+                agentsStates: {
+                  '00000000-0000-4000-8000-000000000001': { status: 'running' },
+                },
+              },
+              {
+                type: 'collabAgentToolCall',
+                id: 'call-failed',
+                tool: 'spawnAgent',
+                status: 'failed',
+                receiverThreadIds: ['00000000-0000-4000-8000-000000000001'],
+                agentsStates: {
+                  '00000000-0000-4000-8000-000000000001': { status: 'notFound' },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(normalized?.subAgents[0]?.status).toBe('notFound')
   })
 
   it('normalizes desktop textual agent generation messages into agent tasks', () => {

@@ -8,6 +8,13 @@ import type { CodexAppServerProcess } from "./appServerProcess.js";
 
 class FakeAppServer {
   readonly calls: Array<{ method: string; params?: unknown }> = [];
+  threadReadThread: Record<string, unknown> = {
+    id: "thread-goal",
+    name: "Goal Thread",
+    cwd: "C:\\workspace\\codex_web",
+    updatedAt: "2026-05-31T00:00:00.000Z",
+    turns: [],
+  };
 
   onNotification(): () => void {
     return () => undefined;
@@ -53,11 +60,8 @@ class FakeAppServer {
     this.calls.push({ method: "thread/read", params });
     return {
       thread: {
+        ...this.threadReadThread,
         id: params.threadId,
-        name: "Goal Thread",
-        cwd: "C:\\workspace\\codex_web",
-        updatedAt: "2026-05-31T00:00:00.000Z",
-        turns: [],
       },
     };
   }
@@ -86,6 +90,7 @@ class FakeAppServer {
 type Harness = {
   context: ServerContext;
   appServer: FakeAppServer;
+  officialIpc: OfficialIpcBridge;
   root: string;
 };
 
@@ -100,7 +105,7 @@ async function createHarness(): Promise<Harness> {
     officialIpc,
     appServer: appServer as unknown as CodexAppServerProcess,
   });
-  const harness = { context, appServer, root };
+  const harness = { context, appServer, officialIpc, root };
   harnesses.push(harness);
   return harness;
 }
@@ -194,5 +199,45 @@ describe("thread goal route", () => {
         params: { threadId: "thread-goal", includeTurns: true },
       },
     ]);
+  });
+
+  it("does not rebroadcast projectless thread paths as project cwd", async () => {
+    const { context, appServer, officialIpc } = await createHarness();
+    appServer.threadReadThread = {
+      id: "thread-goal",
+      name: "Projectless Goal Thread",
+      path: "C:\\Users\\user\\.codex\\threads",
+      workspaceKind: "projectless",
+      updatedAt: "2026-05-31T00:00:00.000Z",
+      turns: [],
+    };
+    officialIpc.broadcastConversationSnapshot("thread-goal", {
+      id: "thread-goal",
+      sessionId: "thread-goal",
+      workspaceKind: "projectless",
+      createdAt: "2026-05-31T00:00:00.000Z",
+      updatedAt: "2026-05-31T00:00:00.000Z",
+      turns: [],
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/thread/goal/set",
+      payload: {
+        threadId: "thread-goal",
+        objective: "Keep projectless semantics",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(
+      officialIpc.getThreadStreamState("thread-goal")?.conversationState,
+    ).toMatchObject({
+      id: "thread-goal",
+      workspaceKind: "projectless",
+    });
+    expect(
+      officialIpc.getThreadStreamState("thread-goal")?.conversationState,
+    ).not.toHaveProperty("cwd");
   });
 });

@@ -2608,15 +2608,35 @@
 
 .imageGrid {
   display: grid;
+  grid-template-columns: minmax(0, min(420px, 100%));
   gap: 10px;
   min-width: 0;
   max-width: 100%;
   margin: 12px 0 0 37px;
 }
 
+.imageGrid[data-count]:not([data-count="1"]) {
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  max-width: min(100%, 920px);
+}
+
 .plainAssistantMessage .imageGrid,
-.userMessage .imageGrid {
+.userMessage .imageGrid,
+.imageViewMessage .imageGrid {
   margin-left: 0;
+}
+
+.imageViewMessage {
+  width: 100%;
+}
+
+.imageViewMessage .imageGrid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 14px;
+  max-width: min(100%, 920px);
+  margin-top: 4px;
 }
 
 .userMessage .imageGrid {
@@ -2648,7 +2668,7 @@
 .imageBlock {
   display: grid;
   gap: 7px;
-  width: min(100%, 420px);
+  width: 100%;
   max-width: 100%;
   min-width: 0;
   margin: 0;
@@ -2683,6 +2703,25 @@
 
 .imageBlock video {
   background: #000;
+}
+
+.imageViewMessage .imageBlock {
+  width: auto;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.imageViewMessage .imageBlock img {
+  width: auto;
+  height: auto;
+  max-width: min(100%, 280px);
+  max-height: 150px;
+  border-radius: 8px;
+  background: transparent;
+  object-fit: contain;
 }
 
 .imageBlock span,
@@ -2722,6 +2761,10 @@
   border-radius: 10px;
   object-fit: contain;
   box-shadow: 0 24px 80px rgb(0 0 0 / 34%);
+  touch-action: none;
+  user-select: none;
+  transform-origin: center center;
+  will-change: transform;
 }
 
 .imageLightboxToolbar {
@@ -3505,9 +3548,22 @@
   grid-template-columns: 22px minmax(0, 1fr) auto;
   gap: 9px;
   align-items: center;
+  width: 100%;
   min-height: 28px;
+  border: 0;
+  border-radius: var(--radius-control);
+  padding: 3px 4px;
+  background: transparent;
   color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
   font-size: 13px;
+  text-align: left;
+}
+
+.agentRow:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
 }
 
 .agentRow strong {
@@ -3515,6 +3571,13 @@
   overflow: hidden;
   color: var(--color-text-primary);
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentRow > span:last-child {
+  max-width: 92px;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3533,6 +3596,47 @@
 
 .agentAvatar[data-tone="neutral"] {
   color: var(--color-text-muted);
+}
+
+.agentPixelIcon {
+  display: grid;
+  grid-template-columns: repeat(3, 4px);
+  grid-template-rows: repeat(3, 4px);
+  gap: 1px;
+  width: 18px;
+  height: 18px;
+  align-content: center;
+  justify-content: center;
+}
+
+.agentPixelIcon span {
+  width: 4px;
+  height: 4px;
+  background: transparent;
+}
+
+.agentPixelIcon span[data-on="true"] {
+  background: #3b82f6;
+}
+
+.agentPixelIcon[data-tone="orange"] span[data-on="true"] {
+  background: #f59e0b;
+}
+
+.agentPixelIcon[data-tone="green"] span[data-on="true"] {
+  background: #22c55e;
+}
+
+.agentPixelIcon[data-tone="red"] span[data-on="true"] {
+  background: #f97316;
+}
+
+.agentPixelIcon[data-tone="violet"] span[data-on="true"] {
+  background: #8b5cf6;
+}
+
+.agentPixelIcon[data-tone="neutral"] span[data-on="true"] {
+  background: var(--color-text-muted);
 }
 
 .activityError {
@@ -4245,6 +4349,10 @@ button.fileRowActive:hover {
   background: var(--color-bg-main);
 }
 
+.fileSideLayoutTreeCollapsed {
+  grid-template-columns: minmax(0, 1fr) 42px;
+}
+
 .fileTreeResizer {
   position: relative;
   width: 6px;
@@ -4264,6 +4372,52 @@ button.fileRowActive:hover {
 
 .fileTreeResizer:hover::before {
   background: var(--color-border-strong);
+}
+
+.fileTreePane {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-bg-sidebar);
+}
+
+.fileTreePane .fileBrowserCompact {
+  padding-top: 34px;
+}
+
+.fileTreeCollapsedRail {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  border-left: 1px solid var(--color-border-subtle);
+  padding-top: 10px;
+  background: var(--color-bg-sidebar);
+}
+
+.fileTreeToggleButton {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.fileTreeCollapsedRail .fileTreeToggleButton {
+  position: static;
+}
+
+.fileTreeToggleButton:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
 }
 
 .filePreviewPane {
@@ -5926,6 +6080,80 @@ button.fileRowActive:hover {
 .runtimeButton:disabled {
   cursor: not-allowed;
   opacity: 0.52;
+}
+
+.contextWindowMeter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  color: var(--color-text-secondary);
+  outline: none;
+}
+
+.contextWindowMeter svg {
+  width: 18px;
+  height: 18px;
+  transform: rotate(-90deg);
+}
+
+.contextWindowMeterTrack,
+.contextWindowMeterValue {
+  fill: none;
+  stroke-width: 4;
+}
+
+.contextWindowMeterTrack {
+  stroke: var(--color-border-subtle);
+}
+
+.contextWindowMeterValue {
+  stroke: var(--color-text-secondary);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 160ms ease, stroke 160ms ease;
+}
+
+.contextWindowMeter:hover .contextWindowMeterValue,
+.contextWindowMeter:focus-visible .contextWindowMeterValue {
+  stroke: var(--color-accent);
+}
+
+.contextWindowMeterTooltip {
+  position: absolute;
+  right: 50%;
+  bottom: calc(100% + 10px);
+  z-index: 70;
+  display: none;
+  min-width: 164px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+  transform: translateX(50%);
+  white-space: nowrap;
+}
+
+.contextWindowMeterTooltip strong,
+.contextWindowMeterTooltip span {
+  display: block;
+}
+
+.contextWindowMeterTooltip strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.contextWindowMeter:hover .contextWindowMeterTooltip,
+.contextWindowMeter:focus-visible .contextWindowMeterTooltip {
+  display: block;
 }
 
 .runtimeMenuSection {

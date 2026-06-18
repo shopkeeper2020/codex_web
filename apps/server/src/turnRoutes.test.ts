@@ -18,6 +18,7 @@ type FakeOfficialIpcOptions = {
   hasOfficialState?: boolean;
   officialState?: "active" | "idle" | "empty-idle" | "stale-active";
   webOwned?: boolean;
+  conversationState?: Record<string, unknown>;
 };
 
 class FakeOfficialIpc {
@@ -26,8 +27,7 @@ class FakeOfficialIpc {
     [];
   readonly followerSteerCalls: Array<{ threadId: string; params: unknown }> =
     [];
-  readonly followerEditCalls: Array<{ threadId: string; params: unknown }> =
-    [];
+  readonly followerEditCalls: Array<{ threadId: string; params: unknown }> = [];
   readonly followerCompactCalls: Array<{ threadId: string }> = [];
   readonly snapshots: Array<{ threadId: string; state: unknown }> = [];
   readonly streamStates = new Map<string, Record<string, unknown>>();
@@ -58,16 +58,16 @@ class FakeOfficialIpc {
   isOwnedConversation(threadId = "thread-a"): boolean {
     return Boolean(
       this.options.webOwned ||
-        this.ownedThreads.has(threadId) ||
-        this.localOnlyThreads.has(threadId),
+      this.ownedThreads.has(threadId) ||
+      this.localOnlyThreads.has(threadId),
     );
   }
 
   isExternallyOwnedConversation(threadId = "thread-a"): boolean {
     return Boolean(
       this.options.hasOfficialState &&
-        !this.options.webOwned &&
-        !this.discardedThreads.has(threadId),
+      !this.options.webOwned &&
+      !this.discardedThreads.has(threadId),
     );
   }
 
@@ -105,6 +105,21 @@ class FakeOfficialIpc {
     if (streamState) return streamState;
     if (!this.options.hasOfficialState || this.discardedThreads.has(threadId))
       return null;
+    if (this.options.conversationState) {
+      return {
+        conversationId: threadId,
+        ownerClientId: this.options.webOwned ? "web-test" : "official-test",
+        sourceClientId: this.options.webOwned ? "web-test" : "official-test",
+        cacheVersion: 1,
+        updatedAtIso: "2026-05-29T00:00:00.000Z",
+        isInProgress: false,
+        activeTurnId: "",
+        conversationState: {
+          id: threadId,
+          ...this.options.conversationState,
+        },
+      };
+    }
     const officialState = this.options.officialState ?? "active";
     if (officialState === "empty-idle") {
       return {
@@ -249,6 +264,14 @@ class FakeOfficialIpc {
 }
 
 class FakeAppServer {
+  threadReadThread: Record<string, unknown> = {
+    id: "thread-a",
+    title: "Thread A",
+    updatedAt: "2026-05-31T20:37:59.000Z",
+    threadRuntimeStatus: { type: "completed" },
+    turns: [{ id: "turn-completed", status: "completed", items: [] }],
+  };
+
   readonly calls: Array<{ method: string; params?: unknown }> = [];
   rollbackError: string | null = null;
 
@@ -305,13 +328,7 @@ class FakeAppServer {
 
   async threadRead(): Promise<unknown> {
     return {
-      thread: {
-        id: "thread-a",
-        title: "Thread A",
-        updatedAt: "2026-05-31T20:37:59.000Z",
-        threadRuntimeStatus: { type: "completed" },
-        turns: [{ id: "turn-completed", status: "completed", items: [] }],
-      },
+      thread: this.threadReadThread,
     };
   }
 
@@ -517,6 +534,40 @@ describe("turn HTTP routes", () => {
         input: [{ type: "text", text: "edited message", text_elements: [] }],
       },
     });
+  });
+
+  it("does not inherit a managed cwd when editing a projectless Web-owned thread", async () => {
+    const { context, appServer } = await createHarness({
+      errorMessage: "",
+      hasOfficialState: true,
+      webOwned: true,
+      conversationState: {
+        workspaceKind: "projectless",
+        cwd: "C:\\Users\\user\\.codex\\threads",
+        projectlessOutputDirectory:
+          "C:\\Users\\user\\.codex\\projectless-output",
+        turns: [{ id: "turn-completed", status: "completed", items: [] }],
+      },
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn/edit-last-user",
+      payload: {
+        threadId: "thread-a",
+        expectedTurnId: "turn-completed",
+        text: "edited message",
+      },
+    });
+
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
+    expect(appServer.calls.map((call) => call.method)).toEqual([
+      "thread/resume",
+      "thread/rollback",
+      "turn/start",
+    ]);
+    expect(appServer.calls[0]?.params).not.toHaveProperty("cwd");
+    expect(appServer.calls[2]?.params).not.toHaveProperty("cwd");
   });
 
   it("records the local edit step when app-server rollback fails", async () => {
@@ -882,6 +933,39 @@ describe("turn HTTP routes", () => {
     });
   });
 
+  it("does not override official defaults for the default permission mode", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "",
+      hasOfficialState: true,
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn/start",
+      payload: {
+        threadId: "thread-a",
+        text: "hello",
+        permissionMode: "default",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(appServer.calls).toEqual([]);
+    expect(officialIpc.followerStartCalls.at(-1)?.params).toMatchObject({
+      threadId: "thread-a",
+      input: [{ type: "text", text: "hello", text_elements: [] }],
+    });
+    expect(officialIpc.followerStartCalls.at(-1)?.params).not.toHaveProperty(
+      "approvalPolicy",
+    );
+    expect(officialIpc.followerStartCalls.at(-1)?.params).not.toHaveProperty(
+      "approvalsReviewer",
+    );
+    expect(officialIpc.followerStartCalls.at(-1)?.params).not.toHaveProperty(
+      "sandboxPolicy",
+    );
+  });
+
   it("passes full access as the official tagged sandbox policy", async () => {
     const { context, officialIpc, appServer } = await createHarness({
       errorMessage: "",
@@ -913,6 +997,35 @@ describe("turn HTTP routes", () => {
         },
       },
     ]);
+  });
+
+  it("passes official permission profiles without legacy sandbox overrides", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "",
+      hasOfficialState: true,
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn/start",
+      payload: {
+        threadId: "thread-a",
+        text: "hello",
+        permissionMode: "full-access",
+        permissionProfile: ":workspace",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(appServer.calls).toEqual([]);
+    expect(officialIpc.followerStartCalls.at(-1)?.params).toMatchObject({
+      threadId: "thread-a",
+      input: [{ type: "text", text: "hello", text_elements: [] }],
+      permissions: ":workspace",
+    });
+    expect(officialIpc.followerStartCalls.at(-1)?.params).not.toHaveProperty(
+      "sandboxPolicy",
+    );
   });
 
   it("rejects raw turn-start attachments instead of forwarding unmanaged protocol payloads", async () => {
@@ -1125,9 +1238,7 @@ describe("turn HTTP routes", () => {
                 type: "userMessage",
                 id: expect.any(String),
                 clientId: expect.any(String),
-                content: [
-                  { type: "text", text: "hello", text_elements: [] },
-                ],
+                content: [{ type: "text", text: "hello", text_elements: [] }],
               },
             ],
           }),
@@ -1160,9 +1271,7 @@ describe("turn HTTP routes", () => {
       data: { mode: "app-server", result: { turn: { id: "turn-local" } } },
     });
     expect(officialIpc.canBroadcastOwnedConversation("thread-a")).toBe(true);
-    expect(appServer.calls.map((call) => call.method)).toEqual([
-      "turn/start",
-    ]);
+    expect(appServer.calls.map((call) => call.method)).toEqual(["turn/start"]);
     expect(context.diagnostics.list()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1172,6 +1281,46 @@ describe("turn HTTP routes", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps projectless Web-owned turns from inheriting app-server managed cwd", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      errorMessage: "no-official-owner",
+      hasOfficialState: true,
+      webOwned: true,
+      conversationState: {
+        workspaceKind: "projectless",
+        cwd: "C:\\Users\\user\\.codex\\threads",
+        turns: [],
+      },
+    });
+    appServer.threadReadThread = {
+      id: "thread-a",
+      title: "Projectless Thread",
+      cwd: "C:\\Users\\user\\.codex\\threads",
+      turns: [],
+    };
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/turn/start",
+      payload: { threadId: "thread-a", text: "first projectless message" },
+    });
+
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
+    const turnStartCall = appServer.calls.find(
+      (call) => call.method === "turn/start",
+    );
+    expect(turnStartCall?.params).not.toHaveProperty("cwd");
+    expect(officialIpc.snapshots[0]).toMatchObject({
+      threadId: "thread-a",
+      state: {
+        id: "thread-a",
+        workspaceKind: "projectless",
+        turns: expect.any(Array),
+      },
+    });
+    expect(officialIpc.snapshots[0]?.state).not.toHaveProperty("cwd");
   });
 
   it("records sanitized runtime selections for start requests", async () => {

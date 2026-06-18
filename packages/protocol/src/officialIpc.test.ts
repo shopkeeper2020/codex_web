@@ -259,13 +259,16 @@ describe("official IPC helpers", () => {
       importance: "important",
       shouldDriveRealtime: true,
     });
-    expect(classifyAppServerNotification("rawResponseItem/completed")).toEqual(
-      {
-        method: "rawResponseItem/completed",
-        importance: "ignored",
-        shouldDriveRealtime: false,
-      },
-    );
+    expect(classifyAppServerNotification("thread/compacted")).toEqual({
+      method: "thread/compacted",
+      importance: "important",
+      shouldDriveRealtime: true,
+    });
+    expect(classifyAppServerNotification("rawResponseItem/completed")).toEqual({
+      method: "rawResponseItem/completed",
+      importance: "ignored",
+      shouldDriveRealtime: false,
+    });
     expect(classifyAppServerNotification("process/outputDelta")).toEqual({
       method: "process/outputDelta",
       importance: "passthrough",
@@ -283,9 +286,7 @@ describe("official IPC helpers", () => {
     expect(readOfficialConversationId({ conversation_id: "b" })).toBe("b");
     expect(readOfficialConversationId({ threadId: "c" })).toBe("c");
     expect(readOfficialConversationId({ thread_id: "d" })).toBe("d");
-    expect(readOfficialConversationId({ conversation: { id: "e" } })).toBe(
-      "e",
-    );
+    expect(readOfficialConversationId({ conversation: { id: "e" } })).toBe("e");
   });
 
   it("applies add, replace, and remove patches", () => {
@@ -510,7 +511,7 @@ describe("official IPC helpers", () => {
     expect(bridge.claimLocalOnlyConversation("thread-no-client")).toBe(false);
   });
 
-  it("omits context compaction items from Web-owned snapshots sent to official clients", () => {
+  it("preserves context compaction items in Web-owned snapshots sent to official clients", () => {
     const bridge = new OfficialIpcBridge("");
     (bridge as unknown as { clientId: string | null }).clientId = "web-client";
     const snapshot = {
@@ -542,7 +543,7 @@ describe("official IPC helpers", () => {
       ?.conversationState as {
       turns?: Array<{ items?: unknown[] }>;
     };
-    expect(state?.turns?.[0]?.items).toHaveLength(2);
+    expect(state?.turns?.[0]?.items).toHaveLength(4);
     expect(state?.turns?.[0]?.items).toMatchObject([
       {
         type: "userMessage",
@@ -550,6 +551,15 @@ describe("official IPC helpers", () => {
         text: "before",
         clientId: null,
         content: [{ type: "text", text: "before", text_elements: [] }],
+      },
+      {
+        type: "contextCompaction",
+        id: "compact-direct",
+      },
+      {
+        type: "unknown",
+        id: "compact-unknown",
+        rawType: "context_compaction",
       },
       {
         type: "agentMessage",
@@ -627,6 +637,7 @@ describe("official IPC helpers", () => {
       source: "vscode",
       threadSource: null,
       cwd: "C:\\workspace\\codex_web",
+      workspaceKind: "project",
       createdAt: "2026-06-02T00:00:00.000Z",
       updatedAt: "2026-06-02T00:00:01.000Z",
       status: { type: "active" },
@@ -750,9 +761,7 @@ describe("official IPC helpers", () => {
                 type: "userMessage",
                 id: "user-1",
                 clientId: null,
-                content: [
-                  { type: "text", text: "hello", text_elements: [] },
-                ],
+                content: [{ type: "text", text: "hello", text_elements: [] }],
               },
               {
                 type: "agentMessage",
@@ -780,6 +789,31 @@ describe("official IPC helpers", () => {
       "latestCollaborationMode",
     );
     expect(JSON.stringify(snapshot)).toBe(originalSnapshot);
+  });
+
+  it("does not infer project workspace kind from cwd-only snapshots", () => {
+    const bridge = new OfficialIpcBridge("");
+    (bridge as unknown as { clientId: string | null }).clientId = "web-client";
+
+    expect(
+      bridge.broadcastConversationSnapshot("thread-cwd-only", {
+        id: "thread-cwd-only",
+        sessionId: "thread-cwd-only",
+        cwd: "C:\\Users\\user\\.codex\\threads",
+        createdAt: "2026-06-02T00:00:00.000Z",
+        updatedAt: "2026-06-02T00:00:01.000Z",
+        status: { type: "idle" },
+        turns: [],
+      }),
+    ).toBe(true);
+
+    expect(
+      bridge.getThreadStreamState("thread-cwd-only")?.conversationState,
+    ).toMatchObject({
+      id: "thread-cwd-only",
+      cwd: "C:\\Users\\user\\.codex\\threads",
+      workspaceKind: "unknown",
+    });
   });
 
   it("omits null/default collaboration modes from Desktop stream snapshots", () => {
@@ -935,9 +969,7 @@ describe("official IPC helpers", () => {
       },
     });
 
-    expect(
-      bridge.getThreadStreamState("thread-runtime-only"),
-    ).toMatchObject({
+    expect(bridge.getThreadStreamState("thread-runtime-only")).toMatchObject({
       ownerClientId: "desktop-client",
       conversationState: {
         status: { type: "idle" },
@@ -986,8 +1018,7 @@ describe("official IPC helpers", () => {
       await expect(
         peer.waitForFrame(
           (frame) =>
-            frame.type === "broadcast" &&
-            frame.method === "thread-unarchived",
+            frame.type === "broadcast" && frame.method === "thread-unarchived",
         ),
       ).resolves.toMatchObject({
         sourceClientId: "web-client",
@@ -1036,8 +1067,9 @@ describe("official IPC helpers", () => {
     (bridge as unknown as { clientId: string | null }).clientId = "web-client";
 
     expect(bridge.claimLocalOnlyConversation("thread-local")).toBe(true);
-    expect(bridge.promoteLocalOnlyConversation("thread-local", "turn-start"))
-      .toBe(true);
+    expect(
+      bridge.promoteLocalOnlyConversation("thread-local", "turn-start"),
+    ).toBe(true);
 
     expect(bridge.isLocalOnlyOwnedConversation("thread-local")).toBe(false);
     expect(bridge.canBroadcastOwnedConversation("thread-local")).toBe(true);
@@ -1638,7 +1670,9 @@ describe("official IPC helpers", () => {
       },
     });
 
-    expect(bridge.getThreadStreamState("thread-revision-success")).toMatchObject({
+    expect(
+      bridge.getThreadStreamState("thread-revision-success"),
+    ).toMatchObject({
       changeType: "patches",
       revision: 2,
       lastBaseRevision: 1,
@@ -1693,13 +1727,15 @@ describe("official IPC helpers", () => {
       },
     });
 
-    expect(bridge.getThreadStreamState("thread-revision-reject")).toMatchObject({
-      revision: 3,
-      cacheVersion: 1,
-      conversationState: {
-        turns: [{ id: "turn-1", status: "active", items: [] }],
+    expect(bridge.getThreadStreamState("thread-revision-reject")).toMatchObject(
+      {
+        revision: 3,
+        cacheVersion: 1,
+        conversationState: {
+          turns: [{ id: "turn-1", status: "active", items: [] }],
+        },
       },
-    });
+    );
     expect(bridge.getStatus()).toMatchObject({
       lastError: "official-ipc-revision-mismatch:thread-revision-reject",
     });
@@ -1726,13 +1762,15 @@ describe("official IPC helpers", () => {
       },
     });
 
-    expect(bridge.getThreadStreamState("thread-revision-reject")).toMatchObject({
-      revision: 3,
-      cacheVersion: 1,
-      conversationState: {
-        turns: [{ id: "turn-1", status: "active", items: [] }],
+    expect(bridge.getThreadStreamState("thread-revision-reject")).toMatchObject(
+      {
+        revision: 3,
+        cacheVersion: 1,
+        conversationState: {
+          turns: [{ id: "turn-1", status: "active", items: [] }],
+        },
       },
-    });
+    );
     expect(bridge.getStatus()).toMatchObject({
       lastError: "official-ipc-stale-patch:thread-revision-reject",
     });
@@ -1764,7 +1802,8 @@ describe("official IPC helpers", () => {
 
     expect(bridge.getThreadStreamState("thread-hydrate-revision")).toBeNull();
     expect(bridge.getStatus()).toMatchObject({
-      lastError: "official-ipc-patches-without-snapshot:thread-hydrate-revision",
+      lastError:
+        "official-ipc-patches-without-snapshot:thread-hydrate-revision",
     });
 
     expect(
@@ -1803,7 +1842,9 @@ describe("official IPC helpers", () => {
       },
     });
 
-    expect(bridge.getThreadStreamState("thread-hydrate-revision")).toMatchObject({
+    expect(
+      bridge.getThreadStreamState("thread-hydrate-revision"),
+    ).toMatchObject({
       changeType: "patches",
       revision: 12,
       lastBaseRevision: 11,
@@ -2686,18 +2727,17 @@ describe("official IPC helpers", () => {
       const isThreadStreamBroadcast = (frame: OfficialIpcFrame) =>
         Boolean(
           frame.type === "broadcast" &&
-            frame.method === "thread-stream-state-changed" &&
-            frame.params &&
-            typeof frame.params === "object" &&
-            "conversationId" in frame.params &&
-            frame.params.conversationId === "thread-web-owned",
+          frame.method === "thread-stream-state-changed" &&
+          frame.params &&
+          typeof frame.params === "object" &&
+          "conversationId" in frame.params &&
+          frame.params.conversationId === "thread-web-owned",
         );
 
       bridge.broadcastConversationSnapshot("thread-web-owned", { turns: [] });
       await peer.waitForFrame(isThreadStreamBroadcast);
-      const firstCacheVersion = bridge.getThreadStreamState(
-        "thread-web-owned",
-      )?.cacheVersion;
+      const firstCacheVersion =
+        bridge.getThreadStreamState("thread-web-owned")?.cacheVersion;
       bridge.broadcastConversationSnapshot("thread-web-owned", { turns: [] });
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(peer.countFrames(isThreadStreamBroadcast)).toBe(1);

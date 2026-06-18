@@ -9,7 +9,10 @@ const userItem: MessageItem = {
   content: [{ type: "text", text: "修一下测试" }],
 };
 
-function commandItem(status = "completed", exitCode: number | null = 0): MessageItem {
+function commandItem(
+  status = "completed",
+  exitCode: number | null = 0,
+): MessageItem {
   return {
     type: "commandExecution",
     id: `command-${status}`,
@@ -45,7 +48,10 @@ describe("deriveTurnProcessCollapse", () => {
   it("collapses completed process items before a final answer phase", () => {
     const command = commandItem();
     const final = agentItem("final-1", "已经修好。", "final_answer");
-    const layout = deriveTurnProcessCollapse([userItem, command, final], "active");
+    const layout = deriveTurnProcessCollapse(
+      [userItem, command, final],
+      "active",
+    );
 
     expect(layout).toMatchObject({
       source: "phase",
@@ -57,7 +63,11 @@ describe("deriveTurnProcessCollapse", () => {
   });
 
   it("treats commentary agent messages before final answer as process", () => {
-    const commentary = agentItem("commentary-1", "我先检查测试。", "commentary");
+    const commentary = agentItem(
+      "commentary-1",
+      "我先检查测试。",
+      "commentary",
+    );
     const command = commandItem();
     const final = agentItem("final-1", "测试通过。", "final_answer");
     const layout = deriveTurnProcessCollapse(
@@ -80,6 +90,25 @@ describe("deriveTurnProcessCollapse", () => {
     ).toBeNull();
   });
 
+  it("does not collapse active file edits mixed with running commands", () => {
+    const runningCommand = commandItem("running", null);
+    const editingFile: MessageItem = {
+      type: "fileChange",
+      id: "file-editing",
+      path: "docs/daily_plan/2026-06-11_desktop_fidelity_issue_collection_plan.md",
+      diff: "+补充状态",
+      status: "editing",
+    };
+    const final = agentItem("final-1", "我先同步一下进度。", "final_answer");
+
+    expect(
+      deriveTurnProcessCollapse(
+        [userItem, runningCommand, editingFile, final],
+        "active",
+      ),
+    ).toBeNull();
+  });
+
   it("collapses canonical web search items without status before final answer", () => {
     const webSearch: MessageItem = {
       type: "webSearch",
@@ -88,13 +117,38 @@ describe("deriveTurnProcessCollapse", () => {
       action: null,
     };
     const final = agentItem("final-1", "已经找到资料。", "final_answer");
-    const layout = deriveTurnProcessCollapse([userItem, webSearch, final], "active");
+    const layout = deriveTurnProcessCollapse(
+      [userItem, webSearch, final],
+      "active",
+    );
 
     expect(layout).toMatchObject({
       source: "phase",
       processItems: [{ id: "search-a" }],
       finalAndAfterItems: [{ id: "final-1" }],
     });
+  });
+
+  it("keeps context compaction items outside the processed summary", () => {
+    const compacted: MessageItem = {
+      type: "contextCompaction",
+      id: "compact-1",
+    };
+    const command = commandItem();
+    const final = agentItem("final-1", "上下文压缩后继续。", "final_answer");
+    const layout = deriveTurnProcessCollapse(
+      [userItem, compacted, command, final],
+      "completed",
+    );
+
+    expect(layout).toMatchObject({
+      beforeItems: [{ id: "user-1" }, { id: "compact-1" }],
+      processItems: [{ id: command.id }],
+      finalAndAfterItems: [{ id: "final-1" }],
+    });
+    expect(layout?.processItems).not.toContainEqual(
+      expect.objectContaining({ type: "contextCompaction" }),
+    );
   });
 
   it("does not collapse active canonical web search items", () => {
@@ -107,28 +161,44 @@ describe("deriveTurnProcessCollapse", () => {
     };
     const final = agentItem("final-1", "我先给结论。", "final_answer");
 
-    expect(deriveTurnProcessCollapse([userItem, webSearch, final], "active")).toBeNull();
+    expect(
+      deriveTurnProcessCollapse([userItem, webSearch, final], "active"),
+    ).toBeNull();
   });
 
   it("treats declined command executions as terminal process items", () => {
     const declinedCommand = commandItem("declined", null);
-    const final = agentItem("final-1", "命令已被拒绝，我继续说明。", "final_answer");
-    const layout = deriveTurnProcessCollapse([userItem, declinedCommand, final], "active");
+    const final = agentItem(
+      "final-1",
+      "命令已被拒绝，我继续说明。",
+      "final_answer",
+    );
+    const layout = deriveTurnProcessCollapse(
+      [userItem, declinedCommand, final],
+      "active",
+    );
 
-    expect(layout?.processItems.map((item) => item.id)).toEqual([declinedCommand.id]);
+    expect(layout?.processItems.map((item) => item.id)).toEqual([
+      declinedCommand.id,
+    ]);
   });
 
   it("invalidates collapse when a process item appears after final answer", () => {
     const final = agentItem("final-1", "先给结论。", "final_answer");
     const command = commandItem();
 
-    expect(deriveTurnProcessCollapse([userItem, final, command], "active")).toBeNull();
+    expect(
+      deriveTurnProcessCollapse([userItem, final, command], "active"),
+    ).toBeNull();
   });
 
   it("uses a minimal fallback for old data without phase", () => {
     const command = commandItem();
     const final = agentItem("legacy-final", "旧数据里的最终回复。", null);
-    const layout = deriveTurnProcessCollapse([userItem, command, final], "completed");
+    const layout = deriveTurnProcessCollapse(
+      [userItem, command, final],
+      "completed",
+    );
 
     expect(layout).toMatchObject({
       source: "fallback",
@@ -141,6 +211,8 @@ describe("deriveTurnProcessCollapse", () => {
     const command = commandItem();
     const commentary = agentItem("commentary-1", "还在处理。", "commentary");
 
-    expect(deriveTurnProcessCollapse([userItem, command, commentary], "active")).toBeNull();
+    expect(
+      deriveTurnProcessCollapse([userItem, command, commentary], "active"),
+    ).toBeNull();
   });
 });

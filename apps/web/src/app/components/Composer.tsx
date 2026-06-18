@@ -1,5 +1,4 @@
 import {
-  Archive,
   AtSign,
   Brain,
   Check,
@@ -8,6 +7,7 @@ import {
   FileCode2,
   FileText,
   FolderGit2,
+  FolderX,
   GitBranch,
   Hand,
   Laptop,
@@ -48,6 +48,7 @@ import {
   type SkillOption,
   type WorkspaceStatus,
 } from "../../api";
+import type { ThreadTokenUsage } from "@codex-web/domain";
 import { useI18n } from "../../i18n/useI18n";
 import {
   formatReferencedPrompt,
@@ -55,6 +56,11 @@ import {
   type ComposerTextReference,
 } from "../textReferences";
 import styles from "../App.module.css";
+import { ContextWindowMeter } from "./composer/ContextWindowMeter";
+import {
+  buildDesktopSlashMenuItems,
+  type SlashMenuItem,
+} from "./composer/desktopSlashMenu";
 
 export type SendOptions = {
   model?: string;
@@ -64,19 +70,25 @@ export type SendOptions = {
   skills?: Array<{ name: string; path: string }>;
   collaborationMode?: Record<string, unknown>;
   permissionMode?: PermissionMode;
+  permissionProfile?: string;
 };
 
-type SlashMenuItem = {
+export type PermissionMenuOption = {
   id: string;
-  group: "功能" | "技能";
   label: string;
+  compactLabel: string;
   description: string;
-  meta?: string;
-  icon: ReactElement;
-  selected?: boolean;
-  disabled?: boolean;
-  closeOnApply?: boolean;
-  apply: () => void;
+  icon: typeof Hand;
+  mode?: PermissionMode;
+  profileId?: string;
+};
+
+export type ProjectMenuOption = {
+  id: string;
+  label: string;
+  path: string | null;
+  checked: boolean;
+  noProject: boolean;
 };
 
 type ComposerDraft = {
@@ -180,14 +192,17 @@ const FALLBACK_RUNTIME_OPTIONS: RuntimeOptions = {
       developerInstructions: null,
     },
   ],
+  permissionProfiles: [],
   defaults: {
     model: "gpt-5.5",
     reasoningEffort: "xhigh",
     collaborationModeName: "Default",
+    permissionProfile: null,
   },
   source: {
     models: "fallback",
     collaborationModes: "fallback",
+    permissionProfiles: "fallback",
   },
   warnings: [],
 };
@@ -197,45 +212,45 @@ const FALLBACK_MODEL_OPTION = FALLBACK_RUNTIME_OPTIONS
 const DICTATION_WAVEFORM_BARS = 42;
 const COMPOSER_ERROR_AUTO_DISMISS_MS = 6_000;
 const PERMISSION_STORAGE_KEY = "codex_web.permissionMode";
-const PERMISSION_OPTIONS: Array<{
-  mode: PermissionMode;
-  label: string;
-  compactLabel: string;
-  icon: typeof Hand;
-}> = [
+const LEGACY_PERMISSION_OPTIONS: PermissionMenuOption[] = [
   {
-    mode: "default",
+    id: "legacy:default",
     label: "默认权限",
     compactLabel: "默认权限",
+    description: "使用官方默认权限配置",
     icon: Hand,
   },
   {
+    id: "legacy:auto-review",
     mode: "auto-review",
     label: "自动审查",
     compactLabel: "自动审查",
+    description: "需要写入或执行时走自动审查",
     icon: ShieldCheck,
   },
   {
+    id: "legacy:full-access",
     mode: "full-access",
     label: "完全访问权限",
     compactLabel: "完全访问权限",
+    description: "允许本次消息使用完全访问权限",
     icon: ShieldAlert,
   },
   {
+    id: "legacy:custom",
     mode: "custom",
     label: "自定义 (config.toml)",
     compactLabel: "自定义",
+    description: "使用本机 config.toml 中的默认设置",
     icon: Settings,
   },
 ];
-const DEFAULT_PERMISSION_OPTION = PERMISSION_OPTIONS[2]!;
+const DEFAULT_PERMISSION_OPTION = LEGACY_PERMISSION_OPTIONS[0]!;
 
-function readStoredPermissionMode(): PermissionMode {
-  if (typeof window === "undefined") return "full-access";
+function readStoredPermissionSelection(): string {
+  if (typeof window === "undefined") return DEFAULT_PERMISSION_OPTION.id;
   const stored = window.localStorage.getItem(PERMISSION_STORAGE_KEY);
-  return PERMISSION_OPTIONS.some((option) => option.mode === stored)
-    ? (stored as PermissionMode)
-    : "full-access";
+  return stored || DEFAULT_PERMISSION_OPTION.id;
 }
 
 function formatBytes(bytes: number): string {
@@ -266,6 +281,79 @@ function compactCollaborationModeLabel(
   if (option.mode === "plan" || option.name.toLowerCase() === "plan")
     return "目标";
   return option.name.toLowerCase() === "default" ? "默认" : option.name;
+}
+
+function permissionProfileMenuOption(
+  profile: RuntimeOptions["permissionProfiles"][number],
+): PermissionMenuOption {
+  const id = profile.id;
+  if (id === ":read-only") {
+    return {
+      id: `profile:${id}`,
+      profileId: id,
+      label: "只读",
+      compactLabel: "只读",
+      description: profile.description ?? "使用官方只读权限 profile",
+      icon: Hand,
+    };
+  }
+  if (id === ":workspace") {
+    return {
+      id: `profile:${id}`,
+      profileId: id,
+      label: "工作区权限",
+      compactLabel: "工作区",
+      description: profile.description ?? "使用官方工作区权限 profile",
+      icon: ShieldCheck,
+    };
+  }
+  if (id === ":danger-full-access") {
+    return {
+      id: `profile:${id}`,
+      profileId: id,
+      label: "完全访问权限",
+      compactLabel: "完全访问",
+      description: profile.description ?? "使用官方完全访问权限 profile",
+      icon: ShieldAlert,
+    };
+  }
+  return {
+    id: `profile:${id}`,
+    profileId: id,
+    label: profile.label || id,
+    compactLabel: profile.label || id,
+    description: profile.description ?? `使用官方权限 profile ${id}`,
+    icon: Settings,
+  };
+}
+
+export function buildPermissionMenuOptions(
+  runtimeOptions: RuntimeOptions,
+): PermissionMenuOption[] {
+  const profileOptions = runtimeOptions.permissionProfiles.map(
+    permissionProfileMenuOption,
+  );
+  if (profileOptions.length > 0) {
+    return [DEFAULT_PERMISSION_OPTION, ...profileOptions];
+  }
+  return runtimeOptions.source.permissionProfiles === "app-server"
+    ? [DEFAULT_PERMISSION_OPTION]
+    : LEGACY_PERMISSION_OPTIONS;
+}
+
+export function buildPermissionSendOptions(input: {
+  activeSteerMode: boolean;
+  selectedPermission: Pick<PermissionMenuOption, "mode" | "profileId">;
+}): Pick<SendOptions, "permissionMode" | "permissionProfile"> {
+  if (input.activeSteerMode) return {};
+  return {
+    ...(input.selectedPermission.mode
+      ? { permissionMode: input.selectedPermission.mode }
+      : {}),
+    ...(input.selectedPermission.profileId
+      ? { permissionProfile: input.selectedPermission.profileId }
+      : {}),
+  };
 }
 
 function compactReasoningEffortLabel(effort: {
@@ -300,6 +388,34 @@ function compactProjectLabel(cwd: string | null, projects: Project[]): string {
   );
 }
 
+export function buildProjectMenuOptions(
+  projects: Project[],
+  cwd: string | null,
+): ProjectMenuOption[] {
+  return [
+    {
+      id: "no-project",
+      label: "不使用项目",
+      path: null,
+      checked: cwd === null,
+      noProject: true,
+    },
+    ...projects.flatMap((project) => {
+      const path = projectPath(project);
+      if (!path) return [];
+      return [
+        {
+          id: project.id,
+          label: project.name || projectDisplayName(path),
+          path,
+          checked: sameProjectPath(path, cwd),
+          noProject: false,
+        },
+      ];
+    }),
+  ];
+}
+
 function compactBranchLabel(status: WorkspaceStatus | null): string {
   if (!status) return "分支";
   if (!status.isGitRepository) return "无 Git";
@@ -309,7 +425,8 @@ function compactBranchLabel(status: WorkspaceStatus | null): string {
 function branchStatusMeta(status: WorkspaceStatus | null): string {
   if (!status?.isGitRepository) return "";
   const parts: string[] = [];
-  if (status.changedFiles > 0) parts.push(`未提交: ${status.changedFiles} 个文件`);
+  if (status.changedFiles > 0)
+    parts.push(`未提交: ${status.changedFiles} 个文件`);
   if (status.ahead) parts.push(`领先 ${status.ahead}`);
   if (status.behind) parts.push(`落后 ${status.behind}`);
   if (status.hasUntracked) parts.push("含未跟踪");
@@ -347,6 +464,7 @@ export function Composer({
   showContextControls = false,
   activeTurnId,
   threadInProgress = false,
+  tokenUsage = null,
   runtimeOptions,
   disabled,
   sending,
@@ -367,6 +485,7 @@ export function Composer({
   showContextControls?: boolean;
   activeTurnId: string;
   threadInProgress?: boolean;
+  tokenUsage?: ThreadTokenUsage | null;
   runtimeOptions: RuntimeOptions | null;
   disabled: boolean;
   sending: boolean;
@@ -393,6 +512,14 @@ export function Composer({
     .length
     ? effectiveRuntimeOptions.collaborationModes
     : FALLBACK_RUNTIME_OPTIONS.collaborationModes;
+  const permissionOptions = useMemo<PermissionMenuOption[]>(
+    () => buildPermissionMenuOptions(effectiveRuntimeOptions),
+    [effectiveRuntimeOptions],
+  );
+  const defaultPermissionSelection =
+    (effectiveRuntimeOptions.defaults.permissionProfile
+      ? `profile:${effectiveRuntimeOptions.defaults.permissionProfile}`
+      : null) ?? DEFAULT_PERMISSION_OPTION.id;
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skills, setSkills] = useState<SkillOption[]>([]);
@@ -432,8 +559,8 @@ export function Composer({
   const [collaborationModeName, setCollaborationModeName] = useState<
     string | null
   >(null);
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>(
-    readStoredPermissionMode,
+  const [permissionSelection, setPermissionSelection] = useState<string>(
+    readStoredPermissionSelection,
   );
   const [sendMode, setSendMode] = useState<"steer" | "start">("start");
   const [sendModeTouched, setSendModeTouched] = useState(false);
@@ -483,7 +610,10 @@ export function Composer({
       ) ?? null)
     : null;
   const selectedPermission =
-    PERMISSION_OPTIONS.find((option) => option.mode === permissionMode) ??
+    permissionOptions.find((option) => option.id === permissionSelection) ??
+    permissionOptions.find(
+      (option) => option.id === defaultPermissionSelection,
+    ) ??
     DEFAULT_PERMISSION_OPTION;
   const SelectedPermissionIcon = selectedPermission.icon;
   const selectedLaunchMode =
@@ -491,6 +621,10 @@ export function Composer({
     LAUNCH_MODE_OPTIONS[0]!;
   const SelectedLaunchModeIcon = selectedLaunchMode.icon;
   const selectedProjectLabel = compactProjectLabel(cwd, projects);
+  const projectMenuOptions = useMemo(
+    () => buildProjectMenuOptions(projects, cwd),
+    [cwd, projects],
+  );
   const selectedBranchLabel = compactBranchLabel(workspaceStatus);
   const branchAvailable = Boolean(workspaceStatus?.isGitRepository);
   const canSelectProject =
@@ -547,6 +681,7 @@ export function Composer({
             : "要求后续变更";
   const stopActiveTurnMode =
     hasRunningThread && !hasSubmitContent && !sending && !uploading;
+  const permissionControlDisabled = controlsDisabled || activeSteerMode;
   const slashQuery =
     slashMenuOpen && text.startsWith("/")
       ? text.slice(1).trim().toLowerCase()
@@ -554,137 +689,29 @@ export function Composer({
   const planCollaborationMode =
     collaborationModeOptions.find((option) => option.mode === "plan") ?? null;
   const slashMenuItems = useMemo<SlashMenuItem[]>(() => {
-    const items: SlashMenuItem[] = [
-      {
-        id: "attachment:file",
-        group: "功能",
-        label: "添加照片和文件",
-        description: "从此设备选择图片或文件",
-        icon: <Paperclip size={15} />,
-        closeOnApply: true,
-        apply: () => {
-          inputRef.current?.click();
-        },
-      },
-    ];
-
-    if (onCompactThread) {
-      items.push({
-        id: "thread:compact",
-        group: "功能",
-        label: "压缩",
-        description: "压缩此会话的上下文",
-        icon: <Archive size={15} />,
-        closeOnApply: true,
-        apply: () => {
-          void onCompactThread();
-        },
-      });
-    }
-
-    if (activeTurnId) {
-      items.push(
-        {
-          id: "send-mode:steer",
-          group: "功能",
-          label: "引导当前回复",
-          description: "把下一条发送给正在运行的回复",
-          icon: <AtSign size={15} />,
-          selected: sendMode === "steer",
-          apply: () => {
-            setSendMode("steer");
-            setSendModeTouched(true);
-          },
-        },
-        {
-          id: "send-mode:start",
-          group: "功能",
-          label: "排队下一条",
-          description: "在当前回复后启动新的消息",
-          icon: <AtSign size={15} />,
-          selected: sendMode === "start",
-          apply: () => {
-            setSendMode("start");
-            setSendModeTouched(true);
-          },
-        },
-      );
-    }
-
-    if (planCollaborationMode) {
-      items.push({
-        id: "collaboration:plan",
-        group: "功能",
-        label: "目标",
-        description: "设置 Codex 将持续努力实现的目标",
-        icon: <Brain size={15} />,
-        selected: collaborationModeName === planCollaborationMode.name,
-        disabled: activeSteerMode,
-        apply: () => {
-          setCollaborationModeName(planCollaborationMode.name);
-        },
-      });
-    }
-
-    items.push({
-      id: "collaboration:default",
-      group: "功能",
-      label: "默认模式",
-      description: "回到普通跟进，不附加目标模式",
-      icon: <Sparkles size={15} />,
-      selected: collaborationModeName === null,
-      apply: () => {
-        setCollaborationModeName(null);
-      },
+    return buildDesktopSlashMenuItems({
+      activeSteerMode,
+      collaborationModeName,
+      onCompactThread,
+      planCollaborationMode,
+      selectedEffortLabel: compactReasoningEffortLabel(selectedEffort),
+      selectedModelLabel: selectedModel.displayName || selectedModel.model,
+      selectedSkillIds,
+      setCollaborationModeName,
+      setSelectedSkillIds,
+      skills,
+      tokenUsage,
     });
-
-    PERMISSION_OPTIONS.forEach((option) => {
-      const OptionIcon = option.icon;
-      items.push({
-        id: `permission:${option.mode}`,
-        group: "功能",
-        label: option.label,
-        description: "切换本次消息的权限模式",
-        icon: <OptionIcon size={15} />,
-        selected: permissionMode === option.mode,
-        apply: () => {
-          setPermissionMode(option.mode);
-        },
-      });
-    });
-
-    skills.forEach((skill) => {
-      const selected = selectedSkillIds.includes(skill.id);
-      items.push({
-        id: `skill:${skill.id}`,
-        group: "技能",
-        label: skill.displayName,
-        description:
-          skill.shortDescription || skill.description || "启用这个 Skill",
-        meta: skill.scope,
-        icon: <FileCode2 size={15} />,
-        selected,
-        apply: () => {
-          setSelectedSkillIds((current) =>
-            current.includes(skill.id)
-              ? current.filter((id) => id !== skill.id)
-              : [...current, skill.id],
-          );
-        },
-      });
-    });
-
-    return items;
   }, [
     activeSteerMode,
-    activeTurnId,
     collaborationModeName,
     onCompactThread,
-    permissionMode,
     planCollaborationMode,
     selectedSkillIds,
-    sendMode,
+    selectedEffort,
+    selectedModel,
     skills,
+    tokenUsage,
   ]);
   const filteredSlashMenuItems = useMemo(() => {
     if (!slashQuery) return slashMenuItems;
@@ -912,6 +939,10 @@ export function Composer({
   }, [runtimeOptions]);
 
   useEffect(() => {
+    if (activeSteerMode) setPermissionMenuOpen(false);
+  }, [activeSteerMode]);
+
+  useEffect(() => {
     if (
       !actionMenuOpen &&
       !slashMenuOpen &&
@@ -976,8 +1007,14 @@ export function Composer({
   ]);
 
   useEffect(() => {
-    window.localStorage.setItem(PERMISSION_STORAGE_KEY, permissionMode);
-  }, [permissionMode]);
+    if (permissionOptions.some((option) => option.id === permissionSelection))
+      return;
+    setPermissionSelection(defaultPermissionSelection);
+  }, [defaultPermissionSelection, permissionOptions, permissionSelection]);
+
+  useEffect(() => {
+    window.localStorage.setItem(PERMISSION_STORAGE_KEY, permissionSelection);
+  }, [permissionSelection]);
 
   useEffect(() => {
     return () => {
@@ -1429,7 +1466,10 @@ export function Composer({
           cwd,
           skills: selectedSkills,
           collaborationMode: activeSteerMode ? undefined : collaborationMode,
-          permissionMode,
+          ...buildPermissionSendOptions({
+            activeSteerMode,
+            selectedPermission,
+          }),
         },
       );
       setDraftText("", submitThreadId);
@@ -1866,7 +1906,7 @@ export function Composer({
                       onClick={() => setSkillsOpen((open) => !open)}
                     >
                       <FileCode2 size={15} />
-                      <span>插件</span>
+                      <span>技能</span>
                       <ChevronDown size={14} />
                     </button>
                     {skillsOpen ? (
@@ -1921,9 +1961,18 @@ export function Composer({
                 <button
                   className={styles.permissionControl}
                   type="button"
-                  aria-label="权限设置"
+                  aria-label={
+                    activeSteerMode
+                      ? "权限设置（引导当前回复时沿用当前权限）"
+                      : "权限设置"
+                  }
                   aria-expanded={permissionMenuOpen}
-                  disabled={controlsDisabled}
+                  disabled={permissionControlDisabled}
+                  title={
+                    activeSteerMode
+                      ? "引导当前回复时沿用当前权限"
+                      : selectedPermission.description
+                  }
                   onClick={() => {
                     setPermissionMenuOpen((open) => !open);
                     setActionMenuOpen(false);
@@ -1945,23 +1994,24 @@ export function Composer({
                     role="menu"
                     aria-label="权限设置"
                   >
-                    {PERMISSION_OPTIONS.map((option) => {
+                    {permissionOptions.map((option) => {
                       const OptionIcon = option.icon;
                       return (
                         <button
                           className={styles.permissionMenuItem}
                           type="button"
                           role="menuitemradio"
-                          aria-checked={option.mode === permissionMode}
-                          key={option.mode}
+                          aria-checked={option.id === permissionSelection}
+                          key={option.id}
                           onClick={() => {
-                            setPermissionMode(option.mode);
+                            setPermissionSelection(option.id);
                             setPermissionMenuOpen(false);
                           }}
+                          title={option.description}
                         >
                           <OptionIcon size={15} />
                           <span>{option.label}</span>
-                          {option.mode === permissionMode ? (
+                          {option.id === permissionSelection ? (
                             <Check size={14} />
                           ) : null}
                         </button>
@@ -1985,7 +2035,7 @@ export function Composer({
                       aria-label="选择项目"
                       aria-expanded={projectMenuOpen}
                       title={cwd ?? selectedProjectLabel}
-                      disabled={!canSelectProject || projects.length === 0}
+                      disabled={!canSelectProject}
                       onClick={() => {
                         setProjectMenuOpen((open) => !open);
                         setActionMenuOpen(false);
@@ -2010,27 +2060,25 @@ export function Composer({
                         <div className={styles.workspaceMenuSearch}>
                           搜索项目
                         </div>
-                        {projects.map((project) => {
-                          const path = projectPath(project);
-                          if (!path) return null;
-                          const checked = sameProjectPath(path, cwd);
+                        {projectMenuOptions.map((option) => {
+                          const OptionIcon = option.noProject
+                            ? FolderX
+                            : FolderGit2;
                           return (
                             <button
                               className={styles.composerActionMenuItem}
                               type="button"
                               role="menuitemradio"
-                              aria-checked={checked}
-                              key={project.id}
+                              aria-checked={option.checked}
+                              key={option.id}
                               onClick={() => {
-                                onSelectProject?.(path);
+                                onSelectProject?.(option.path);
                                 setProjectMenuOpen(false);
                               }}
                             >
-                              <FolderGit2 size={15} />
-                              <span>
-                                {project.name || projectDisplayName(path)}
-                              </span>
-                              {checked ? <Check size={14} /> : null}
+                              <OptionIcon size={15} />
+                              <span>{option.label}</span>
+                              {option.checked ? <Check size={14} /> : null}
                             </button>
                           );
                         })}
@@ -2112,8 +2160,7 @@ export function Composer({
                       aria-expanded={branchMenuOpen}
                       disabled={contextControlsDisabled || !branchAvailable}
                       title={
-                        branchStatusMeta(workspaceStatus) ||
-                        selectedBranchLabel
+                        branchStatusMeta(workspaceStatus) || selectedBranchLabel
                       }
                       onClick={() => {
                         setBranchMenuOpen((open) => !open);
@@ -2140,17 +2187,13 @@ export function Composer({
                           搜索分支
                         </div>
                         <div className={styles.runtimeMenuSection}>分支</div>
-                        {(
-                          workspaceStatus?.branches.length
-                            ? workspaceStatus.branches
-                            : [selectedBranchLabel]
+                        {(workspaceStatus?.branches.length
+                          ? workspaceStatus.branches
+                          : [selectedBranchLabel]
                         ).map((branch) => {
                           const checked = branch === workspaceStatus?.branch;
                           return (
-                            <div
-                              className={styles.branchMenuRow}
-                              key={branch}
-                            >
+                            <div className={styles.branchMenuRow} key={branch}>
                               <button
                                 className={styles.composerActionMenuItem}
                                 type="button"
@@ -2260,6 +2303,7 @@ export function Composer({
                 </button>
               ) : null}
               <span className={styles.controlSpacer} aria-hidden="true" />
+              <ContextWindowMeter tokenUsage={tokenUsage} />
               <div className={styles.runtimeControl} ref={runtimeControlRef}>
                 <button
                   className={styles.runtimeButton}

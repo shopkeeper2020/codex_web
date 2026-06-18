@@ -869,14 +869,24 @@ describe("API contract schemas", () => {
               developerInstructions: null,
             },
           ],
+          permissionProfiles: [
+            {
+              id: ":danger-full-access",
+              label: "Full access",
+              description: null,
+              isBuiltin: true,
+            },
+          ],
           defaults: {
             model: "gpt-5.5",
             reasoningEffort: "xhigh",
             collaborationModeName: "Default",
+            permissionProfile: ":danger-full-access",
           },
           source: {
             models: "app-server",
             collaborationModes: "fallback",
+            permissionProfiles: "app-server",
           },
           warnings: [],
         },

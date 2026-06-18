@@ -8,8 +8,11 @@ import {
 } from "lucide-react";
 import type {
   ComponentPropsWithoutRef,
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
   ReactElement,
   ReactNode,
+  WheelEvent as ReactWheelEvent,
 } from "react";
 import { isValidElement, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -39,6 +42,24 @@ const INLINE_FILE_REFERENCE_PATTERN = new RegExp(
   ].join("|"),
   "gi",
 );
+const LIGHTBOX_MIN_SCALE = 0.3;
+const LIGHTBOX_MAX_SCALE = 6;
+
+type LightboxTransform = {
+  scale: number;
+  x: number;
+  y: number;
+};
+
+const DEFAULT_LIGHTBOX_TRANSFORM: LightboxTransform = {
+  scale: 1,
+  x: 0,
+  y: 0,
+};
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -510,12 +531,24 @@ export function MarkdownText({
 export function MessageImages({
   images,
   projectRoot,
+  showLabels = true,
 }: {
   images?: MessageImage[];
   projectRoot?: string | null;
+  showLabels?: boolean;
 }): ReactElement | null {
   const [activeImage, setActiveImage] = useState<{ src: string; label: string } | null>(null);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const [lightboxTransform, setLightboxTransform] =
+    useState<LightboxTransform>(DEFAULT_LIGHTBOX_TRANSFORM);
+  const [lightboxDragging, setLightboxDragging] = useState(false);
+  const lightboxDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
   useEffect(() => {
     if (!activeImage) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -524,34 +557,138 @@ export function MessageImages({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [activeImage]);
+  useEffect(() => {
+    lightboxDragRef.current = null;
+    setLightboxDragging(false);
+    setLightboxTransform(DEFAULT_LIGHTBOX_TRANSFORM);
+  }, [activeImage?.src]);
+
+  function closeLightbox(): void {
+    lightboxDragRef.current = null;
+    setLightboxDragging(false);
+    setActiveImage(null);
+  }
+
+  function resetLightboxTransform(): void {
+    lightboxDragRef.current = null;
+    setLightboxDragging(false);
+    setLightboxTransform(DEFAULT_LIGHTBOX_TRANSFORM);
+  }
+
+  function handleLightboxWheel(event: ReactWheelEvent<HTMLImageElement>): void {
+    event.preventDefault();
+    event.stopPropagation();
+    setLightboxTransform((current) => {
+      const factor = Math.exp(-event.deltaY * 0.0015);
+      const nextScale = clampNumber(
+        current.scale * factor,
+        LIGHTBOX_MIN_SCALE,
+        LIGHTBOX_MAX_SCALE,
+      );
+      if (Math.abs(nextScale - current.scale) < 0.001) return current;
+      if (nextScale <= 1 + 0.001) {
+        return {
+          scale: nextScale,
+          x: 0,
+          y: 0,
+        };
+      }
+
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+      const localX = event.clientX - centerX - current.x;
+      const localY = event.clientY - centerY - current.y;
+      const ratio = nextScale / current.scale;
+
+      return {
+        scale: nextScale,
+        x: current.x - localX * (ratio - 1),
+        y: current.y - localY * (ratio - 1),
+      };
+    });
+  }
+
+  function handleLightboxPointerDown(event: ReactPointerEvent<HTMLImageElement>): void {
+    if (event.button !== 0 || lightboxTransform.scale <= 1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    lightboxDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: lightboxTransform.x,
+      originY: lightboxTransform.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setLightboxDragging(true);
+  }
+
+  function handleLightboxPointerMove(event: ReactPointerEvent<HTMLImageElement>): void {
+    const drag = lightboxDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setLightboxTransform((current) => ({
+      ...current,
+      x: drag.originX + event.clientX - drag.startX,
+      y: drag.originY + event.clientY - drag.startY,
+    }));
+  }
+
+  function endLightboxDrag(event?: ReactPointerEvent<HTMLImageElement>): void {
+    const drag = lightboxDragRef.current;
+    if (event && drag?.pointerId === event.pointerId) {
+      event.stopPropagation();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    }
+    lightboxDragRef.current = null;
+    setLightboxDragging(false);
+  }
 
   if (!images?.length) return null;
+  const lightboxImageStyle: CSSProperties = {
+    cursor: lightboxTransform.scale > 1 ? (lightboxDragging ? "grabbing" : "grab") : "zoom-in",
+    transform: `translate3d(${lightboxTransform.x}px, ${lightboxTransform.y}px, 0) scale(${lightboxTransform.scale})`,
+  };
   const lightbox = activeImage ? (
     <div
       aria-label={activeImage.label}
       aria-modal="true"
       className={styles.imageLightbox}
-      onClick={() => setActiveImage(null)}
+      onClick={closeLightbox}
       role="dialog"
     >
       <div className={styles.imageLightboxToolbar}>
         <a aria-label="下载图片" download href={activeImage.src} onClick={(event) => event.stopPropagation()}>
           <Download size={18} />
         </a>
-        <button aria-label="关闭图片预览" onClick={() => setActiveImage(null)} type="button">
+        <button aria-label="关闭图片预览" onClick={closeLightbox} type="button">
           <X size={22} />
         </button>
       </div>
       <img
         alt={activeImage.label}
+        draggable={false}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          resetLightboxTransform();
+        }}
         onClick={(event) => event.stopPropagation()}
+        onPointerCancel={endLightboxDrag}
+        onPointerDown={handleLightboxPointerDown}
+        onPointerMove={handleLightboxPointerMove}
+        onPointerUp={endLightboxDrag}
+        onWheel={handleLightboxWheel}
         src={activeImage.src}
+        style={lightboxImageStyle}
       />
     </div>
   ) : null;
   return (
     <>
-      <div className={styles.imageGrid}>
+      <div className={styles.imageGrid} data-count={images.length}>
         {images.map((image, index) => {
           const src = imageSource(image, projectRoot);
           const video = isVideoMedia(image);
@@ -577,7 +714,7 @@ export function MessageImages({
                 ) : (
                   <span className={styles.imageUnavailable}>视频文件不可用</span>
                 )}
-                <figcaption>{label}</figcaption>
+                {showLabels ? <figcaption>{label}</figcaption> : null}
               </figure>
             );
           }
@@ -604,7 +741,7 @@ export function MessageImages({
               ) : (
                 <span className={styles.imageUnavailable}>图片文件不可用</span>
               )}
-              <span>{label}</span>
+              {showLabels ? <span>{label}</span> : null}
             </button>
           );
         })}

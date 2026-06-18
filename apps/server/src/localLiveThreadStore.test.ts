@@ -86,6 +86,40 @@ describe("LocalLiveThreadStore", () => {
     expect(delta?.source).toBe("app-server-live");
   });
 
+  it("keeps Desktop editing-like statuses active in realtime state", () => {
+    const store = new LocalLiveThreadStore({
+      isLocalOwner: (threadId) => threadId === "thread-1",
+      readInitialDetail: () => initialDetail,
+      readOwner: () => null,
+    });
+
+    const started = store.handle({
+      method: "turn/started",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "turn-editing", status: { type: "editing" } },
+      },
+    });
+    const statusChanged = store.handle({
+      method: "thread/status/changed",
+      params: {
+        threadId: "thread-1",
+        status: { type: "editing" },
+      },
+    });
+
+    expect(started).toMatchObject({
+      isInProgress: true,
+      activeTurnId: "turn-editing",
+      detail: { turns: [{ id: "turn-editing", status: "active" }] },
+    });
+    expect(statusChanged).toMatchObject({
+      isInProgress: true,
+      activeTurnId: "turn-editing",
+      detail: { turns: [{ id: "turn-editing", status: "active" }] },
+    });
+  });
+
   it("preserves markdown whitespace in app-server assistant deltas", () => {
     const store = new LocalLiveThreadStore({
       isLocalOwner: (threadId) => threadId === "thread-1",
@@ -100,7 +134,12 @@ describe("LocalLiveThreadStore", () => {
         turn: { id: "turn-1", status: "inProgress" },
       },
     });
-    for (const delta of ["清单：", "\n\n", "- **stream-bold**\n", "- `inline-code`\n"]) {
+    for (const delta of [
+      "清单：",
+      "\n\n",
+      "- **stream-bold**\n",
+      "- `inline-code`\n",
+    ]) {
       store.handle({
         method: "item/agentMessage/delta",
         params: {
@@ -416,6 +455,106 @@ describe("LocalLiveThreadStore", () => {
         ],
       },
     ]);
+  });
+
+  it("keeps context compaction active until thread completion arrives", () => {
+    const store = new LocalLiveThreadStore({
+      isLocalOwner: (threadId) => threadId === "thread-1",
+      readInitialDetail: () => initialDetail,
+      readOwner: () => null,
+    });
+
+    const started = store.handle({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-compact",
+        item: {
+          type: "contextCompaction",
+          id: "compact-1",
+        },
+      },
+    });
+    const completed = store.handle({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-compact",
+        item: {
+          type: "contextCompaction",
+          id: "compact-1",
+        },
+      },
+    });
+    const compacted = store.handle({
+      method: "thread/compacted",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-compact",
+      },
+    });
+
+    expect(started).toMatchObject({
+      threadId: "thread-1",
+      isInProgress: true,
+      activeTurnId: "turn-compact",
+    });
+    expect(completed).toMatchObject({
+      threadId: "thread-1",
+      isInProgress: true,
+      activeTurnId: "turn-compact",
+    });
+    expect(completed?.detail.turns).toMatchObject([
+      {
+        id: "turn-compact",
+        status: "active",
+        items: [{ type: "contextCompaction", id: "compact-1" }],
+      },
+    ]);
+    expect(compacted).toMatchObject({
+      threadId: "thread-1",
+      isInProgress: false,
+      activeTurnId: "",
+    });
+  });
+
+  it("adds a context compaction item when only deprecated thread completion arrives", () => {
+    const store = new LocalLiveThreadStore({
+      isLocalOwner: (threadId) => threadId === "thread-1",
+      readInitialDetail: () => ({
+        ...initialDetail,
+        thread: { ...initialDetail.thread, inProgress: true },
+        turns: [{ id: "turn-compact", status: "active", items: [] }],
+      }),
+      readOwner: () => null,
+    });
+
+    const compacted = store.handle({
+      method: "thread/compacted",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-compact",
+      },
+    });
+
+    expect(compacted).toMatchObject({
+      isInProgress: false,
+      activeTurnId: "",
+      detail: {
+        turns: [
+          {
+            id: "turn-compact",
+            status: "completed",
+            items: [
+              {
+                type: "contextCompaction",
+                id: "context-compaction-turn-compact",
+              },
+            ],
+          },
+        ],
+      },
+    });
   });
 
   it("does not track non-owned app-server notifications", () => {

@@ -101,9 +101,11 @@ const APP_SERVER_FAST_DETAIL_METHODS = new Set([
   "item/reasoning/summaryPartAdded",
   "item/reasoning/textDelta",
   "thread/status/changed",
+  "thread/tokenUsage/updated",
   "turn/plan/updated",
   "turn/diff/updated",
   "serverRequest/resolved",
+  "thread/compacted",
 ]);
 const APP_SERVER_DETAIL_ONLY_METHODS = new Set([
   "item/started",
@@ -117,6 +119,7 @@ const APP_SERVER_DETAIL_ONLY_METHODS = new Set([
   "item/reasoning/summaryTextDelta",
   "item/reasoning/summaryPartAdded",
   "item/reasoning/textDelta",
+  "thread/tokenUsage/updated",
 ]);
 const APP_SERVER_HIGH_FREQUENCY_METHODS = new Set([
   "item/agentMessage/delta",
@@ -243,6 +246,10 @@ type RuntimeData = {
   ) => Promise<void>;
 };
 
+type UseRuntimeDataOptions = {
+  runtimeOptionsCwd?: string | null;
+};
+
 export type QueuedThreadMessage = {
   id: string;
   threadId: string;
@@ -281,11 +288,31 @@ function toQueuedMessageView(
 function prependThread(list: ThreadList, thread: Thread): ThreadList {
   return {
     ...list,
-    threads: [thread, ...list.threads.filter((entry) => entry.id !== thread.id)],
+    threads: [
+      thread,
+      ...list.threads.filter((entry) => entry.id !== thread.id),
+    ],
   };
 }
 
-export function useRuntimeData(enabled: boolean): RuntimeData {
+function projectCwdForThread(thread: Thread | null): string | null {
+  if (thread?.workspaceKind !== "project") return null;
+  return thread.projectId ?? thread.path ?? null;
+}
+
+export function resolveRuntimeOptionsCwd(input: {
+  selectedThread: Thread | null;
+  override?: string | null;
+}): string | null {
+  return input.override === undefined
+    ? projectCwdForThread(input.selectedThread)
+    : input.override;
+}
+
+export function useRuntimeData(
+  enabled: boolean,
+  options: UseRuntimeDataOptions = {},
+): RuntimeData {
   const [health, setHealth] = useState("checking");
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [ipc, setIpc] = useState<OfficialIpcStatus | null>(null);
@@ -329,6 +356,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   const queuedMessagesRef = useRef(queuedMessagesByThread);
   const queueFlushInFlightRef = useRef(new Set<string>());
   const accountStatusRequestRef = useRef<Promise<void> | null>(null);
+  const runtimeOptionsRequestIdRef = useRef(0);
   const detailRequestStateRef = useRef<ThreadDetailRequestState>(
     INITIAL_THREAD_DETAIL_REQUEST_STATE,
   );
@@ -555,24 +583,6 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
-    getRuntimeOptions()
-      .then((options) => {
-        if (!disposed) setRuntimeOptions(options);
-      })
-      .catch((unknownError) => {
-        if (!disposed)
-          setError(
-            userFacingErrorMessage(unknownError, "runtime options failed"),
-          );
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [enabled]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let disposed = false;
     refreshThreads().catch((unknownError) => {
       if (!disposed)
         setError(userFacingErrorMessage(unknownError, "thread list failed"));
@@ -717,31 +727,34 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         window.clearTimeout(realtimeRefreshTimer);
       }
       realtimeRefreshDueAt = nextDueAt;
-      realtimeRefreshTimer = window.setTimeout(() => {
-        realtimeRefreshTimer = null;
-        realtimeRefreshDueAt = 0;
-        if (disposed) return;
-        const shouldRefreshThreads = pendingRealtimeThreadsRefresh;
-        const shouldRefreshApprovals = pendingRealtimeApprovalsRefresh;
-        const shouldRefreshDetail = pendingRealtimeDetailRefresh;
-        pendingRealtimeThreadsRefresh = false;
-        pendingRealtimeApprovalsRefresh = false;
-        pendingRealtimeDetailRefresh = false;
-        const currentThreadId = selectedThreadIdRef.current;
-        const tasks: Promise<unknown>[] = [];
-        if (shouldRefreshThreads)
-          tasks.push(refreshThreads().catch(() => undefined));
-        if (shouldRefreshApprovals)
-          tasks.push(refreshApprovals().catch(() => undefined));
-        if (shouldRefreshDetail && currentThreadId) {
-          tasks.push(
-            refreshThreadDetail(currentThreadId, { silent: true }).catch(
-              () => undefined,
-            ),
-          );
-        }
-        void Promise.all(tasks);
-      }, Math.max(0, delayMs));
+      realtimeRefreshTimer = window.setTimeout(
+        () => {
+          realtimeRefreshTimer = null;
+          realtimeRefreshDueAt = 0;
+          if (disposed) return;
+          const shouldRefreshThreads = pendingRealtimeThreadsRefresh;
+          const shouldRefreshApprovals = pendingRealtimeApprovalsRefresh;
+          const shouldRefreshDetail = pendingRealtimeDetailRefresh;
+          pendingRealtimeThreadsRefresh = false;
+          pendingRealtimeApprovalsRefresh = false;
+          pendingRealtimeDetailRefresh = false;
+          const currentThreadId = selectedThreadIdRef.current;
+          const tasks: Promise<unknown>[] = [];
+          if (shouldRefreshThreads)
+            tasks.push(refreshThreads().catch(() => undefined));
+          if (shouldRefreshApprovals)
+            tasks.push(refreshApprovals().catch(() => undefined));
+          if (shouldRefreshDetail && currentThreadId) {
+            tasks.push(
+              refreshThreadDetail(currentThreadId, { silent: true }).catch(
+                () => undefined,
+              ),
+            );
+          }
+          void Promise.all(tasks);
+        },
+        Math.max(0, delayMs),
+      );
     };
 
     const flushAppServerRealtimeNotifications = () => {
@@ -1000,15 +1013,15 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           threadList.threads.find((thread) => thread.id === selectedThreadId) ??
           null;
         const cwd =
-          cwdOverride ??
-          activeThread?.projectId ??
-          threadList.projects[0]?.path ??
-          null;
+          cwdOverride === undefined
+            ? (activeThread?.projectId ?? threadList.projects[0]?.path ?? null)
+            : cwdOverride;
         const thread = await startThread({ cwd });
         selectThread(thread.id);
         const nextDetail = {
           thread,
           goal: null,
+          tokenUsage: null,
           turns: [],
           subAgents: [],
           sideConversations: [],
@@ -1049,6 +1062,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         const nextDetail = {
           thread,
           goal: null,
+          tokenUsage: null,
           turns: [],
           subAgents: [],
           sideConversations: [],
@@ -1065,6 +1079,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           skills: options.skills,
           collaborationMode: options.collaborationMode,
           permissionMode: options.permissionMode,
+          permissionProfile: options.permissionProfile,
         });
         setError("");
         window.setTimeout(() => {
@@ -1098,6 +1113,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         const nextDetail: ThreadDetail = {
           thread,
           goal: null,
+          tokenUsage: null,
           derivedFromThreadId: threadId,
           turns: [],
           subAgents: [],
@@ -1124,7 +1140,12 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       options?: SendOptions;
     }) => {
       const options = input.options ?? {};
-      if (!enabled || !input.threadId || !input.expectedTurnId || !input.text.trim()) {
+      if (
+        !enabled ||
+        !input.threadId ||
+        !input.expectedTurnId ||
+        !input.text.trim()
+      ) {
         return null;
       }
 
@@ -1141,6 +1162,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           skills: options.skills,
           collaborationMode: options.collaborationMode,
           permissionMode: options.permissionMode,
+          permissionProfile: options.permissionProfile,
         });
         setError("");
         window.setTimeout(() => {
@@ -1553,6 +1575,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         skills: message.options.skills,
         collaborationMode: message.options.collaborationMode,
         permissionMode: message.options.permissionMode,
+        permissionProfile: message.options.permissionProfile,
       });
     },
     [],
@@ -1603,12 +1626,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
         setSending(false);
       }
     },
-    [
-      enabled,
-      removeQueuedMessage,
-      scheduleThreadRefresh,
-      startQueuedMessage,
-    ],
+    [enabled, removeQueuedMessage, scheduleThreadRefresh, startQueuedMessage],
   );
 
   const sendMessage = useCallback(
@@ -1657,6 +1675,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
             skills: options.skills,
             collaborationMode: options.collaborationMode,
             permissionMode: options.permissionMode,
+            permissionProfile: options.permissionProfile,
           });
         }
         setError("");
@@ -1748,6 +1767,7 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
           skills: options.skills,
           collaborationMode: options.collaborationMode,
           permissionMode: options.permissionMode,
+          permissionProfile: options.permissionProfile,
         });
         setError("");
         const parentThreadId = selectedThreadIdRef.current;
@@ -1775,6 +1795,31 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
       null,
     [selectedThreadId, threadDetail?.thread, threadList.threads],
   );
+  const runtimeOptionsCwd = resolveRuntimeOptionsCwd({
+    selectedThread,
+    override: options.runtimeOptionsCwd,
+  });
+  useEffect(() => {
+    if (!enabled) return;
+    const requestId = runtimeOptionsRequestIdRef.current + 1;
+    runtimeOptionsRequestIdRef.current = requestId;
+    let disposed = false;
+    getRuntimeOptions({ cwd: runtimeOptionsCwd })
+      .then((options) => {
+        if (!disposed && runtimeOptionsRequestIdRef.current === requestId)
+          setRuntimeOptions(options);
+      })
+      .catch((unknownError) => {
+        if (!disposed && runtimeOptionsRequestIdRef.current === requestId)
+          setError(
+            userFacingErrorMessage(unknownError, "runtime options failed"),
+          );
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [enabled, runtimeOptionsCwd]);
+
   const queuedMessages = useMemo(
     () =>
       selectedThreadId
@@ -1789,10 +1834,12 @@ export function useRuntimeData(enabled: boolean): RuntimeData {
     async (cwd?: string | null) => {
       const parentThreadId = selectedThreadIdRef.current;
       if (!enabled || !parentThreadId) return null;
+      const requestedCwd =
+        cwd === undefined ? projectCwdForThread(selectedThread) : cwd;
       try {
         const sideConversation = await createSideConversation({
           threadId: parentThreadId,
-          cwd: cwd ?? selectedThread?.path ?? selectedThread?.projectId ?? null,
+          cwd: requestedCwd,
         });
         setThreadDetail((current) =>
           current?.thread.id === parentThreadId &&

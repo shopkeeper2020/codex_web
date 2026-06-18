@@ -26,17 +26,17 @@ function isActiveStatus(value?: string | null): boolean {
   const normalized = compactStatus(value);
   return Boolean(
     normalized &&
-      [
-        "active",
-        "editing",
-        "inprogress",
-        "pending",
-        "running",
-        "started",
-        "streaming",
-        "thinking",
-        "writing",
-      ].includes(normalized),
+    [
+      "active",
+      "editing",
+      "inprogress",
+      "pending",
+      "running",
+      "started",
+      "streaming",
+      "thinking",
+      "writing",
+    ].includes(normalized),
   );
 }
 
@@ -44,23 +44,23 @@ function isTerminalStatus(value?: string | null): boolean {
   const normalized = compactStatus(value);
   return Boolean(
     normalized &&
-      [
-        "aborted",
-        "applied",
-        "cancelled",
-        "canceled",
-        "complete",
-        "completed",
-        "declined",
-        "done",
-        "error",
-        "failed",
-        "interrupted",
-        "modified",
-        "stopped",
-        "success",
-        "succeeded",
-      ].includes(normalized),
+    [
+      "aborted",
+      "applied",
+      "cancelled",
+      "canceled",
+      "complete",
+      "completed",
+      "declined",
+      "done",
+      "error",
+      "failed",
+      "interrupted",
+      "modified",
+      "stopped",
+      "success",
+      "succeeded",
+    ].includes(normalized),
   );
 }
 
@@ -80,7 +80,15 @@ function isFallbackFinalAnswerCandidate(item: MessageItem): boolean {
 }
 
 function isProcessLikeItem(item: MessageItem): boolean {
-  return !isUserMessageItem(item) && !isFinalAnswerItem(item);
+  return (
+    !isUserMessageItem(item) &&
+    !isFinalAnswerItem(item) &&
+    item.type !== "contextCompaction"
+  );
+}
+
+function isVisibleBeforeProcessItem(item: MessageItem): boolean {
+  return isUserMessageItem(item) || item.type === "contextCompaction";
 }
 
 function isActiveOperationItem(item: MessageItem, turnStatus: string): boolean {
@@ -108,7 +116,9 @@ export function deriveTurnProcessCollapse(
 ): TurnProcessCollapseLayout | null {
   const phaseFinalIndex = items.findIndex(isFinalAnswerItem);
   const finalAnswerIndex =
-    phaseFinalIndex >= 0 ? phaseFinalIndex : findFallbackFinalAnswerIndex(items);
+    phaseFinalIndex >= 0
+      ? phaseFinalIndex
+      : findFallbackFinalAnswerIndex(items);
   if (finalAnswerIndex < 0) return null;
 
   const source = phaseFinalIndex >= 0 ? "phase" : "fallback";
@@ -122,7 +132,7 @@ export function deriveTurnProcessCollapse(
   if (afterFinal.slice(1).some(isProcessLikeItem)) return null;
 
   return {
-    beforeItems: beforeFinal.filter(isUserMessageItem),
+    beforeItems: beforeFinal.filter(isVisibleBeforeProcessItem),
     processItems,
     finalAndAfterItems: afterFinal,
     finalAnswerIndex,

@@ -1,5 +1,7 @@
 import {
   normalizeMessageItem,
+  normalizeThreadSubAgents,
+  normalizeThreadTokenUsage,
   type MessageItem,
   type ThreadDetail,
   type Turn,
@@ -23,6 +25,28 @@ function readDeltaString(value: unknown): string {
 
 function readItemType(value: unknown): string {
   return readString(asRecord(value)?.type);
+}
+
+function isContextCompactionItem(item: MessageItem): boolean {
+  return (
+    readItemType(item)
+      .toLowerCase()
+      .replace(/[\s_-]+/g, "") === "contextcompaction"
+  );
+}
+
+function ensureContextCompactionItem(turn: Turn): Turn {
+  if (turn.items.some((item) => isContextCompactionItem(item))) return turn;
+  return upsertItem(
+    turn,
+    normalizeMessageItem(
+      {
+        type: "contextCompaction",
+        id: `context-compaction-${turn.id}`,
+      },
+      turn.items.length,
+    ),
+  );
 }
 
 function readTextContent(value: unknown): string {
@@ -64,13 +88,23 @@ function readStatusString(value: unknown): string {
 }
 
 function compactStatus(value: unknown): string {
-  return readStatusString(value).toLowerCase().replace(/[\s_-]+/g, "");
+  return readStatusString(value)
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
 }
 
 function isActiveStatus(value: unknown): boolean {
-  return ["active", "inprogress", "running", "streaming"].includes(
-    compactStatus(value),
-  );
+  return [
+    "active",
+    "editing",
+    "inprogress",
+    "pending",
+    "running",
+    "started",
+    "streaming",
+    "thinking",
+    "writing",
+  ].includes(compactStatus(value));
 }
 
 function readWebSearchQuery(record: Record<string, unknown> | null): string {
@@ -86,9 +120,10 @@ function readWebSearchQuery(record: Record<string, unknown> | null): string {
 
 function readTurnStatus(value: unknown): Turn["status"] {
   const status = compactStatus(value);
-  if (["active", "inprogress", "running", "streaming"].includes(status))
-    return "active";
-  if (["completed", "complete", "done", "success", "succeeded"].includes(status))
+  if (isActiveStatus(value)) return "active";
+  if (
+    ["completed", "complete", "done", "success", "succeeded"].includes(status)
+  )
     return "completed";
   if (["failed", "failure", "error"].includes(status)) return "failed";
   if (["interrupted", "interrupt", "canceled", "cancelled"].includes(status))
@@ -124,7 +159,11 @@ function readTurnId(params: unknown): string {
 function readItemId(params: unknown): string {
   const record = asRecord(params);
   const item = asRecord(record?.item);
-  return readString(record?.itemId) || readString(record?.item_id) || readString(item?.id);
+  return (
+    readString(record?.itemId) ||
+    readString(record?.item_id) ||
+    readString(item?.id)
+  );
 }
 
 function isPendingTurnId(turnId: string): boolean {
@@ -134,12 +173,17 @@ function isPendingTurnId(turnId: string): boolean {
 function normalizedUserText(item: MessageItem): string {
   const record = asRecord(item);
   const type = readString(record?.type);
-  if (type === "userMessage") return readTextContent(record?.content).replace(/\s+/g, " ").trim();
-  if (type === "user") return readTextContent(record?.text).replace(/\s+/g, " ").trim();
+  if (type === "userMessage")
+    return readTextContent(record?.content).replace(/\s+/g, " ").trim();
+  if (type === "user")
+    return readTextContent(record?.text).replace(/\s+/g, " ").trim();
   return "";
 }
 
-function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number {
+function duplicateUserItemIndex(
+  items: MessageItem[],
+  item: MessageItem,
+): number {
   const itemType = readItemType(item);
   if (itemType !== "userMessage" && itemType !== "user") return -1;
   const text = normalizedUserText(item);
@@ -218,6 +262,18 @@ function updateTurn(
   return { ...detail, turns };
 }
 
+function refreshSubAgents(detail: ThreadDetail): ThreadDetail {
+  const subAgents = normalizeThreadSubAgents(
+    {
+      ...detail.thread,
+      turns: detail.turns,
+    },
+    "app-server",
+  );
+  if (subAgents.length === 0) return detail;
+  return { ...detail, subAgents };
+}
+
 function upsertItem(turn: Turn, item: MessageItem): Turn {
   const existingIndex = turn.items.findIndex((entry) => entry.id === item.id);
   const items = [...turn.items];
@@ -244,14 +300,18 @@ function jsonValueScore(value: unknown): number {
 }
 
 function richerValue(incomingValue: unknown, currentValue: unknown): unknown {
-  if (incomingValue === null || incomingValue === undefined) return currentValue;
+  if (incomingValue === null || incomingValue === undefined)
+    return currentValue;
   if (currentValue === null || currentValue === undefined) return incomingValue;
   return jsonValueScore(currentValue) > jsonValueScore(incomingValue)
     ? currentValue
     : incomingValue;
 }
 
-function mergeMessagePhase(incomingValue: unknown, currentValue: unknown): unknown {
+function mergeMessagePhase(
+  incomingValue: unknown,
+  currentValue: unknown,
+): unknown {
   if (incomingValue === "final_answer" || currentValue !== "final_answer") {
     return incomingValue ?? currentValue;
   }
@@ -267,9 +327,15 @@ function mergeOfficialItemFields(
   const incomingType = readString(incomingRecord?.type);
   if (currentType === "agentMessage" && incomingType === "agentMessage") {
     if ("phase" in (currentRecord ?? {}) || "phase" in (incomingRecord ?? {})) {
-      merged.phase = mergeMessagePhase(incomingRecord?.phase, currentRecord?.phase);
+      merged.phase = mergeMessagePhase(
+        incomingRecord?.phase,
+        currentRecord?.phase,
+      );
     }
-    if ("memoryCitation" in (currentRecord ?? {}) || "memoryCitation" in (incomingRecord ?? {})) {
+    if (
+      "memoryCitation" in (currentRecord ?? {}) ||
+      "memoryCitation" in (incomingRecord ?? {})
+    ) {
       merged.memoryCitation = richerValue(
         incomingRecord?.memoryCitation,
         currentRecord?.memoryCitation,
@@ -277,8 +343,14 @@ function mergeOfficialItemFields(
     }
   }
   if (currentType === "webSearch" && incomingType === "webSearch") {
-    if ("action" in (currentRecord ?? {}) || "action" in (incomingRecord ?? {})) {
-      merged.action = richerValue(incomingRecord?.action, currentRecord?.action);
+    if (
+      "action" in (currentRecord ?? {}) ||
+      "action" in (incomingRecord ?? {})
+    ) {
+      merged.action = richerValue(
+        incomingRecord?.action,
+        currentRecord?.action,
+      );
     }
   }
 }
@@ -286,7 +358,10 @@ function mergeOfficialItemFields(
 function mergeItem(current: MessageItem, incoming: MessageItem): MessageItem {
   const currentRecord = asRecord(current);
   const incomingRecord = asRecord(incoming);
-  const merged = { ...currentRecord, ...incomingRecord } as Record<string, unknown>;
+  const merged = { ...currentRecord, ...incomingRecord } as Record<
+    string,
+    unknown
+  >;
   const currentType = readString(currentRecord?.type);
   const incomingType = readString(incomingRecord?.type);
   if (
@@ -311,13 +386,21 @@ function mergeItem(current: MessageItem, incoming: MessageItem): MessageItem {
 
 function appendDeltaToItem(
   item: MessageItem,
-  kind: "agentMessage" | "reasoning" | "plan" | "commandExecution" | "fileChange",
+  kind:
+    | "agentMessage"
+    | "reasoning"
+    | "plan"
+    | "commandExecution"
+    | "fileChange",
   delta: string,
 ): MessageItem {
   const record = asRecord(item);
   const type = readString(record?.type);
   if (kind === "agentMessage" && type === "agentMessage") {
-    return { ...item, text: readTextContent(record?.text) + delta } as MessageItem;
+    return {
+      ...item,
+      text: readTextContent(record?.text) + delta,
+    } as MessageItem;
   }
   if (kind === "reasoning" && type === "reasoning") {
     const content = Array.isArray(record?.content) ? record.content : [];
@@ -329,7 +412,10 @@ function appendDeltaToItem(
     } as MessageItem;
   }
   if (kind === "plan" && type === "plan") {
-    return { ...item, text: readTextContent(record?.text) + delta } as MessageItem;
+    return {
+      ...item,
+      text: readTextContent(record?.text) + delta,
+    } as MessageItem;
   }
   if (kind === "commandExecution" && type === "commandExecution") {
     return {
@@ -338,12 +424,17 @@ function appendDeltaToItem(
     } as MessageItem;
   }
   if (kind === "fileChange" && type === "fileChange") {
-    const existingChanges = Array.isArray(record?.changes) ? record.changes : [];
+    const existingChanges = Array.isArray(record?.changes)
+      ? record.changes
+      : [];
     const changes = existingChanges.length
       ? existingChanges.map((change, index) => {
           const changeRecord = asRecord(change) ?? {};
           return index === 0
-            ? { ...changeRecord, diff: readTextContent(changeRecord.diff) + delta }
+            ? {
+                ...changeRecord,
+                diff: readTextContent(changeRecord.diff) + delta,
+              }
             : change;
         })
       : [{ path: "", diff: delta, kind: { type: "update", move_path: null } }];
@@ -353,7 +444,12 @@ function appendDeltaToItem(
 }
 
 function createDeltaItem(
-  kind: "agentMessage" | "reasoning" | "plan" | "commandExecution" | "fileChange",
+  kind:
+    | "agentMessage"
+    | "reasoning"
+    | "plan"
+    | "commandExecution"
+    | "fileChange",
   itemId: string,
   delta: string,
 ): MessageItem {
@@ -411,7 +507,12 @@ function createDeltaItem(
 function appendDelta(
   detail: ThreadDetail,
   params: unknown,
-  kind: "agentMessage" | "reasoning" | "plan" | "commandExecution" | "fileChange",
+  kind:
+    | "agentMessage"
+    | "reasoning"
+    | "plan"
+    | "commandExecution"
+    | "fileChange",
 ): ThreadDetail {
   const record = asRecord(params);
   const turnId = readTurnId(params);
@@ -421,7 +522,10 @@ function appendDelta(
   return updateTurn(detail, turnId, "active", (turn) => {
     const existingIndex = turn.items.findIndex((entry) => entry.id === itemId);
     if (existingIndex < 0) {
-      return { ...turn, items: [...turn.items, createDeltaItem(kind, itemId, delta)] };
+      return {
+        ...turn,
+        items: [...turn.items, createDeltaItem(kind, itemId, delta)],
+      };
     }
     const items = [...turn.items];
     const item = items[existingIndex];
@@ -446,7 +550,9 @@ export function applyAppServerRealtimeNotification(
     return updateTurn(
       { ...detail, thread: { ...detail.thread, inProgress: true } },
       readTurnId(params),
-      readTurnStatus(turn?.status) === "unknown" ? "active" : readTurnStatus(turn?.status),
+      readTurnStatus(turn?.status) === "unknown"
+        ? "active"
+        : readTurnStatus(turn?.status),
       (entry) => entry,
     );
   }
@@ -464,6 +570,15 @@ export function applyAppServerRealtimeNotification(
     };
   }
 
+  if (method === "thread/tokenUsage/updated") {
+    const tokenUsage = normalizeThreadTokenUsage(record?.tokenUsage);
+    if (!tokenUsage) return detail;
+    return {
+      ...detail,
+      tokenUsage,
+    };
+  }
+
   if (method === "item/started" || method === "item/completed") {
     const normalizedItem = normalizeMessageItem(record?.item, 0);
     const item =
@@ -471,12 +586,22 @@ export function applyAppServerRealtimeNotification(
         ? markItemStarted(normalizedItem)
         : normalizedItem;
     const status = method === "item/started" ? "active" : "unknown";
-    return updateTurn(
-      { ...detail, thread: { ...detail.thread, inProgress: true } },
+    const nextDetail = updateTurn(
+      {
+        ...detail,
+        thread: {
+          ...detail.thread,
+          inProgress:
+            method === "item/started" ? true : detail.thread.inProgress,
+        },
+      },
       readTurnId(params),
       status,
       (turn) => upsertItem(turn, item),
     );
+    return item.type === "collabAgentToolCall"
+      ? refreshSubAgents(nextDetail)
+      : nextDetail;
   }
 
   if (method === "item/agentMessage/delta") {
@@ -506,6 +631,15 @@ export function applyAppServerRealtimeNotification(
       readTurnId(params),
       status === "unknown" ? "completed" : status,
       (entry) => entry,
+    );
+  }
+
+  if (method === "thread/compacted") {
+    return updateTurn(
+      { ...detail, thread: { ...detail.thread, inProgress: false } },
+      readTurnId(params),
+      "completed",
+      ensureContextCompactionItem,
     );
   }
 

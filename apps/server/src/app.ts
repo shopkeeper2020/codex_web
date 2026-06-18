@@ -152,6 +152,7 @@ import {
   readFilePreview,
   resolveFilePreviewPath,
 } from "./filePreview.js";
+import { readLocalCodexPermissionDefault } from "./codexPermissionDefaults.js";
 import { normalizeRuntimeOptions } from "./runtimeOptions.js";
 import { normalizeSkillsListResponse } from "./skills.js";
 import { attachOfficialSideConversations } from "./sideConversations.js";
@@ -160,6 +161,12 @@ import {
   preserveSideConversationMetadata,
   readAppServerThreadSnapshot,
 } from "./syncCoordinator.js";
+import {
+  preserveOwnedSnapshotWorkspaceFields,
+  resolveProjectCwdForConversation,
+  threadBroadcastFieldsFromDetail,
+  workspaceKindFromOfficialState,
+} from "./threadWorkspaceFields.js";
 import { decideLocalTurnFallback } from "./turnFallback.js";
 import { buildProtocolCompatibility } from "./protocolCompatibility.js";
 import { buildSyncReadiness } from "./syncReadiness.js";
@@ -265,7 +272,9 @@ function readStringArray(value: unknown): string[] {
 
 function readNumberTimestampIso(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) {
-    return new Date(value > 10_000_000_000 ? value : value * 1000).toISOString();
+    return new Date(
+      value > 10_000_000_000 ? value : value * 1000,
+    ).toISOString();
   }
   if (typeof value === "string" && value.trim()) {
     const parsed = Date.parse(value);
@@ -300,13 +309,28 @@ function sideConversationFromFork(input: {
 function buildSideConversationSnapshot(input: {
   sideThreadId: string;
   parentThreadId: string;
-  cwd: string | null;
+  cwd?: string | null;
+  workspaceKind?: string | null;
   forkThread: Record<string, unknown>;
 }): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = { ...input.forkThread };
+  const workspaceKind =
+    readString(input.workspaceKind) ||
+    readString(input.forkThread.workspaceKind) ||
+    null;
+  const cwd = readString(input.cwd);
+  if (workspaceKind && workspaceKind !== "project") {
+    delete snapshot.cwd;
+    delete snapshot.path;
+    delete snapshot.projectId;
+  } else if (cwd) {
+    snapshot.cwd = cwd;
+  }
+
   return {
-    ...input.forkThread,
+    ...snapshot,
     id: input.sideThreadId,
-    cwd: input.cwd ?? (readString(input.forkThread.cwd) || null),
+    ...(workspaceKind ? { workspaceKind } : {}),
     source: readString(input.forkThread.source) || "user",
     sideConversation: true,
     ephemeral: true,
@@ -729,7 +753,9 @@ function readTimestampMs(value: unknown): number | null {
   return null;
 }
 
-function readConversationUpdatedAtMs(conversationState: unknown): number | null {
+function readConversationUpdatedAtMs(
+  conversationState: unknown,
+): number | null {
   const record = asRecord(conversationState);
   if (!record) return null;
   return (
@@ -739,7 +765,9 @@ function readConversationUpdatedAtMs(conversationState: unknown): number | null 
   );
 }
 
-function streamStateUpdatedAtMs(state: OfficialThreadStreamState): number | null {
+function streamStateUpdatedAtMs(
+  state: OfficialThreadStreamState,
+): number | null {
   return readTimestampMs(state.updatedAtIso);
 }
 
@@ -783,7 +811,7 @@ function buildPermissionOverrides(
   "approvalPolicy" | "approvalsReviewer" | "sandboxPolicy"
 > {
   const mode = readPermissionMode(value);
-  if (!mode || mode === "custom") return {};
+  if (!mode || mode === "custom" || mode === "default") return {};
   if (mode === "full-access") {
     return {
       approvalPolicy: "never",
@@ -803,6 +831,15 @@ function buildPermissionOverrides(
     approvalsReviewer: "user",
     sandboxPolicy: buildSandboxPolicy("workspace-write"),
   };
+}
+
+function buildPermissionSelection(input: {
+  permissionProfile?: unknown;
+  permissionMode?: unknown;
+}): Partial<TurnStartParams> {
+  const permissionProfile = readString(input.permissionProfile);
+  if (permissionProfile) return { permissions: permissionProfile };
+  return buildPermissionOverrides(input.permissionMode);
 }
 
 function buildSandboxPolicy(
@@ -892,8 +929,7 @@ function shouldRetireStaleOfficialActiveState(
   if (
     conversationUpdatedAtMs !== null &&
     stateUpdatedAtMs !== null &&
-    conversationUpdatedAtMs +
-      STALE_OFFICIAL_ACTIVE_TIMESTAMP_TOLERANCE_MS >=
+    conversationUpdatedAtMs + STALE_OFFICIAL_ACTIVE_TIMESTAMP_TOLERANCE_MS >=
       stateUpdatedAtMs
   ) {
     return true;
@@ -901,7 +937,7 @@ function shouldRetireStaleOfficialActiveState(
 
   return Boolean(
     stateUpdatedAtMs !== null &&
-      Date.now() - stateUpdatedAtMs > STALE_OFFICIAL_ACTIVE_GRACE_MS,
+    Date.now() - stateUpdatedAtMs > STALE_OFFICIAL_ACTIVE_GRACE_MS,
   );
 }
 
@@ -985,7 +1021,9 @@ function readItemRecordId(item: unknown): string {
 
 function readItemCompactType(item: unknown): string {
   const record = asRecord(item);
-  return readString(record?.type).toLowerCase().replace(/[-_\s]/g, "");
+  return readString(record?.type)
+    .toLowerCase()
+    .replace(/[-_\s]/g, "");
 }
 
 function readItemTextContent(value: unknown): string {
@@ -1014,7 +1052,12 @@ function readItemTextContent(value: unknown): string {
 function normalizedUserItemText(item: unknown): string {
   const record = asRecord(item);
   const type = readItemCompactType(item);
-  if (!record || (type !== "user" && type !== "usermessage" && type !== "steeringusermessage")) {
+  if (
+    !record ||
+    (type !== "user" &&
+      type !== "usermessage" &&
+      type !== "steeringusermessage")
+  ) {
     return "";
   }
   const restoreMessage = asRecord(record.restoreMessage);
@@ -1050,7 +1093,10 @@ function jsonValueScore(value: unknown): number {
   }
 }
 
-function richerItemTextValue(primaryValue: unknown, liveValue: unknown): unknown {
+function richerItemTextValue(
+  primaryValue: unknown,
+  liveValue: unknown,
+): unknown {
   if (primaryValue === undefined) return liveValue;
   if (liveValue === undefined) return primaryValue;
   return jsonValueScore(primaryValue) > jsonValueScore(liveValue)
@@ -1058,7 +1104,10 @@ function richerItemTextValue(primaryValue: unknown, liveValue: unknown): unknown
     : liveValue;
 }
 
-function preferNonNullRicherValue(primaryValue: unknown, liveValue: unknown): unknown {
+function preferNonNullRicherValue(
+  primaryValue: unknown,
+  liveValue: unknown,
+): unknown {
   if (primaryValue === null || primaryValue === undefined) return liveValue;
   if (liveValue === null || liveValue === undefined) return primaryValue;
   return richerItemTextValue(primaryValue, liveValue);
@@ -1088,8 +1137,14 @@ function mergeOfficialItemFields(
       );
     }
   }
-  if (type === "webSearch" && ("action" in primaryRecord || "action" in liveRecord)) {
-    merged.action = preferNonNullRicherValue(primaryRecord.action, liveRecord.action);
+  if (
+    type === "webSearch" &&
+    ("action" in primaryRecord || "action" in liveRecord)
+  ) {
+    merged.action = preferNonNullRicherValue(
+      primaryRecord.action,
+      liveRecord.action,
+    );
   }
 }
 
@@ -1100,7 +1155,8 @@ function mergeItemWithRicherText(
 ): unknown {
   const primaryRecord = asRecord(primary);
   const liveRecord = asRecord(live);
-  if (!primaryRecord || !liveRecord) return prefer === "primary" ? primary : live;
+  if (!primaryRecord || !liveRecord)
+    return prefer === "primary" ? primary : live;
 
   const merged =
     prefer === "primary"
@@ -1130,7 +1186,9 @@ function mergeBaseItemWithOther(
 function mergedRawItemAnchorIndex(item: unknown, merged: unknown[]): number {
   const id = readItemRecordId(item);
   if (id) {
-    const idIndex = merged.findIndex((candidate) => readItemRecordId(candidate) === id);
+    const idIndex = merged.findIndex(
+      (candidate) => readItemRecordId(candidate) === id,
+    );
     if (idIndex >= 0) return idIndex;
   }
   return duplicateRawUserItemIndex(item, merged);
@@ -1185,7 +1243,11 @@ function mergeStableIdItems(
       );
       continue;
     }
-    merged.splice(rawItemInsertionIndex(otherIndex, otherItems, merged), 0, item);
+    merged.splice(
+      rawItemInsertionIndex(otherIndex, otherItems, merged),
+      0,
+      item,
+    );
   }
 
   return merged;
@@ -1213,7 +1275,9 @@ function preserveRicherOfficialStreamItems(
   const streamRecord = asRecord(streamConversationState);
   if (!record || !streamRecord) return conversationState;
   const turns = Array.isArray(record.turns) ? record.turns : [];
-  const streamTurns = Array.isArray(streamRecord.turns) ? streamRecord.turns : [];
+  const streamTurns = Array.isArray(streamRecord.turns)
+    ? streamRecord.turns
+    : [];
   if (streamTurns.length === 0) return conversationState;
 
   const streamTurnsById = new Map<string, unknown>();
@@ -1312,6 +1376,7 @@ async function buildTurnStartParams(input: {
   skills?: unknown;
   collaborationMode?: unknown;
   permissionMode?: unknown;
+  permissionProfile?: unknown;
 }): Promise<TurnStartParams> {
   const attachments = input.attachments ?? [];
   const imageInputs = (
@@ -1352,7 +1417,7 @@ async function buildTurnStartParams(input: {
   }
   const collaborationMode = asRecord(input.collaborationMode);
   if (collaborationMode) params.collaborationMode = collaborationMode;
-  Object.assign(params, buildPermissionOverrides(input.permissionMode));
+  Object.assign(params, buildPermissionSelection(input));
   return params;
 }
 
@@ -1367,7 +1432,9 @@ function readUnixSeconds(value: unknown, fallbackSeconds: number): number {
   return fallbackSeconds;
 }
 
-function normalizePendingUserInput(value: unknown): Record<string, unknown> | null {
+function normalizePendingUserInput(
+  value: unknown,
+): Record<string, unknown> | null {
   const record = asRecord(value);
   if (!record) return null;
   const type = readString(record.type);
@@ -1438,7 +1505,8 @@ function buildPendingLocalTurnSnapshot(input: {
   params: TurnStartParams;
   baseThread: Record<string, unknown> | null;
   fallbackDetail: ThreadDetail | null;
-  fallbackCwd: string;
+  fallbackCwd: string | null;
+  workspaceKind?: string | null;
   nowMs?: number;
 }): Record<string, unknown> {
   const nowMs = input.nowMs ?? Date.now();
@@ -1450,12 +1518,23 @@ function buildPendingLocalTurnSnapshot(input: {
     readString(base.sessionId) ||
     detailThread?.id ||
     input.threadId;
-  const cwd =
+  const explicitWorkspaceKind =
+    readString(base.workspaceKind) ||
+    readString(input.workspaceKind) ||
+    detailThread?.workspaceKind ||
+    "";
+  const projectCwd =
     readString(base.cwd) ||
     readString(input.params.cwd) ||
+    detailThread?.effectiveCwd ||
     detailThread?.projectId ||
-    detailThread?.path ||
-    input.fallbackCwd;
+    (detailThread?.workspaceKind === "projectless" ? "" : detailThread?.path) ||
+    readString(input.fallbackCwd);
+  const workspaceKind = explicitWorkspaceKind || (projectCwd ? "project" : "");
+  const cwd =
+    workspaceKind === "projectless" || workspaceKind === "unknown"
+      ? ""
+      : projectCwd;
   const existingTurns = Array.isArray(base.turns) ? base.turns : [];
   const content = input.params.input
     .map(normalizePendingUserInput)
@@ -1493,8 +1572,10 @@ function buildPendingLocalTurnSnapshot(input: {
     readString(base.preview) ||
     readString(content[0]?.text) ||
     null;
+  const snapshotBase = { ...base };
+  if (!cwd) delete snapshotBase.cwd;
   return {
-    ...base,
+    ...snapshotBase,
     id: threadId,
     sessionId: readString(base.sessionId) || threadId,
     preview:
@@ -1507,7 +1588,8 @@ function buildPendingLocalTurnSnapshot(input: {
     updatedAt: nowSeconds,
     status: { type: "active", activeFlags: [] },
     threadRuntimeStatus: { type: "active", activeFlags: [] },
-    cwd,
+    ...(cwd ? { cwd } : {}),
+    ...(workspaceKind ? { workspaceKind } : {}),
     threadSource: readString(base.threadSource) || "user",
     title: readString(base.title) || name,
     name,
@@ -1519,7 +1601,8 @@ function buildIdleLocalThreadSnapshot(input: {
   threadId: string;
   thread: unknown;
   detail: ThreadDetail | null;
-  fallbackCwd: string;
+  fallbackCwd: string | null;
+  workspaceKind?: string | null;
   nowMs?: number;
 }): Record<string, unknown> {
   const nowMs = input.nowMs ?? Date.now();
@@ -1531,11 +1614,22 @@ function buildIdleLocalThreadSnapshot(input: {
     readString(base.sessionId) ||
     detailThread?.id ||
     input.threadId;
-  const cwd =
+  const explicitWorkspaceKind =
+    readString(base.workspaceKind) ||
+    readString(input.workspaceKind) ||
+    detailThread?.workspaceKind ||
+    "";
+  const projectCwd =
     readString(base.cwd) ||
+    detailThread?.effectiveCwd ||
     detailThread?.projectId ||
-    detailThread?.path ||
-    input.fallbackCwd;
+    (detailThread?.workspaceKind === "projectless" ? "" : detailThread?.path) ||
+    readString(input.fallbackCwd);
+  const workspaceKind = explicitWorkspaceKind || (projectCwd ? "project" : "");
+  const cwd =
+    workspaceKind === "projectless" || workspaceKind === "unknown"
+      ? ""
+      : projectCwd;
   const name =
     readString(base.name) ||
     readString(base.title) ||
@@ -1549,8 +1643,10 @@ function buildIdleLocalThreadSnapshot(input: {
     "";
   const title = readString(base.title) || name || preview || null;
   const normalizedName = name || title;
+  const snapshotBase = { ...base };
+  if (!cwd) delete snapshotBase.cwd;
   return {
-    ...base,
+    ...snapshotBase,
     id: threadId,
     sessionId: readString(base.sessionId) || threadId,
     preview,
@@ -1561,7 +1657,8 @@ function buildIdleLocalThreadSnapshot(input: {
       ...(asRecord(base.threadRuntimeStatus) ?? asRecord(base.status) ?? {}),
       type: "idle",
     },
-    cwd,
+    ...(cwd ? { cwd } : {}),
+    ...(workspaceKind ? { workspaceKind } : {}),
     threadSource: readString(base.threadSource) || "user",
     title,
     name: normalizedName,
@@ -1792,97 +1889,95 @@ export async function createServer(
   } | null = null;
   let accountStatusRefresh: Promise<AccountStatusResponse> | null = null;
 
-  const readFreshAccountStatus =
-    async (): Promise<AccountStatusResponse> => {
-      const warnings: string[] = [];
-      let accountResponse: unknown;
-      let rateLimitsResponse: unknown;
-      let configRequirementsResponse: unknown;
+  const readFreshAccountStatus = async (): Promise<AccountStatusResponse> => {
+    const warnings: string[] = [];
+    let accountResponse: unknown;
+    let rateLimitsResponse: unknown;
+    let configRequirementsResponse: unknown;
 
-      try {
-        accountResponse = await appServer.accountRead({ refreshToken: false });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "account/read failed";
-        warnings.push(`account/read: ${message}`);
-        diagnostics.record("warn", "app-server", "account-read-failed", {
-          error: message,
-        });
-      }
-
-      try {
-        rateLimitsResponse = await appServer.accountRateLimitsRead();
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "account/rateLimits/read failed";
-        warnings.push(`account/rateLimits/read: ${message}`);
-        diagnostics.record(
-          "warn",
-          "app-server",
-          "account-rate-limits-read-failed",
-          { error: message },
-        );
-      }
-
-      try {
-        configRequirementsResponse = await appServer.configRequirementsRead();
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "configRequirements/read failed";
-        warnings.push(`configRequirements/read: ${message}`);
-        diagnostics.record(
-          "warn",
-          "app-server",
-          "config-requirements-read-failed",
-          { error: message },
-        );
-      }
-
-      const response = accountStatusResponseSchema.safeParse({
-        data: buildPublicAccountStatus({
-          accountResponse,
-          rateLimitsResponse,
-          configRequirementsResponse,
-          warnings,
-        }),
+    try {
+      accountResponse = await appServer.accountRead({ refreshToken: false });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "account/read failed";
+      warnings.push(`account/read: ${message}`);
+      diagnostics.record("warn", "app-server", "account-read-failed", {
+        error: message,
       });
-      if (!response.success) {
-        const error = formatZodError(response.error);
-        diagnostics.record(
-          "error",
-          "api",
-          "account-status-response-validation-failed",
-          { error },
-        );
-        throw new Error(error);
-      }
-      return response.data;
-    };
+    }
 
-  const readCachedAccountStatus =
-    async (): Promise<AccountStatusResponse> => {
-      const now = Date.now();
-      if (accountStatusCache && accountStatusCache.expiresAtMs > now) {
-        return accountStatusCache.response;
-      }
-      if (accountStatusRefresh) return await accountStatusRefresh;
-      accountStatusRefresh = readFreshAccountStatus()
-        .then((response) => {
-          accountStatusCache = {
-            response,
-            expiresAtMs: Date.now() + ACCOUNT_STATUS_CACHE_TTL_MS,
-          };
-          return response;
-        })
-        .finally(() => {
-          accountStatusRefresh = null;
-        });
-      return await accountStatusRefresh;
-    };
+    try {
+      rateLimitsResponse = await appServer.accountRateLimitsRead();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "account/rateLimits/read failed";
+      warnings.push(`account/rateLimits/read: ${message}`);
+      diagnostics.record(
+        "warn",
+        "app-server",
+        "account-rate-limits-read-failed",
+        { error: message },
+      );
+    }
+
+    try {
+      configRequirementsResponse = await appServer.configRequirementsRead();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "configRequirements/read failed";
+      warnings.push(`configRequirements/read: ${message}`);
+      diagnostics.record(
+        "warn",
+        "app-server",
+        "config-requirements-read-failed",
+        { error: message },
+      );
+    }
+
+    const response = accountStatusResponseSchema.safeParse({
+      data: buildPublicAccountStatus({
+        accountResponse,
+        rateLimitsResponse,
+        configRequirementsResponse,
+        warnings,
+      }),
+    });
+    if (!response.success) {
+      const error = formatZodError(response.error);
+      diagnostics.record(
+        "error",
+        "api",
+        "account-status-response-validation-failed",
+        { error },
+      );
+      throw new Error(error);
+    }
+    return response.data;
+  };
+
+  const readCachedAccountStatus = async (): Promise<AccountStatusResponse> => {
+    const now = Date.now();
+    if (accountStatusCache && accountStatusCache.expiresAtMs > now) {
+      return accountStatusCache.response;
+    }
+    if (accountStatusRefresh) return await accountStatusRefresh;
+    accountStatusRefresh = readFreshAccountStatus()
+      .then((response) => {
+        accountStatusCache = {
+          response,
+          expiresAtMs: Date.now() + ACCOUNT_STATUS_CACHE_TTL_MS,
+        };
+        return response;
+      })
+      .finally(() => {
+        accountStatusRefresh = null;
+      });
+    return await accountStatusRefresh;
+  };
 
   const broadcastOwnedAppServerSnapshot = async (
     threadId: string,
@@ -1900,12 +1995,17 @@ export async function createServer(
         threadId,
       );
       if (!threadSnapshot) return false;
+      const existingState = officialIpc.getThreadStreamState(threadId);
+      const conversationState = preserveOwnedSnapshotWorkspaceFields({
+        conversationState: threadSnapshot,
+        existingState,
+      });
       const broadcasted = officialIpc.broadcastConversationSnapshot(
         threadId,
         preserveSideConversationMetadata({
           threadId,
-          conversationState: threadSnapshot,
-          existingState: officialIpc.getThreadStreamState(threadId),
+          conversationState,
+          existingState,
         }),
       );
       return broadcasted;
@@ -1945,19 +2045,21 @@ export async function createServer(
         },
       );
     }
+    const existingState = officialIpc.getThreadStreamState(threadId);
     const snapshot = buildPendingLocalTurnSnapshot({
       threadId,
       params,
       baseThread,
       fallbackDetail: null,
-      fallbackCwd: config.projectRoot,
+      fallbackCwd: readString(params.cwd) || null,
+      workspaceKind: workspaceKindFromOfficialState(existingState),
     });
     const broadcasted = officialIpc.broadcastConversationSnapshot(
       threadId,
       preserveSideConversationMetadata({
         threadId,
         conversationState: snapshot,
-        existingState: officialIpc.getThreadStreamState(threadId),
+        existingState,
       }),
     );
     if (broadcasted) {
@@ -1979,10 +2081,7 @@ export async function createServer(
     if (!officialIpc.canOwnConversations()) return false;
     const state = officialIpc.getThreadStreamState(threadId);
     const staleOfficialActiveRetired = state
-      ? shouldRetireStaleOfficialActiveState(
-          conversationState ?? detail,
-          state,
-        )
+      ? shouldRetireStaleOfficialActiveState(conversationState ?? detail, state)
       : false;
     if (
       (state?.isInProgress ||
@@ -2036,9 +2135,7 @@ export async function createServer(
     diagnostics.record(
       promoted ? "info" : "warn",
       "official-ipc",
-      promoted
-        ? "local-owner-promoted"
-        : "local-owner-promotion-skipped",
+      promoted ? "local-owner-promoted" : "local-owner-promotion-skipped",
       { threadId, reason },
     );
     return promoted;
@@ -2195,9 +2292,14 @@ export async function createServer(
               { threadId },
             );
             if (hydrated) {
-              diagnostics.record("info", "official-ipc", "readonly-hydrate-memory-only", {
-                threadId,
-              });
+              diagnostics.record(
+                "info",
+                "official-ipc",
+                "readonly-hydrate-memory-only",
+                {
+                  threadId,
+                },
+              );
             }
           } catch (error) {
             diagnostics.record(
@@ -2241,10 +2343,7 @@ export async function createServer(
       shouldDriveRealtime: classification.shouldDriveRealtime,
     });
     const liveUpdate = localLiveThreads.handle(notification);
-    if (
-      liveUpdate &&
-      !APP_SERVER_LIVE_DELTA_METHODS.has(notification.method)
-    ) {
+    if (liveUpdate && !APP_SERVER_LIVE_DELTA_METHODS.has(notification.method)) {
       bus.publish({
         type: "domain.threadDetailUpdated",
         threadId: liveUpdate.threadId,
@@ -3066,10 +3165,17 @@ export async function createServer(
     }
   });
 
-  app.get("/api/runtime-options", async (_request, reply) => {
+  app.get("/api/runtime-options", async (request, reply) => {
+    const requestQuery = asRecord(request.query);
+    const cwd = readString(requestQuery?.cwd);
     const warnings: string[] = [];
     let modelListResponse: unknown;
     let collaborationModeListResponse: unknown;
+    let permissionProfileListResponse: unknown;
+    let configRequirementsResponse: unknown;
+    let localPermissionDefault: ReturnType<
+      typeof readLocalCodexPermissionDefault
+    > = null;
 
     try {
       modelListResponse = await appServer.modelList({
@@ -3101,10 +3207,58 @@ export async function createServer(
       );
     }
 
+    try {
+      permissionProfileListResponse = await appServer.permissionProfileList({
+        ...(cwd ? { cwd } : {}),
+        limit: 100,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "permissionProfile/list failed";
+      warnings.push(`permissionProfile/list: ${message}`);
+      diagnostics.record(
+        "warn",
+        "app-server",
+        "permission-profile-list-failed",
+        { error: message },
+      );
+    }
+
+    try {
+      configRequirementsResponse = await appServer.configRequirementsRead();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "configRequirements/read failed";
+      warnings.push(`configRequirements/read: ${message}`);
+      diagnostics.record("warn", "app-server", "config-requirements-failed", {
+        error: message,
+      });
+    }
+
+    try {
+      localPermissionDefault = readLocalCodexPermissionDefault();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "read local Codex config failed";
+      warnings.push(`local config: ${message}`);
+      diagnostics.record("warn", "config", "local-codex-config-failed", {
+        error: message,
+      });
+    }
+
     const response = runtimeOptionsResponseSchema.safeParse({
       data: normalizeRuntimeOptions({
         modelListResponse,
         collaborationModeListResponse,
+        permissionProfileListResponse,
+        configRequirementsResponse,
+        localPermissionDefault,
         warnings,
       }),
     });
@@ -3534,18 +3688,18 @@ export async function createServer(
       );
       const list = overlayPinnedThreads(
         overlayLiveStreamStateOnThreadList(
-            mergeThreadListProjects(
-              normalizeOfficialThreadList(
-                {
-                  data: rawThreads,
-                  nextCursor: result.nextCursor,
-                  backwardsCursor: result.backwardsCursor,
-                },
-                ownerByThreadId,
-              ),
-              readFavoriteProjectPaths(config),
-              readDesktopWorkspaceRoots(),
+          mergeThreadListProjects(
+            normalizeOfficialThreadList(
+              {
+                data: rawThreads,
+                nextCursor: result.nextCursor,
+                backwardsCursor: result.backwardsCursor,
+              },
+              ownerByThreadId,
             ),
+            readFavoriteProjectPaths(config),
+            readDesktopWorkspaceRoots(),
+          ),
           officialIpc,
         ),
         new Set(database.listPinnedThreadIds()),
@@ -3699,7 +3853,10 @@ export async function createServer(
       const rawThread = asRecord(result)?.thread ?? result;
       const mergedThread =
         hasExternalOfficialState && state
-          ? preserveRicherOfficialStreamItems(rawThread, state.conversationState)
+          ? preserveRicherOfficialStreamItems(
+              rawThread,
+              state.conversationState,
+            )
           : rawThread;
       const retiredStaleOfficialActive =
         hasExternalOfficialState &&
@@ -3886,24 +4043,30 @@ export async function createServer(
       streamStateTurns.length === 0;
     // Official app-server lifecycle: a fresh thread goes thread/start -> turn/start.
     // thread/resume is only for continuing a materialized existing thread.
+    const requestedCwd = Object.prototype.hasOwnProperty.call(body, "cwd")
+      ? resolveProjectCwdForConversation({
+          explicitCwd: body.cwd,
+          conversationState: streamStateRecord,
+        })
+      : resolveProjectCwdForConversation({
+          conversationState: streamStateRecord,
+        });
     const params = await buildTurnStartParams({
       threadId,
       text,
-      cwd:
-        body?.cwd ??
-        (readString(streamStateRecord?.cwd) ||
-          readString(streamStateRecord?.projectId) ||
-          undefined),
+      cwd: requestedCwd,
       model: body?.model,
       effort: body?.effort,
       attachments: storedAttachments,
       skills: body?.skills,
       collaborationMode: body?.collaborationMode,
       permissionMode: body?.permissionMode,
+      permissionProfile: body?.permissionProfile,
     });
     diagnostics.record("info", "turn-start", "runtime-options-selected", {
       threadId,
       permissionMode: readString(body?.permissionMode) || null,
+      permissionProfile: readString(body?.permissionProfile) || null,
       ...summarizeRuntimeSelection({
         model: body?.model,
         effort: body?.effort,
@@ -4237,20 +4400,23 @@ export async function createServer(
         streamState?.conversationState ??
         asRecord(readResult)?.thread ??
         readResult;
-      const cwd =
-        readString(body.cwd) ||
-        readString(asRecord(conversationState)?.cwd) ||
-        readString(asRecord(conversationState)?.projectId) ||
-        undefined;
+      const cwd = resolveProjectCwdForConversation({
+        explicitCwd: body.cwd,
+        conversationState,
+      });
       const model = readString(body.model);
       const effort = readString(body.effort);
       const collaborationMode = asRecord(body.collaborationMode);
+      const permissionProfile = readString(body.permissionProfile);
       const overrides: Partial<TurnStartParams> & Record<string, unknown> = {
         ...(cwd ? { cwd } : {}),
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         ...(collaborationMode ? { collaborationMode } : {}),
-        ...buildPermissionOverrides(body.permissionMode),
+        ...buildPermissionSelection({
+          permissionProfile,
+          permissionMode: body.permissionMode,
+        }),
       };
       localEditStep = "build-replacement-turn";
       const params = buildEditedLastUserTurnStartParams({
@@ -4287,7 +4453,10 @@ export async function createServer(
       const result = await startLocalTurn(appServer, params, {
         skipResume: true,
       });
-      void broadcastOwnedAppServerSnapshot(threadId, "local-turn-edit-last-user");
+      void broadcastOwnedAppServerSnapshot(
+        threadId,
+        "local-turn-edit-last-user",
+      );
       localEditStep = "validate-response";
       const response = turnEditLastUserResponseSchema.safeParse({
         data: {
@@ -4312,17 +4481,12 @@ export async function createServer(
         error instanceof Error
           ? error.message
           : "Failed to edit last user message";
-      diagnostics.record(
-        "error",
-        "turn-edit-last-user",
-        "local-edit-failed",
-        {
-          threadId,
-          turnId,
-          step: localEditStep,
-          error: errorMessage,
-        },
-      );
+      diagnostics.record("error", "turn-edit-last-user", "local-edit-failed", {
+        threadId,
+        turnId,
+        step: localEditStep,
+        error: errorMessage,
+      });
       await reply.code(502).send({
         error: `edit-last-user-failed:${localEditStep}:${errorMessage}`,
       });
@@ -4335,7 +4499,8 @@ export async function createServer(
       await reply.code(400).send({ error: formatZodError(parsed.error) });
       return;
     }
-    const cwd = readString(parsed.data.cwd) || config.projectRoot;
+    const cwd =
+      parsed.data.cwd === null ? null : readString(parsed.data.cwd) || null;
 
     try {
       if (!officialIpc.canOwnConversations()) {
@@ -4348,16 +4513,24 @@ export async function createServer(
         return;
       }
       const result = await appServer.threadStart({
-        cwd,
+        ...(cwd ? { cwd } : {}),
         threadSource: "user",
       });
       const threadRecord =
         asRecord(asRecord(result)?.thread) ?? asRecord(result);
       const threadId =
         readString(threadRecord?.id) || readString(threadRecord?.sessionId);
+      const requestedWorkspaceKind = cwd ? "project" : "projectless";
+      const normalizationThreadRecord =
+        threadRecord && readString(threadRecord.workspaceKind)
+          ? threadRecord
+          : {
+              ...(threadRecord ?? {}),
+              workspaceKind: requestedWorkspaceKind,
+            };
       const detail = threadId
         ? normalizeOfficialThreadDetail({
-            thread: threadRecord,
+            thread: normalizationThreadRecord,
             owner: null,
             fallbackThreadId: threadId,
           })
@@ -4368,6 +4541,7 @@ export async function createServer(
         thread: threadRecord,
         detail,
         fallbackCwd: cwd,
+        workspaceKind: requestedWorkspaceKind,
       });
       const broadcasted = officialIpc.broadcastConversationSnapshot(
         detail.thread.id,
@@ -4500,7 +4674,8 @@ export async function createServer(
           numTurns: rollbackTurns,
         });
         const rolledBackThread =
-          asRecord(asRecord(rollbackResult)?.thread) ?? asRecord(rollbackResult);
+          asRecord(asRecord(rollbackResult)?.thread) ??
+          asRecord(rollbackResult);
         const rolledBackDetail = rolledBackThread
           ? normalizeOfficialThreadDetail({
               thread: rolledBackThread,
@@ -4542,9 +4717,8 @@ export async function createServer(
           .send({ error: "official-ipc-owner-not-established" });
         return;
       }
-      const refreshBroadcasted = officialIpc.broadcastThreadUnarchived(
-        forkThreadId,
-      );
+      const refreshBroadcasted =
+        officialIpc.broadcastThreadUnarchived(forkThreadId);
       diagnostics.record(
         refreshBroadcasted ? "info" : "warn",
         "thread/fork",
@@ -4599,10 +4773,11 @@ export async function createServer(
         .send({ error: "side-conversation-parent-required" });
       return;
     }
-    const cwd =
-      readString(parsed.data.cwd) ||
-      readString(parentRecord?.cwd) ||
-      config.projectRoot;
+    const parentWorkspaceKind = readString(parentRecord?.workspaceKind) || null;
+    const cwd = resolveProjectCwdForConversation({
+      explicitCwd: parsed.data.cwd,
+      conversationState: parentRecord,
+    });
 
     try {
       if (!officialIpc.canOwnConversations()) {
@@ -4619,7 +4794,7 @@ export async function createServer(
       const forkResult = await appServer.threadFork({
         threadId: parentThreadId,
         path: null,
-        cwd,
+        ...(cwd ? { cwd } : {}),
         threadSource: "user",
         developerInstructions: SIDE_CONVERSATION_BOUNDARY_TEXT,
         excludeTurns: true,
@@ -4655,6 +4830,7 @@ export async function createServer(
         sideThreadId,
         parentThreadId,
         cwd,
+        workspaceKind: parentWorkspaceKind,
         forkThread,
       });
       const broadcasted = officialIpc.broadcastConversationSnapshot(
@@ -4716,9 +4892,7 @@ export async function createServer(
     const state = officialIpc.getThreadStreamState(sideConversationId);
     const record = asRecord(state?.conversationState);
     if (record && record.sideConversation !== true) {
-      await reply
-        .code(400)
-        .send({ error: "side-conversation-required" });
+      await reply.code(400).send({ error: "side-conversation-required" });
       return;
     }
 
@@ -4739,11 +4913,16 @@ export async function createServer(
         }
         interrupted = true;
       } catch (error) {
-        diagnostics.record("warn", "side-conversation-close", "interrupt-failed", {
-          sideConversationId,
-          activeTurnId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        diagnostics.record(
+          "warn",
+          "side-conversation-close",
+          "interrupt-failed",
+          {
+            sideConversationId,
+            activeTurnId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
       }
     }
 
@@ -4798,8 +4977,7 @@ export async function createServer(
         externalStateBeforeRename && externalStateAfterRefresh
           ? externalStateAfterRefresh
           : null;
-      const wasExternallyOwnedBeforeRename =
-        externalStateBeforeRename !== null;
+      const wasExternallyOwnedBeforeRename = externalStateBeforeRename !== null;
       const rawThread = asRecord(detailResult)?.thread ?? detailResult;
       const mergedThread =
         externalState !== null
@@ -4902,10 +5080,7 @@ export async function createServer(
         if (officialIpc.isOwnedConversation(threadId)) {
           officialIpc.broadcastConversationSnapshot(threadId, {
             ...detail,
-            id: detail.thread.id,
-            title: detail.thread.title,
-            name: detail.thread.title,
-            cwd: detail.thread.path ?? detail.thread.projectId ?? undefined,
+            ...threadBroadcastFieldsFromDetail(detail),
           });
         }
       }
@@ -4933,7 +5108,9 @@ export async function createServer(
     } catch (error) {
       await reply.code(502).send({
         error:
-          error instanceof Error ? error.message : "Failed to update thread goal",
+          error instanceof Error
+            ? error.message
+            : "Failed to update thread goal",
       });
     }
   });
@@ -4955,10 +5132,7 @@ export async function createServer(
         if (officialIpc.isOwnedConversation(threadId)) {
           officialIpc.broadcastConversationSnapshot(threadId, {
             ...detail,
-            id: detail.thread.id,
-            title: detail.thread.title,
-            name: detail.thread.title,
-            cwd: detail.thread.path ?? detail.thread.projectId ?? undefined,
+            ...threadBroadcastFieldsFromDetail(detail),
           });
         }
       }
@@ -4986,7 +5160,9 @@ export async function createServer(
     } catch (error) {
       await reply.code(502).send({
         error:
-          error instanceof Error ? error.message : "Failed to clear thread goal",
+          error instanceof Error
+            ? error.message
+            : "Failed to clear thread goal",
       });
     }
   });

@@ -2,9 +2,14 @@ import type {
   MessageItem,
   Owner,
   ThreadDetail,
+  ThreadSubAgent,
   Turn,
 } from "@codex-web/domain";
-import { normalizeMessageItem } from "@codex-web/domain";
+import {
+  normalizeMessageItem,
+  normalizeThreadSubAgents,
+  normalizeThreadTokenUsage,
+} from "@codex-web/domain";
 
 type AppServerNotificationLike = {
   method: string;
@@ -99,9 +104,10 @@ function compactStatus(value: unknown): string {
 
 function readTurnStatus(value: unknown): Turn["status"] {
   const status = compactStatus(value);
-  if (["active", "inprogress", "running", "streaming"].includes(status))
-    return "active";
-  if (["completed", "complete", "done", "success", "succeeded"].includes(status))
+  if (isActiveStatus(value)) return "active";
+  if (
+    ["completed", "complete", "done", "success", "succeeded"].includes(status)
+  )
     return "completed";
   if (["failed", "failure", "error"].includes(status)) return "failed";
   if (["interrupted", "interrupt", "canceled", "cancelled"].includes(status))
@@ -111,9 +117,17 @@ function readTurnStatus(value: unknown): Turn["status"] {
 }
 
 function isActiveStatus(value: unknown): boolean {
-  return ["active", "inprogress", "running", "streaming"].includes(
-    compactStatus(value),
-  );
+  return [
+    "active",
+    "editing",
+    "inprogress",
+    "pending",
+    "running",
+    "started",
+    "streaming",
+    "thinking",
+    "writing",
+  ].includes(compactStatus(value));
 }
 
 function readThreadIdFromParams(value: unknown): string {
@@ -143,7 +157,11 @@ function readTurnIdFromParams(value: unknown): string {
 function readItemIdFromParams(value: unknown): string {
   const record = asRecord(value);
   const item = asRecord(record?.item);
-  return readString(record?.itemId) || readString(record?.item_id) || readString(item?.id);
+  return (
+    readString(record?.itemId) ||
+    readString(record?.item_id) ||
+    readString(item?.id)
+  );
 }
 
 function itemIndex(turn: Turn, itemId: string): number {
@@ -153,12 +171,17 @@ function itemIndex(turn: Turn, itemId: string): number {
 function normalizedUserText(item: MessageItem): string {
   const record = asRecord(item);
   const type = readString(record?.type);
-  if (type === "userMessage") return readTextContent(record?.content).replace(/\s+/g, " ").trim();
-  if (type === "user") return readTextContent(record?.text).replace(/\s+/g, " ").trim();
+  if (type === "userMessage")
+    return readTextContent(record?.content).replace(/\s+/g, " ").trim();
+  if (type === "user")
+    return readTextContent(record?.text).replace(/\s+/g, " ").trim();
   return "";
 }
 
-function duplicateUserItemIndex(items: MessageItem[], item: MessageItem): number {
+function duplicateUserItemIndex(
+  items: MessageItem[],
+  item: MessageItem,
+): number {
   const itemType = readItemType(item);
   if (itemType !== "userMessage" && itemType !== "user") return -1;
   const text = normalizedUserText(item);
@@ -201,14 +224,18 @@ function jsonValueScore(value: unknown): number {
 }
 
 function richerValue(incomingValue: unknown, currentValue: unknown): unknown {
-  if (incomingValue === null || incomingValue === undefined) return currentValue;
+  if (incomingValue === null || incomingValue === undefined)
+    return currentValue;
   if (currentValue === null || currentValue === undefined) return incomingValue;
   return jsonValueScore(currentValue) > jsonValueScore(incomingValue)
     ? currentValue
     : incomingValue;
 }
 
-function mergeMessagePhase(incomingValue: unknown, currentValue: unknown): unknown {
+function mergeMessagePhase(
+  incomingValue: unknown,
+  currentValue: unknown,
+): unknown {
   if (incomingValue === "final_answer" || currentValue !== "final_answer") {
     return incomingValue ?? currentValue;
   }
@@ -224,9 +251,15 @@ function mergeOfficialItemFields(
   const incomingType = readString(incomingRecord?.type);
   if (currentType === "agentMessage" && incomingType === "agentMessage") {
     if ("phase" in (currentRecord ?? {}) || "phase" in (incomingRecord ?? {})) {
-      merged.phase = mergeMessagePhase(incomingRecord?.phase, currentRecord?.phase);
+      merged.phase = mergeMessagePhase(
+        incomingRecord?.phase,
+        currentRecord?.phase,
+      );
     }
-    if ("memoryCitation" in (currentRecord ?? {}) || "memoryCitation" in (incomingRecord ?? {})) {
+    if (
+      "memoryCitation" in (currentRecord ?? {}) ||
+      "memoryCitation" in (incomingRecord ?? {})
+    ) {
       merged.memoryCitation = richerValue(
         incomingRecord?.memoryCitation,
         currentRecord?.memoryCitation,
@@ -234,8 +267,14 @@ function mergeOfficialItemFields(
     }
   }
   if (currentType === "webSearch" && incomingType === "webSearch") {
-    if ("action" in (currentRecord ?? {}) || "action" in (incomingRecord ?? {})) {
-      merged.action = richerValue(incomingRecord?.action, currentRecord?.action);
+    if (
+      "action" in (currentRecord ?? {}) ||
+      "action" in (incomingRecord ?? {})
+    ) {
+      merged.action = richerValue(
+        incomingRecord?.action,
+        currentRecord?.action,
+      );
     }
   }
 }
@@ -243,7 +282,10 @@ function mergeOfficialItemFields(
 function mergeItem(current: MessageItem, incoming: MessageItem): MessageItem {
   const currentRecord = asRecord(current);
   const incomingRecord = asRecord(incoming);
-  const merged = { ...currentRecord, ...incomingRecord } as Record<string, unknown>;
+  const merged = { ...currentRecord, ...incomingRecord } as Record<
+    string,
+    unknown
+  >;
   const currentType = readString(currentRecord?.type);
   const incomingType = readString(incomingRecord?.type);
   if (
@@ -266,6 +308,16 @@ function mergeItem(current: MessageItem, incoming: MessageItem): MessageItem {
   return merged as MessageItem;
 }
 
+function refreshSubAgents(detail: ThreadDetail): ThreadSubAgent[] {
+  return normalizeThreadSubAgents(
+    {
+      ...detail.thread,
+      turns: detail.turns,
+    },
+    "app-server",
+  );
+}
+
 export class LocalLiveThreadStore {
   private readonly states = new Map<string, LiveThreadState>();
 
@@ -275,7 +327,9 @@ export class LocalLiveThreadStore {
     this.states.delete(threadId);
   }
 
-  handle(notification: AppServerNotificationLike): LocalLiveThreadUpdate | null {
+  handle(
+    notification: AppServerNotificationLike,
+  ): LocalLiveThreadUpdate | null {
     const threadId = readThreadIdFromParams(notification.params);
     if (!threadId) return null;
     const shouldTrack =
@@ -310,7 +364,11 @@ export class LocalLiveThreadStore {
       const active = isActiveStatus(record?.status);
       state.detail.thread.inProgress = active;
       if (state.activeTurnId) {
-        const turn = this.ensureTurn(state, state.activeTurnId, active ? "active" : "unknown");
+        const turn = this.ensureTurn(
+          state,
+          state.activeTurnId,
+          active ? "active" : "unknown",
+        );
         if (active) turn.status = "active";
       }
       changed = true;
@@ -322,6 +380,13 @@ export class LocalLiveThreadStore {
         readString(record?.preview);
       if (title) state.detail.thread.title = title;
       changed = Boolean(title);
+    } else if (notification.method === "thread/tokenUsage/updated") {
+      state = this.ensureState(threadId, notification.atIso);
+      const tokenUsage = normalizeThreadTokenUsage(record?.tokenUsage);
+      if (tokenUsage) {
+        state.detail.tokenUsage = tokenUsage;
+        changed = true;
+      }
     } else if (notification.method === "item/started") {
       state = this.ensureState(threadId, notification.atIso);
       const turn = this.ensureTurn(
@@ -329,8 +394,14 @@ export class LocalLiveThreadStore {
         readTurnIdFromParams(notification.params) || state.activeTurnId,
         "active",
       );
-      const item = markItemStarted(normalizeMessageItem(record?.item, turn.items.length));
+      const item = markItemStarted(
+        normalizeMessageItem(record?.item, turn.items.length),
+      );
       this.upsertItem(turn, item);
+      if (item.type === "collabAgentToolCall") {
+        const subAgents = refreshSubAgents(state.detail);
+        if (subAgents.length) state.detail.subAgents = subAgents;
+      }
       state.detail.thread.inProgress = true;
       changed = true;
     } else if (notification.method === "item/completed") {
@@ -342,6 +413,10 @@ export class LocalLiveThreadStore {
       );
       const item = normalizeMessageItem(record?.item, turn.items.length);
       this.upsertItem(turn, item);
+      if (item.type === "collabAgentToolCall") {
+        const subAgents = refreshSubAgents(state.detail);
+        if (subAgents.length) state.detail.subAgents = subAgents;
+      }
       changed = true;
     } else if (notification.method === "item/agentMessage/delta") {
       state = this.ensureState(threadId, notification.atIso);
@@ -364,8 +439,22 @@ export class LocalLiveThreadStore {
       changed = true;
     } else if (notification.method === "turn/completed") {
       state = this.ensureState(threadId, notification.atIso);
-      const turnId = readTurnIdFromParams(notification.params) || state.activeTurnId;
-      if (turnId) this.ensureTurn(state, turnId, "completed").status = "completed";
+      const turnId =
+        readTurnIdFromParams(notification.params) || state.activeTurnId;
+      if (turnId)
+        this.ensureTurn(state, turnId, "completed").status = "completed";
+      state.activeTurnId = "";
+      state.detail.thread.inProgress = false;
+      changed = true;
+    } else if (notification.method === "thread/compacted") {
+      state = this.ensureState(threadId, notification.atIso);
+      const turnId =
+        readTurnIdFromParams(notification.params) || state.activeTurnId;
+      if (turnId) {
+        const turn = this.ensureTurn(state, turnId, "completed");
+        turn.status = "completed";
+        this.ensureContextCompactionItem(turn);
+      }
       state.activeTurnId = "";
       state.detail.thread.inProgress = false;
       changed = true;
@@ -373,7 +462,8 @@ export class LocalLiveThreadStore {
 
     if (!state || !changed) return null;
     state.detail.thread.owner = this.options.readOwner(threadId);
-    state.detail.thread.updatedAtIso = notification.atIso ?? new Date().toISOString();
+    state.detail.thread.updatedAtIso =
+      notification.atIso ?? new Date().toISOString();
     state.cacheVersion += 1;
     return {
       threadId,
@@ -390,7 +480,9 @@ export class LocalLiveThreadStore {
     const detail =
       this.options.readInitialDetail(threadId) ??
       this.createEmptyDetail(threadId, atIso);
-    detail.turns = detail.turns.filter((turn) => !turn.id.startsWith("pending-"));
+    detail.turns = detail.turns.filter(
+      (turn) => !turn.id.startsWith("pending-"),
+    );
     detail.thread.inProgress = true;
     detail.thread.owner = this.options.readOwner(threadId);
     const state: LiveThreadState = {
@@ -416,6 +508,7 @@ export class LocalLiveThreadStore {
         owner: this.options.readOwner(threadId),
       },
       goal: null,
+      tokenUsage: null,
       turns: [],
       subAgents: [],
       sideConversations: [],
@@ -427,7 +520,8 @@ export class LocalLiveThreadStore {
     turnId: string,
     status: Turn["status"],
   ): Turn {
-    const id = turnId || state.activeTurnId || `turn-${state.detail.turns.length + 1}`;
+    const id =
+      turnId || state.activeTurnId || `turn-${state.detail.turns.length + 1}`;
     state.activeTurnId ||= id;
     let turn = state.detail.turns.find((entry) => entry.id === id);
     if (!turn) {
@@ -453,6 +547,21 @@ export class LocalLiveThreadStore {
     turn.items.push(item);
   }
 
+  private ensureContextCompactionItem(turn: Turn): void {
+    if (turn.items.some((item) => readItemType(item) === "contextCompaction"))
+      return;
+    this.upsertItem(
+      turn,
+      normalizeMessageItem(
+        {
+          type: "contextCompaction",
+          id: `context-compaction-${turn.id}`,
+        },
+        turn.items.length,
+      ),
+    );
+  }
+
   private appendTextDelta(
     state: LiveThreadState,
     kind: "agentMessage" | "reasoning" | "commandExecution" | "fileChange",
@@ -466,7 +575,8 @@ export class LocalLiveThreadStore {
     const record = asRecord(params);
     const itemId =
       readItemIdFromParams(params) || `${kind}-${turn.items.length + 1}`;
-    const delta = readDeltaString(record?.delta) || readTextContent(record?.text);
+    const delta =
+      readDeltaString(record?.delta) || readTextContent(record?.text);
     const existingIndex = itemIndex(turn, itemId);
     if (existingIndex < 0) {
       if (kind === "agentMessage") {
@@ -515,10 +625,15 @@ export class LocalLiveThreadStore {
     const itemRecord = asRecord(item);
     const itemType = readString(itemRecord?.type);
     if (itemType === "agentMessage") {
-      turn.items[existingIndex] = { ...item, text: readTextContent(itemRecord?.text) + delta } as MessageItem;
+      turn.items[existingIndex] = {
+        ...item,
+        text: readTextContent(itemRecord?.text) + delta,
+      } as MessageItem;
     } else if (itemType === "reasoning") {
       const itemRecord = asRecord(item);
-      const content = Array.isArray(itemRecord?.content) ? itemRecord.content : [];
+      const content = Array.isArray(itemRecord?.content)
+        ? itemRecord.content
+        : [];
       const text = readTextContent(itemRecord?.text);
       turn.items[existingIndex] = {
         ...item,
@@ -531,15 +646,26 @@ export class LocalLiveThreadStore {
         aggregatedOutput: `${readTextContent(itemRecord?.aggregatedOutput)}${delta}`,
       } as MessageItem;
     } else if (itemType === "fileChange") {
-      const existingChanges = Array.isArray(itemRecord?.changes) ? itemRecord.changes : [];
+      const existingChanges = Array.isArray(itemRecord?.changes)
+        ? itemRecord.changes
+        : [];
       const changes = existingChanges.length
         ? existingChanges.map((change, index) => {
             const changeRecord = asRecord(change) ?? {};
             return index === 0
-              ? { ...changeRecord, diff: readTextContent(changeRecord.diff) + delta }
+              ? {
+                  ...changeRecord,
+                  diff: readTextContent(changeRecord.diff) + delta,
+                }
               : change;
           })
-        : [{ path: "", diff: delta, kind: { type: "update", move_path: null } }];
+        : [
+            {
+              path: "",
+              diff: delta,
+              kind: { type: "update", move_path: null },
+            },
+          ];
       turn.items[existingIndex] = { ...item, changes } as MessageItem;
     }
     state.detail.thread.inProgress = true;

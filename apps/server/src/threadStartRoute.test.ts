@@ -224,6 +224,43 @@ describe("thread start route", () => {
     expect(recentRefreshBroadcasts).toEqual(["thread-web-created"]);
   });
 
+  it("creates a projectless thread without sending cwd to app-server", async () => {
+    const { context, officialIpc, appServer } = await createHarness();
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/thread/start",
+      payload: { cwd: null },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        thread: {
+          id: "thread-web-created",
+          projectId: null,
+          workspaceKind: "projectless",
+        },
+      },
+    });
+    expect(appServer.calls).toEqual([
+      {
+        method: "thread/start",
+        params: {
+          threadSource: "user",
+        },
+      },
+    ]);
+    expect(
+      officialIpc.getThreadStreamState("thread-web-created"),
+    ).toMatchObject({
+      conversationState: {
+        id: "thread-web-created",
+        workspaceKind: "projectless",
+      },
+    });
+  });
+
   it("rejects thread start if the idle stream snapshot cannot be broadcast", async () => {
     const { context, officialIpc, appServer } = await createHarness({
       broadcastResult: false,

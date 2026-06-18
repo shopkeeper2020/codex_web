@@ -26,11 +26,29 @@ export type ThreadGitInfo = {
   originUrl: string | null
 }
 
+export type WorkspaceKind = 'project' | 'projectless' | 'unknown'
+
+export type TokenUsageBreakdown = {
+  totalTokens: number
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  reasoningOutputTokens: number
+}
+
+export type ThreadTokenUsage = {
+  total: TokenUsageBreakdown
+  last: TokenUsageBreakdown
+  modelContextWindow: number | null
+}
+
 export type Thread = {
   id: string
   title: string
   projectId: string | null
   path: string | null
+  workspaceKind?: WorkspaceKind
+  effectiveCwd?: string | null
   createdAtIso?: string | null
   updatedAtIso: string | null
   inProgress: boolean
@@ -344,6 +362,9 @@ export type ThreadSubAgent = {
   name: string
   role: string | null
   status: string | null
+  model?: string | null
+  reasoningEffort?: string | null
+  parentThreadId?: string | null
   source: 'official-ipc' | 'app-server'
 }
 
@@ -374,6 +395,7 @@ export type ThreadGoal = {
 export type ThreadDetail = {
   thread: Thread
   goal: ThreadGoal | null
+  tokenUsage?: ThreadTokenUsage | null
   derivedFromThreadId?: string | null
   turns: Turn[]
   subAgents: ThreadSubAgent[]
@@ -495,6 +517,72 @@ function readNumber(value: unknown): number | null {
     if (Number.isFinite(parsed)) return parsed
   }
   return null
+}
+
+function readTokenCount(value: unknown): number {
+  return Math.max(0, Math.trunc(readNumber(value) ?? 0))
+}
+
+function normalizeTokenUsageBreakdown(value: unknown): TokenUsageBreakdown {
+  const record = asRecord(value) ?? {}
+  return {
+    totalTokens: readTokenCount(record.totalTokens ?? record.total_tokens),
+    inputTokens: readTokenCount(record.inputTokens ?? record.input_tokens),
+    cachedInputTokens: readTokenCount(record.cachedInputTokens ?? record.cached_input_tokens),
+    outputTokens: readTokenCount(record.outputTokens ?? record.output_tokens),
+    reasoningOutputTokens: readTokenCount(record.reasoningOutputTokens ?? record.reasoning_output_tokens),
+  }
+}
+
+export function normalizeThreadTokenUsage(value: unknown): ThreadTokenUsage | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const total = normalizeTokenUsageBreakdown(record.total)
+  const last = normalizeTokenUsageBreakdown(record.last)
+  const hasTotal =
+    total.totalTokens > 0 ||
+    total.inputTokens > 0 ||
+    total.cachedInputTokens > 0 ||
+    total.outputTokens > 0 ||
+    total.reasoningOutputTokens > 0
+  const hasLast =
+    last.totalTokens > 0 ||
+    last.inputTokens > 0 ||
+    last.cachedInputTokens > 0 ||
+    last.outputTokens > 0 ||
+    last.reasoningOutputTokens > 0
+  const modelContextWindow = readNumber(record.modelContextWindow ?? record.model_context_window)
+  if (!hasTotal && !hasLast && modelContextWindow == null) return null
+  return {
+    total,
+    last,
+    modelContextWindow,
+  }
+}
+
+function readThreadTokenUsage(record: Record<string, unknown>): ThreadTokenUsage | null {
+  const runtimeStatus = asRecord(record.threadRuntimeStatus)
+  const conversationState = asRecord(record.conversationState)
+  return (
+    normalizeThreadTokenUsage(record.tokenUsage) ??
+    normalizeThreadTokenUsage(record.latestTokenUsage) ??
+    normalizeThreadTokenUsage(record.latestTokenUsageInfo) ??
+    normalizeThreadTokenUsage(runtimeStatus?.tokenUsage) ??
+    normalizeThreadTokenUsage(runtimeStatus?.latestTokenUsage) ??
+    normalizeThreadTokenUsage(conversationState?.tokenUsage) ??
+    normalizeThreadTokenUsage(conversationState?.latestTokenUsageInfo)
+  )
+}
+
+function readWorkspaceKind(record: Record<string, unknown>): WorkspaceKind | undefined {
+  const direct = readString(record.workspaceKind) || readString(record.workspace_kind)
+  if (direct === 'project' || direct === 'projectless') return direct
+  if (direct) return 'unknown'
+  const source = asRecord(record.source)
+  const sourceKind = readString(source?.workspaceKind) || readString(source?.workspace_kind)
+  if (sourceKind === 'project' || sourceKind === 'projectless') return sourceKind
+  if (sourceKind) return 'unknown'
+  return undefined
 }
 
 function readBoolean(value: unknown): boolean {
@@ -1457,11 +1545,17 @@ function normalizeSubAgentEntry(
     readStatusString(record.state) ||
     readStatusString(record.phase) ||
     null
+  const parentThreadId = readString(record.parentThreadId) || readString(record.parent_thread_id) || null
+  const model = readString(record.model) || null
+  const reasoningEffort = readString(record.reasoningEffort) || readString(record.reasoning_effort) || null
   return {
     id: id || `${source}-subagent-${index}`,
     name,
     role,
     status,
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(parentThreadId ? { parentThreadId } : {}),
     source,
   }
 }
@@ -1516,6 +1610,10 @@ function readCollabAgentEntries(record: Record<string, unknown>): unknown[] {
       const agentsStates = asRecord(item.agentsStates)
       const receiverThreads = readArray(item.receiverThreads)
       const receiverById = new Map<string, unknown>()
+      const tool = readString(item.tool)
+      const itemStatus = tool === 'closeAgent'
+        ? 'shutdown'
+        : readStatusString(item.status) || null
       for (const receiver of receiverThreads) {
         const id = readReceiverThreadId(receiver)
         if (id) receiverById.set(id, receiver)
@@ -1529,7 +1627,10 @@ function readCollabAgentEntries(record: Record<string, unknown>): unknown[] {
             id,
             name: readReceiverThreadName(receiver) || `Agent ${shortAgentId(id)}`,
             role: readReceiverThreadRole(receiver) || readString(item.tool) || null,
-            status: readStatusString(state?.status) || readStatusString(item.status) || null,
+            status: tool === 'closeAgent' ? 'shutdown' : readStatusString(state?.status) || itemStatus,
+            model: readString(item.model) || null,
+            reasoningEffort: readString(item.reasoningEffort) || readString(item.reasoning_effort) || null,
+            parentThreadId: readString(item.senderThreadId) || null,
           })
         }
       }
@@ -1542,7 +1643,10 @@ function readCollabAgentEntries(record: Record<string, unknown>): unknown[] {
           id,
           name: readReceiverThreadName(receiver) || `Agent ${shortAgentId(id)}`,
           role: readReceiverThreadRole(receiver) || readString(item.tool) || null,
-          status: readStatusString(item.status) || null,
+          status: itemStatus,
+          model: readString(item.model) || null,
+          reasoningEffort: readString(item.reasoningEffort) || readString(item.reasoning_effort) || null,
+          parentThreadId: readString(item.senderThreadId) || null,
         })
       }
     }
@@ -1550,20 +1654,62 @@ function readCollabAgentEntries(record: Record<string, unknown>): unknown[] {
   return entries
 }
 
-function normalizeThreadSubAgents(
+function subAgentStatusRank(status: string | null): number {
+  const compacted = compactStatus(status)
+  if (
+    [
+      'shutdown',
+      'closed',
+      'completed',
+      'complete',
+      'done',
+      'failed',
+      'errored',
+      'error',
+      'notfound',
+      'interrupted',
+    ].includes(compacted)
+  ) {
+    return 4
+  }
+  if (['running', 'active', 'inprogress', 'pendinginit'].includes(compacted)) return 3
+  if (compacted) return 2
+  return 1
+}
+
+function mergeThreadSubAgent(left: ThreadSubAgent, right: ThreadSubAgent): ThreadSubAgent {
+  const preferRightStatus = subAgentStatusRank(right.status) >= subAgentStatusRank(left.status)
+  const model = left.model ?? right.model ?? null
+  const reasoningEffort = left.reasoningEffort ?? right.reasoningEffort ?? null
+  const parentThreadId = left.parentThreadId ?? right.parentThreadId ?? null
+  return {
+    ...left,
+    name:
+      left.name.startsWith('Agent ') && !right.name.startsWith('Agent ')
+        ? right.name
+        : left.name,
+    role: left.role === 'spawnAgent' || !left.role ? right.role ?? left.role : left.role,
+    status: preferRightStatus ? right.status : left.status,
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(parentThreadId ? { parentThreadId } : {}),
+    source: left.source,
+  }
+}
+
+export function normalizeThreadSubAgents(
   record: Record<string, unknown>,
   source: ThreadSubAgent['source'],
 ): ThreadSubAgent[] {
-  const seen = new Set<string>()
-  return [...readSubAgentArrays(record), ...readCollabAgentEntries(record)]
-    .map((entry, index) => normalizeSubAgentEntry(entry, index, source))
-    .filter((entry): entry is ThreadSubAgent => {
-      if (!entry) return false
-      const key = `${entry.id.toLowerCase()}|${entry.name.toLowerCase()}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+  const byId = new Map<string, ThreadSubAgent>()
+  for (const entry of [...readSubAgentArrays(record), ...readCollabAgentEntries(record)]) {
+    const normalized = normalizeSubAgentEntry(entry, byId.size, source)
+    if (!normalized) continue
+    const key = normalized.id.toLowerCase()
+    const existing = byId.get(key)
+    byId.set(key, existing ? mergeThreadSubAgent(existing, normalized) : normalized)
+  }
+  return [...byId.values()]
 }
 
 export function normalizeOfficialThreadSummary(value: unknown, owner: Owner | null = null): Thread | null {
@@ -1574,14 +1720,18 @@ export function normalizeOfficialThreadSummary(value: unknown, owner: Owner | nu
 
   const title = readString(record.name) || readString(record.title) || readString(record.preview) || 'Untitled'
   const cwd = readString(record.cwd)
+  const effectiveCwd = readString(record.effectiveCwd) || readString(record.effective_cwd) || cwd || null
   const path = readString(record.path)
-  const projectId = cwd || null
+  const workspaceKind = readWorkspaceKind(record) ?? (cwd ? 'unknown' : undefined)
+  const projectId = workspaceKind === 'project' ? cwd || path || null : null
   const createdAtIso = readIsoFromTimestamp(record.createdAt ?? record.created_at ?? record.createdAtMs)
   return {
     id,
     title,
     projectId,
-    path: cwd || path || null,
+    path: workspaceKind === 'project' ? cwd || path || null : path || null,
+    ...(workspaceKind ? { workspaceKind } : {}),
+    effectiveCwd,
     ...(createdAtIso ? { createdAtIso } : {}),
     updatedAtIso: readIsoFromTimestamp(record.updatedAt ?? record.updated_at ?? record.updatedAtMs),
     inProgress: readBooleanInProgress(record.status) || readBooleanInProgress(record.threadRuntimeStatus),
@@ -1721,6 +1871,8 @@ export function normalizeOfficialThreadDetail(input: {
     title: 'Untitled',
     projectId: null,
     path: null,
+    workspaceKind: 'unknown',
+    effectiveCwd: null,
     updatedAtIso: null,
     inProgress: false,
     pinned: false,
@@ -1731,6 +1883,7 @@ export function normalizeOfficialThreadDetail(input: {
   return {
     thread,
     goal: readThreadGoal(threadRecord),
+    tokenUsage: readThreadTokenUsage(threadRecord),
     derivedFromThreadId: readDerivedFromThreadId(threadRecord),
     subAgents: normalizeThreadSubAgents(threadRecord, input.source ?? 'app-server'),
     sideConversations: [],

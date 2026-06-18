@@ -44,7 +44,9 @@ class FakeAppServer {
 
   async threadRead(params?: Record<string, unknown>): Promise<unknown> {
     const threadId =
-      typeof params?.threadId === "string" ? params.threadId : "side-web-created";
+      typeof params?.threadId === "string"
+        ? params.threadId
+        : "side-web-created";
     return {
       thread: {
         id: threadId,
@@ -111,7 +113,10 @@ type Harness = {
 const harnesses: Harness[] = [];
 
 async function createHarness(
-  input: { clientId?: string | null } = {},
+  input: {
+    clientId?: string | null;
+    parentConversationState?: Record<string, unknown>;
+  } = {},
 ): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "codex-web-side-create-"));
   const officialIpc = new OfficialIpcBridge("");
@@ -124,8 +129,9 @@ async function createHarness(
     hostId: "local",
     ownerClientId: "desktop-test",
     sourceClientId: "desktop-test",
-    conversationState: {
+    conversationState: input.parentConversationState ?? {
       id: "parent-thread",
+      workspaceKind: "project",
       cwd: "C:\\workspace\\codex_web",
       turns: [],
     },
@@ -203,13 +209,17 @@ describe("side conversation create route", () => {
       },
     });
     expect(
-      JSON.stringify((appServer.calls[1]?.params as Record<string, unknown>).items),
+      JSON.stringify(
+        (appServer.calls[1]?.params as Record<string, unknown>).items,
+      ),
     ).toContain("Side conversation boundary.");
     expect(officialIpc.isOwnedConversation("side-web-created")).toBe(true);
     expect(
       officialIpc.getThreadStreamState("side-web-created")?.conversationState,
     ).toMatchObject({
       id: "side-web-created",
+      workspaceKind: "project",
+      cwd: "C:\\workspace\\codex_web",
       sideConversation: true,
       ephemeral: true,
       parentThreadId: "parent-thread",
@@ -217,6 +227,48 @@ describe("side conversation create route", () => {
       sourceThreadId: "parent-thread",
       turns: [],
     });
+  });
+
+  it("does not pass a managed cwd when the parent is projectless", async () => {
+    const { context, officialIpc, appServer } = await createHarness({
+      parentConversationState: {
+        id: "parent-thread",
+        workspaceKind: "projectless",
+        cwd: "C:\\Users\\user\\.codex\\threads",
+        projectlessOutputDirectory:
+          "C:\\Users\\user\\.codex\\projectless-output",
+        turns: [],
+      },
+    });
+
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/api/domain/side-conversation-create",
+      payload: { threadId: "parent-thread" },
+    });
+
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
+    expect(appServer.calls[0]).toMatchObject({
+      method: "thread/fork",
+      params: {
+        threadId: "parent-thread",
+        path: null,
+        threadSource: "user",
+        excludeTurns: true,
+        ephemeral: true,
+      },
+    });
+    expect(appServer.calls[0]?.params).not.toHaveProperty("cwd");
+    const sideConversation =
+      officialIpc.getThreadStreamState("side-web-created")?.conversationState;
+    expect(sideConversation).toMatchObject({
+      id: "side-web-created",
+      workspaceKind: "projectless",
+      sideConversation: true,
+      parentThreadId: "parent-thread",
+    });
+    expect(sideConversation).not.toHaveProperty("cwd");
+    expect(sideConversation).not.toHaveProperty("path");
   });
 
   it("rejects side conversation creation before Web has an official IPC client id", async () => {

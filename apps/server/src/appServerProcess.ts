@@ -61,7 +61,7 @@ export type ThreadTurnsListParams = {
 };
 
 export type ThreadStartParams = {
-  cwd: string;
+  cwd?: string | null;
   runtimeWorkspaceRoots?: string[];
   threadSource?: string;
   permissions?: string;

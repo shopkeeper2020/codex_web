@@ -2,10 +2,7 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { logout } from "../api";
 import styles from "./App.module.css";
-import {
-  ChatMain,
-  type UserMessageEditRequest,
-} from "./components/ChatMain";
+import { ChatMain, type UserMessageEditRequest } from "./components/ChatMain";
 import { Composer, type SendOptions } from "./components/Composer";
 import { DebugPage } from "./components/DebugPage";
 import { LoginGate } from "./components/LoginGate";
@@ -20,6 +17,10 @@ import { Header } from "./components/ThreadHeader";
 import { useAuthGate } from "./hooks/useAuthGate";
 import { useRuntimeData } from "./hooks/useRuntimeData";
 import type { TextReference } from "./textReferences";
+import {
+  resolveFallbackDraftCwd,
+  resolveThreadProjectCwd,
+} from "./draftThreadCwd";
 import {
   ROUTE_CHANGE_EVENT,
   type AppRoute,
@@ -48,6 +49,8 @@ function projectDisplayName(path: string): string {
 
 export function App(): ReactElement {
   const authGate = useAuthGate();
+  const [draftThread, setDraftThread] = useState<DraftThread | null>(null);
+  const draftThreadCounterRef = useRef(1);
   const {
     health,
     config,
@@ -99,7 +102,9 @@ export function App(): ReactElement {
     sendSideConversationMessage,
     createSideConversationForSelectedThread,
     closeSideConversationForSelectedThread,
-  } = useRuntimeData(authGate.auth?.authenticated === true);
+  } = useRuntimeData(authGate.auth?.authenticated === true, {
+    runtimeOptionsCwd: draftThread ? draftThread.cwd : undefined,
+  });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -115,7 +120,6 @@ export function App(): ReactElement {
   const [pinnedSummaryOpen, setPinnedSummaryOpen] = useState(true);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [bottomTerminalOpen] = useState(false);
-  const [draftThread, setDraftThread] = useState<DraftThread | null>(null);
   const [mainTextReferencesByThreadId, setMainTextReferencesByThreadId] =
     useState<Record<string, TextReference[]>>({});
   const [mainComposerFocusRequestKey, setMainComposerFocusRequestKey] =
@@ -127,7 +131,6 @@ export function App(): ReactElement {
     "summary" | "sidebar" | null
   >(null);
   const pinnedSummaryBeforeRightSidebarRef = useRef<boolean | null>(null);
-  const draftThreadCounterRef = useRef(1);
   const leftSidebarWidth =
     layoutViewportWidth > MOBILE_LAYOUT_WIDTH && !desktopSidebarCollapsed
       ? DESKTOP_LEFT_SIDEBAR_WIDTH
@@ -273,12 +276,11 @@ export function App(): ReactElement {
       : null;
   const selectedProjectCwd =
     selectedProject?.path ?? selectedProject?.id ?? null;
-  const fallbackDraftCwd =
-    selectedProjectCwd ??
-    selectedThread?.projectId ??
-    selectedThread?.path ??
-    threadList.projects[0]?.path ??
-    null;
+  const fallbackDraftCwd = resolveFallbackDraftCwd({
+    selectedProjectCwd,
+    selectedThread,
+    defaultProjectCwd: threadList.projects[0]?.path ?? null,
+  });
   const openThreadDraft = useCallback(
     (cwd?: string | null) => {
       const nextCwd = cwd === undefined ? fallbackDraftCwd : cwd;
@@ -529,9 +531,7 @@ export function App(): ReactElement {
                 cwd={
                   draftThread
                     ? draftThread.cwd
-                    : (selectedThread?.projectId ??
-                      selectedThread?.path ??
-                      null)
+                    : resolveThreadProjectCwd(selectedThread)
                 }
                 projects={threadList.projects}
                 onSelectProject={draftThread ? selectDraftProject : undefined}
@@ -544,6 +544,9 @@ export function App(): ReactElement {
                         threadDetail?.thread.inProgress ||
                         selectedThread?.inProgress,
                       )
+                }
+                tokenUsage={
+                  draftThread ? null : (threadDetail?.tokenUsage ?? null)
                 }
                 runtimeOptions={runtimeOptions}
                 disabled={draftThread ? false : !selectedThreadId}

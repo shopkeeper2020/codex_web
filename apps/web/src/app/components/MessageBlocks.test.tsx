@@ -210,6 +210,70 @@ describe("MessageBlocks file references", () => {
     expect(html).not.toContain("C:/Users/user/AppData/Local/PixPin/Temp");
   });
 
+  it("hides files-mentioned scaffolding for canonical user messages with image attachments", () => {
+    const item: MessageItem = {
+      type: "userMessage",
+      id: "user-file-mentioned-image",
+      clientId: null,
+      content: [
+        {
+          type: "localImage",
+          path: "C:\\Users\\user\\AppData\\Local\\Temp\\rendered-attachment.png",
+          mimeType: "image/png",
+          alt: "attached screenshot",
+        },
+        {
+          type: "text",
+          text: [
+            "# Files mentioned by the user:",
+            "",
+            "## hidden-transcript-only.png:",
+            "C:/Users/user/AppData/Local/Temp/hidden-transcript-only.png",
+          ].join("\n"),
+        },
+        {
+          type: "text",
+          text: [
+            "## My request for Codex:",
+            "我希望給圖片預覽的時候，增加鼠標滾輪可以放大縮小拖動的功能",
+          ].join("\n"),
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(renderMessageItem(item, "completed")!);
+
+    expect(html).toContain('data-testid="user-message-bubble"');
+    expect(html).toContain("attached screenshot");
+    expect(html).toContain(
+      "我希望給圖片預覽的時候，增加鼠標滾輪可以放大縮小拖動的功能",
+    );
+    expect(html).not.toContain("# Files mentioned by the user:");
+    expect(html).not.toContain("## My request for Codex:");
+    expect(html).not.toContain("hidden-transcript-only.png");
+  });
+
+  it("renders context compaction progress and completion labels", () => {
+    const items: MessageItem[] = [
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+      },
+    ];
+
+    const activeHtml = renderToStaticMarkup(
+      <>{renderTurnItems(items, "active")}</>,
+    );
+    const completedHtml = renderToStaticMarkup(
+      <>{renderTurnItems(items, "completed")}</>,
+    );
+
+    expect(activeHtml).toContain("正在压缩上下文");
+    expect(activeHtml).not.toContain("上下文已自动压缩");
+    expect(completedHtml).toContain("上下文已压缩");
+    expect(completedHtml).not.toContain("正在压缩上下文");
+  });
+
   it("keeps Windows absolute markdown link targets for local file references", () => {
     const item: MessageItem = {
       type: "assistant",
@@ -332,6 +396,36 @@ describe("MessageBlocks file references", () => {
     expect(html).not.toContain("未知内容");
   });
 
+  it("renders canonical imageView items as one unlabeled gallery", () => {
+    const items: MessageItem[] = [
+      {
+        type: "imageView",
+        id: "image-view-a",
+        path: "C:\\Users\\user\\Desktop\\素材\\1960年代香港校服参考\\SH-SH_SH-1967-001.jpg",
+      },
+      {
+        type: "imageView",
+        id: "image-view-b",
+        path: "C:\\Users\\user\\Desktop\\素材\\1960年代香港校服参考\\SH-LT_LT-1960-001.jpg",
+      },
+      {
+        type: "imageView",
+        id: "image-view-c",
+        path: "C:\\Users\\user\\Desktop\\素材\\1960年代香港校服参考\\SH-SH_SH-1967-002.jpg",
+      },
+    ];
+
+    const html = renderToStaticMarkup(<>{renderTurnItems(items, "completed")}</>);
+
+    expect(html).toContain('data-testid="image-view-gallery"');
+    expect(html).toContain('data-count="3"');
+    expect(html).toContain("/api/files/content?path=");
+    expect(html).not.toContain("未知官方内容");
+    expect(html).not.toContain("unsupported-message-item");
+    expect(html).not.toContain("<span>SH-SH_SH-1967-001.jpg</span>");
+    expect(html).not.toContain("<figcaption>");
+  });
+
   it("does not infer active state for statusless canonical web search items", () => {
     const items: MessageItem[] = [
       {
@@ -417,6 +511,55 @@ describe("MessageBlocks file references", () => {
     expect(html).not.toContain("unsupported-message-item");
   });
 
+  it("labels completed collab agent wait calls without creation wording", () => {
+    const items: MessageItem[] = [
+      {
+        type: "collabAgentToolCall",
+        id: "wait-agents",
+        tool: "wait",
+        status: "completed",
+        senderThreadId: "thread-main",
+        receiverThreadIds: ["thread-a", "thread-b"],
+        prompt: null,
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {
+          "thread-a": { status: "completed" },
+          "thread-b": { status: "completed" },
+        },
+      },
+    ];
+
+    const html = renderToStaticMarkup(<>{renderTurnItems(items, "completed")}</>);
+
+    expect(html).toContain("已等待 2 个智能体");
+    expect(html).not.toContain("已创建 2 个智能体");
+  });
+
+  it("labels failed collab agent spawn calls without success wording", () => {
+    const items: MessageItem[] = [
+      {
+        type: "collabAgentToolCall",
+        id: "spawn-agents",
+        tool: "spawnAgent",
+        status: "failed",
+        senderThreadId: "thread-main",
+        receiverThreadIds: ["thread-a"],
+        prompt: null,
+        model: "gpt-5.5",
+        reasoningEffort: "xhigh",
+        agentsStates: {
+          "thread-a": { status: "notFound" },
+        },
+      },
+    ];
+
+    const html = renderToStaticMarkup(<>{renderTurnItems(items, "completed")}</>);
+
+    expect(html).toContain("创建失败 1 个智能体");
+    expect(html).not.toContain("已创建 1 个智能体");
+  });
+
   it("shows declined commands as rejected instead of successful", () => {
     const item: MessageItem = {
       type: "commandExecution",
@@ -476,7 +619,111 @@ describe("MessageBlocks file references", () => {
     expect(html).not.toContain("pnpm test");
   });
 
-  it("renders statusless reasoning as completed inside processed context", () => {
+  it("keeps active command and file edit status visible before a final answer", () => {
+    const items: MessageItem[] = [
+      {
+        type: "userMessage",
+        id: "user-active-process",
+        clientId: null,
+        content: [{ type: "text", text: "继续修。" }],
+      },
+      {
+        type: "commandExecution",
+        id: "command-active-process",
+        command: "pnpm test",
+        status: "running",
+        aggregatedOutput: "",
+        cwd: null,
+        processId: null,
+        source: null,
+        commandActions: [],
+        durationMs: null,
+        exitCode: null,
+      },
+      {
+        type: "fileChange",
+        id: "file-active-process",
+        path: "docs/daily_plan/2026-06-11_desktop_fidelity_issue_collection_plan.md",
+        diff: "diff --git a/docs/daily_plan/2026-06-11_desktop_fidelity_issue_collection_plan.md b/docs/daily_plan/2026-06-11_desktop_fidelity_issue_collection_plan.md\n+补充状态",
+        status: "editing",
+      },
+      {
+        type: "agentMessage",
+        id: "final-active-process",
+        text: "我先同步一下进度。",
+        phase: "final_answer",
+        memoryCitation: null,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<>{renderTurnItems(items, "active")}</>);
+
+    expect(html).toContain("正在运行");
+    expect(html).toContain("pnpm test");
+    expect(html).toContain("正在编辑");
+    expect(html).toContain(
+      "2026-06-11_desktop_fidelity_issue_collection_plan.md",
+    );
+    expect(html).toContain("我先同步一下进度。");
+    expect(html).not.toContain("已处理");
+  });
+
+  it("keeps completed operation groups collapsed while the turn continues", () => {
+    const items: MessageItem[] = [
+      {
+        type: "agentMessage",
+        id: "before-completed-commands",
+        text: "先跑测试。",
+        phase: "final_answer",
+        memoryCitation: null,
+      },
+      {
+        type: "commandExecution",
+        id: "completed-command-1",
+        command: "pnpm test",
+        status: "completed",
+        aggregatedOutput: "",
+        cwd: null,
+        processId: null,
+        source: null,
+        commandActions: [],
+        durationMs: 1000,
+        exitCode: 0,
+      },
+      {
+        type: "commandExecution",
+        id: "completed-command-2",
+        command: "pnpm typecheck",
+        status: "completed",
+        aggregatedOutput: "",
+        cwd: null,
+        processId: null,
+        source: null,
+        commandActions: [],
+        durationMs: 1200,
+        exitCode: 0,
+      },
+      {
+        type: "agentMessage",
+        id: "after-completed-commands",
+        text: "继续检查。",
+        phase: "final_answer",
+        memoryCitation: null,
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <>{renderTurnItems(items, "active", { disableProcessCollapse: true })}</>,
+    );
+
+    expect(html).toContain("已运行");
+    expect(html).toContain("2 条命令");
+    expect(html).not.toContain("pnpm test");
+    expect(html).not.toContain("pnpm typecheck");
+    expect(html).toContain("继续检查。");
+  });
+
+  it("hides statusless reasoning inside processed context", () => {
     const items: MessageItem[] = [
       {
         type: "reasoning",
@@ -490,7 +737,7 @@ describe("MessageBlocks file references", () => {
       <>{renderTurnItems(items, "active", { disableProcessCollapse: true, processedContext: true })}</>,
     );
 
-    expect(html).toContain("已思考");
+    expect(html).not.toContain("已思考");
     expect(html).not.toContain("正在思考");
   });
 

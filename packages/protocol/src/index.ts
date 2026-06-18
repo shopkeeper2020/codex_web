@@ -112,6 +112,7 @@ export const IMPORTANT_APP_SERVER_NOTIFICATION_METHODS = Object.freeze([
   "thread/realtime/error",
   "thread/realtime/closed",
   "thread/status/changed",
+  "thread/compacted",
   "remoteControl/status/changed",
   "guardianWarning",
 ]);
@@ -126,7 +127,6 @@ export const IGNORED_APP_SERVER_NOTIFICATION_METHODS = Object.freeze([
   "rawResponseItem/completed",
   "command/exec/outputDelta",
   "mcpServer/startupStatus/updated",
-  "thread/compacted",
   "windows/worldWritableWarning",
   "authStatusChange",
   "loginChatGptComplete",
@@ -347,26 +347,6 @@ function stableJsonSignature(value: unknown): string | null {
   }
 }
 
-function compactProtocolType(value: unknown): string {
-  return readString(value)
-    .toLowerCase()
-    .replace(/[\s_-]+/g, "");
-}
-
-function isContextCompactionItem(value: unknown): boolean {
-  const record = asRecord(value);
-  if (!record) return false;
-  const rawRecord = asRecord(record.raw);
-  return [
-    record.type,
-    record.rawType,
-    record.raw_type,
-    rawRecord?.type,
-    rawRecord?.rawType,
-    rawRecord?.raw_type,
-  ].some((entry) => compactProtocolType(entry) === "contextcompaction");
-}
-
 const OMIT_BROADCAST_VALUE = Symbol("omit-broadcast-value");
 
 function sanitizeOfficialMarkdownText(value: string): string {
@@ -379,8 +359,6 @@ function sanitizeOfficialMarkdownText(value: string): string {
 function sanitizeOfficialBroadcastValue(
   value: unknown,
 ): unknown | typeof OMIT_BROADCAST_VALUE {
-  if (isContextCompactionItem(value)) return OMIT_BROADCAST_VALUE;
-
   if (Array.isArray(value)) {
     let changed = false;
     const next: unknown[] = [];
@@ -459,7 +437,9 @@ function normalizeDesktopObject(value: unknown): Record<string, unknown> {
   return isPlainObject(value) ? value : {};
 }
 
-function normalizeTurnItemsView(value: unknown): "notLoaded" | "summary" | "full" {
+function normalizeTurnItemsView(
+  value: unknown,
+): "notLoaded" | "summary" | "full" {
   return value === "notLoaded" || value === "summary" || value === "full"
     ? value
     : "full";
@@ -615,10 +595,7 @@ function normalizeOfficialRestoreMessage(
   }
 
   const workspaceRoots = rawContext?.workspaceRoots;
-  if (
-    cwd &&
-    (!Array.isArray(workspaceRoots) || workspaceRoots.length === 0)
-  ) {
+  if (cwd && (!Array.isArray(workspaceRoots) || workspaceRoots.length === 0)) {
     messageContext.workspaceRoots = [cwd];
     contextChanged = true;
   }
@@ -642,7 +619,9 @@ function normalizeOfficialBroadcastThreadItem(
   if (!readString(next.id)) {
     const suffix =
       context.index === undefined ? "" : `-${String(context.index)}`;
-    next.id = context.turnId ? `${context.turnId}-${type}${suffix}` : `${type}${suffix}`;
+    next.id = context.turnId
+      ? `${context.turnId}-${type}${suffix}`
+      : `${type}${suffix}`;
     changed = true;
   }
 
@@ -665,9 +644,7 @@ function normalizeOfficialBroadcastThreadItem(
           : typeof record.text === "string"
             ? record.text
             : "";
-      next.content = text
-        ? [{ type: "text", text, text_elements: [] }]
-        : [];
+      next.content = text ? [{ type: "text", text, text_elements: [] }] : [];
       changed = true;
     }
   } else if (type === "agentMessage") {
@@ -790,28 +767,28 @@ function looksLikeAppServerThread(record: Record<string, unknown>): boolean {
   const id = readString(record.id) || readString(record.sessionId);
   return Boolean(
     id &&
-      Array.isArray(record.turns) &&
-      (record.status !== undefined ||
-        record.threadRuntimeStatus !== undefined ||
-        record.rolloutPath !== undefined ||
-        record.resumeState !== undefined) &&
-      (record.sessionId !== undefined ||
-        record.createdAt !== undefined ||
-        record.updatedAt !== undefined ||
-        record.cwd !== undefined ||
-        record.rolloutPath !== undefined),
+    Array.isArray(record.turns) &&
+    (record.status !== undefined ||
+      record.threadRuntimeStatus !== undefined ||
+      record.rolloutPath !== undefined ||
+      record.resumeState !== undefined) &&
+    (record.sessionId !== undefined ||
+      record.createdAt !== undefined ||
+      record.updatedAt !== undefined ||
+      record.cwd !== undefined ||
+      record.rolloutPath !== undefined),
   );
 }
 
 function looksLikeAppServerTurn(record: Record<string, unknown>): boolean {
   return Boolean(
     (readString(record.id) || readString(record.turnId)) &&
-      (record.startedAt !== undefined ||
-        record.completedAt !== undefined ||
-        record.turnStartedAtMs !== undefined ||
-        record.itemsView !== undefined ||
-        record.status !== undefined ||
-        Array.isArray(record.items)),
+    (record.startedAt !== undefined ||
+      record.completedAt !== undefined ||
+      record.turnStartedAtMs !== undefined ||
+      record.itemsView !== undefined ||
+      record.status !== undefined ||
+      Array.isArray(record.items)),
   );
 }
 
@@ -843,7 +820,9 @@ function normalizeOfficialBroadcastTurn(
     }
   }
   if (next.turnCompletedAtMs === undefined) {
-    const completedAtMs = timestampMs(record.completedAt ?? record.completed_at);
+    const completedAtMs = timestampMs(
+      record.completedAt ?? record.completed_at,
+    );
     if (completedAtMs !== null) {
       next.turnCompletedAtMs = completedAtMs;
       changed = true;
@@ -859,10 +838,7 @@ function normalizeOfficialBroadcastTurn(
     next.diff = [];
     changed = true;
   }
-  if (
-    isAppServerTurn &&
-    !isPlainObject(next.commandExecutionStartedAtMsById)
-  ) {
+  if (isAppServerTurn && !isPlainObject(next.commandExecutionStartedAtMsById)) {
     next.commandExecutionStartedAtMsById = {};
     changed = true;
   }
@@ -874,7 +850,10 @@ function normalizeOfficialBroadcastTurn(
     next.items = [];
     changed = true;
   }
-  if (isAppServerTurn && next.itemsView !== normalizeTurnItemsView(next.itemsView)) {
+  if (
+    isAppServerTurn &&
+    next.itemsView !== normalizeTurnItemsView(next.itemsView)
+  ) {
     next.itemsView = normalizeTurnItemsView(next.itemsView);
     changed = true;
   }
@@ -915,7 +894,10 @@ function normalizeOfficialBroadcastTurn(
       { cwd: paramsCwd },
     );
     if (restoreMessage !== paramsRecord.restoreMessage) {
-      normalizedParams = { ...(normalizedParams ?? paramsRecord), restoreMessage };
+      normalizedParams = {
+        ...(normalizedParams ?? paramsRecord),
+        restoreMessage,
+      };
     }
     if (normalizedParams) {
       next.params = normalizedParams;
@@ -1061,13 +1043,23 @@ function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
       next.modelProvider = "openai";
       changed = true;
     }
-    const createdAtSeconds = timestampSeconds(record.createdAt ?? record.created_at);
-    if (typeof next.createdAt !== "number" || !Number.isFinite(next.createdAt)) {
+    const createdAtSeconds = timestampSeconds(
+      record.createdAt ?? record.created_at,
+    );
+    if (
+      typeof next.createdAt !== "number" ||
+      !Number.isFinite(next.createdAt)
+    ) {
       next.createdAt = createdAtSeconds ?? Math.floor(Date.now() / 1000);
       changed = true;
     }
-    const updatedAtSeconds = timestampSeconds(record.updatedAt ?? record.updated_at);
-    if (typeof next.updatedAt !== "number" || !Number.isFinite(next.updatedAt)) {
+    const updatedAtSeconds = timestampSeconds(
+      record.updatedAt ?? record.updated_at,
+    );
+    if (
+      typeof next.updatedAt !== "number" ||
+      !Number.isFinite(next.updatedAt)
+    ) {
       next.updatedAt = updatedAtSeconds ?? next.createdAt;
       changed = true;
     }
@@ -1150,7 +1142,9 @@ function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
       changed = true;
     }
     const latestCollaborationMode =
-      normalizeOfficialBroadcastCollaborationMode(next.latestCollaborationMode) ??
+      normalizeOfficialBroadcastCollaborationMode(
+        next.latestCollaborationMode,
+      ) ??
       normalizeOfficialBroadcastCollaborationMode(
         latestTurnParams?.collaborationMode,
       );
@@ -1179,7 +1173,7 @@ function normalizeOfficialBroadcastConversationState(value: unknown): unknown {
       changed = true;
     }
     if (next.workspaceKind === undefined) {
-      next.workspaceKind = readString(next.cwd) ? "project" : null;
+      next.workspaceKind = readString(next.cwd) ? "unknown" : null;
       changed = true;
     }
     if (next.workspaceBrowserRoot === undefined) {
@@ -1808,7 +1802,9 @@ export class OfficialIpcBridge {
         conversationId: threadId,
         turnId: params.turnId,
         message: params.message,
-        ...(params.agentMode !== undefined ? { agentMode: params.agentMode } : {}),
+        ...(params.agentMode !== undefined
+          ? { agentMode: params.agentMode }
+          : {}),
         ...(params.serviceTier !== undefined
           ? { serviceTier: params.serviceTier }
           : {}),
@@ -1985,10 +1981,7 @@ export class OfficialIpcBridge {
       });
       const snapshotSignature = stableJsonSignature(conversationState);
       if (snapshotSignature) {
-        this.broadcastSnapshotSignatures.set(
-          conversationId,
-          snapshotSignature,
-        );
+        this.broadcastSnapshotSignatures.set(conversationId, snapshotSignature);
       } else {
         this.broadcastSnapshotSignatures.delete(conversationId);
       }
@@ -2708,11 +2701,7 @@ export class OfficialIpcBridge {
         : typeof frame.version === "number"
           ? frame.version
           : undefined;
-    const canHandle = await this.canHandleRequest(
-      method,
-      params,
-      version,
-    );
+    const canHandle = await this.canHandleRequest(method, params, version);
     this.sendFrame({
       type: "client-discovery-response",
       requestId,

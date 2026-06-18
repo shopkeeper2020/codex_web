@@ -14,6 +14,7 @@ import type {
   ThreadList,
   ThreadSideConversation,
   ThreadSubAgent,
+  ThreadTokenUsage,
   Turn,
 } from "@codex-web/domain";
 
@@ -48,6 +49,7 @@ export const turnStartRequestSchema = z
     skills: z.array(skillInputSchema).optional(),
     collaborationMode: z.record(z.string(), z.unknown()).optional(),
     permissionMode: permissionModeSchema.optional(),
+    permissionProfile: nonEmptyString.optional(),
   })
   .strict()
   .transform((value, context) => {
@@ -145,6 +147,7 @@ export const turnEditLastUserRequestSchema = z
     skills: z.array(skillInputSchema).optional(),
     collaborationMode: z.record(z.string(), z.unknown()).optional(),
     permissionMode: permissionModeSchema.optional(),
+    permissionProfile: nonEmptyString.optional(),
   })
   .strict()
   .transform((value, context) => {
@@ -240,6 +243,8 @@ export const threadSchema: z.ZodType<Thread> = z.object({
   title: z.string(),
   projectId: z.string().nullable(),
   path: z.string().nullable(),
+  workspaceKind: z.enum(["project", "projectless", "unknown"]).optional(),
+  effectiveCwd: z.string().nullable().optional(),
   createdAtIso: z.string().nullable().optional(),
   updatedAtIso: z.string().nullable(),
   inProgress: z.boolean(),
@@ -619,7 +624,24 @@ export const threadSubAgentSchema: z.ZodType<ThreadSubAgent> = z.object({
   name: z.string(),
   role: z.string().nullable(),
   status: z.string().nullable(),
+  model: z.string().nullable().optional(),
+  reasoningEffort: z.string().nullable().optional(),
+  parentThreadId: z.string().nullable().optional(),
   source: z.enum(["official-ipc", "app-server"]),
+});
+
+const tokenUsageBreakdownSchema = z.object({
+  totalTokens: z.number().int().nonnegative(),
+  inputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  reasoningOutputTokens: z.number().int().nonnegative(),
+});
+
+export const threadTokenUsageSchema: z.ZodType<ThreadTokenUsage> = z.object({
+  total: tokenUsageBreakdownSchema,
+  last: tokenUsageBreakdownSchema,
+  modelContextWindow: z.number().nullable(),
 });
 
 export const threadSideConversationSchema: z.ZodType<ThreadSideConversation> =
@@ -649,6 +671,7 @@ export const threadDetailSchema = z
   .object({
     thread: threadSchema,
     goal: threadGoalSchema.nullable().optional(),
+    tokenUsage: threadTokenUsageSchema.nullable().optional(),
     derivedFromThreadId: z.string().nullable().optional(),
     turns: z.array(turnSchema),
     subAgents: z.array(threadSubAgentSchema).optional(),
@@ -657,6 +680,7 @@ export const threadDetailSchema = z
   .transform((value) => ({
     ...value,
     goal: value.goal ?? null,
+    tokenUsage: value.tokenUsage ?? null,
     derivedFromThreadId: value.derivedFromThreadId ?? null,
     subAgents: value.subAgents ?? [],
     sideConversations: value.sideConversations ?? [],
@@ -1065,17 +1089,27 @@ export const runtimeCollaborationModeOptionSchema = z.object({
   developerInstructions: z.string().nullable(),
 });
 
+export const runtimePermissionProfileOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().nullable(),
+  isBuiltin: z.boolean(),
+});
+
 export const runtimeOptionsSchema = z.object({
   models: z.array(runtimeModelOptionSchema),
   collaborationModes: z.array(runtimeCollaborationModeOptionSchema),
+  permissionProfiles: z.array(runtimePermissionProfileOptionSchema),
   defaults: z.object({
     model: z.string(),
     reasoningEffort: z.string(),
     collaborationModeName: z.string(),
+    permissionProfile: z.string().nullable(),
   }),
   source: z.object({
     models: z.enum(["app-server", "fallback"]),
     collaborationModes: z.enum(["app-server", "fallback"]),
+    permissionProfiles: z.enum(["app-server", "fallback"]),
   }),
   warnings: z.array(z.string()),
 });

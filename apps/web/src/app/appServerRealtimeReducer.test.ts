@@ -70,9 +70,46 @@ describe("app-server realtime reducer", () => {
     ]);
   });
 
+  it("keeps Desktop editing-like statuses active in realtime state", () => {
+    const started = applyAppServerRealtimeNotification(
+      createDetail(),
+      "turn/started",
+      {
+        threadId: "thread-a",
+        turn: { id: "turn-editing", status: { type: "editing" } },
+      },
+    );
+    const statusChanged = applyAppServerRealtimeNotification(
+      started,
+      "thread/status/changed",
+      {
+        threadId: "thread-a",
+        status: { type: "editing" },
+      },
+    );
+
+    expect(started?.thread.inProgress).toBe(true);
+    expect(
+      started?.turns.find((turn) => turn.id === "turn-editing"),
+    ).toMatchObject({
+      status: "active",
+    });
+    expect(statusChanged?.thread.inProgress).toBe(true);
+    expect(
+      statusChanged?.turns.find((turn) => turn.id === "turn-editing"),
+    ).toMatchObject({
+      status: "active",
+    });
+  });
+
   it("preserves markdown whitespace while streaming assistant deltas", () => {
     let detail: ThreadDetail | null = createDetail();
-    for (const delta of ["清单：", "\n\n", "- **stream-bold**\n", "- `inline-code`\n"]) {
+    for (const delta of [
+      "清单：",
+      "\n\n",
+      "- **stream-bold**\n",
+      "- `inline-code`\n",
+    ]) {
       detail = applyAppServerRealtimeNotification(
         detail,
         "item/agentMessage/delta",
@@ -251,21 +288,17 @@ describe("app-server realtime reducer", () => {
         },
       },
     );
-    const second = applyAppServerRealtimeNotification(
-      first,
-      "item/completed",
-      {
-        threadId: "thread-a",
-        turnId: "turn-a",
-        item: {
-          type: "webSearch",
-          id: "search-a",
-          query: "南京天气",
-          results: [{ text: "未来一周有雨" }],
-          status: "completed",
-        },
+    const second = applyAppServerRealtimeNotification(first, "item/completed", {
+      threadId: "thread-a",
+      turnId: "turn-a",
+      item: {
+        type: "webSearch",
+        id: "search-a",
+        query: "南京天气",
+        results: [{ text: "未来一周有雨" }],
+        status: "completed",
       },
-    );
+    });
 
     expect(second?.turns[0]?.items).toMatchObject([
       {
@@ -406,20 +439,89 @@ describe("app-server realtime reducer", () => {
     ]);
   });
 
+  it("keeps a context compaction item active until thread compaction completes", () => {
+    const started = applyAppServerRealtimeNotification(
+      {
+        ...createDetail(),
+        thread: { ...createDetail().thread, inProgress: true },
+        turns: [],
+      },
+      "item/started",
+      {
+        threadId: "thread-a",
+        turnId: "turn-compact",
+        item: {
+          type: "contextCompaction",
+          id: "compact-1",
+        },
+      },
+    );
+    const completed = applyAppServerRealtimeNotification(
+      started,
+      "item/completed",
+      {
+        threadId: "thread-a",
+        turnId: "turn-compact",
+        item: {
+          type: "contextCompaction",
+          id: "compact-1",
+        },
+      },
+    );
+
+    expect(started?.thread.inProgress).toBe(true);
+    expect(started?.turns.at(-1)).toMatchObject({
+      id: "turn-compact",
+      status: "active",
+      items: [{ type: "contextCompaction", id: "compact-1" }],
+    });
+    expect(completed?.thread.inProgress).toBe(true);
+    expect(completed?.turns.at(-1)).toMatchObject({
+      id: "turn-compact",
+      status: "active",
+      items: [{ type: "contextCompaction", id: "compact-1" }],
+    });
+  });
+
+  it("settles the active turn when thread compaction completes", () => {
+    const detail = applyAppServerRealtimeNotification(
+      {
+        ...createDetail(),
+        thread: { ...createDetail().thread, inProgress: true },
+        turns: [{ id: "turn-compact", status: "active", items: [] }],
+      },
+      "thread/compacted",
+      {
+        threadId: "thread-a",
+        turnId: "turn-compact",
+      },
+    );
+
+    expect(detail?.thread.inProgress).toBe(false);
+    expect(detail?.turns).toEqual([
+      {
+        id: "turn-compact",
+        status: "completed",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "context-compaction-turn-compact",
+          },
+        ],
+      },
+    ]);
+  });
+
   it("ignores notifications for other threads", () => {
     const detail = createDetail("thread-a");
 
     expect(
-      applyAppServerRealtimeNotification(
-        detail,
-        "item/agentMessage/delta",
-        {
-          threadId: "thread-b",
-          turnId: "turn-a",
-          itemId: "assistant-a",
-          delta: "ignored",
-        },
-      ),
+      applyAppServerRealtimeNotification(detail, "item/agentMessage/delta", {
+        threadId: "thread-b",
+        turnId: "turn-a",
+        itemId: "assistant-a",
+        delta: "ignored",
+      }),
     ).toBeNull();
   });
 });

@@ -11,7 +11,7 @@ import {
   TerminalSquare,
 } from 'lucide-react'
 import type { ReactElement } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   fileContentUrl,
   getFilePreview,
@@ -66,6 +66,7 @@ import {
   MarkdownText,
   MessageAuthor,
   MessageImages,
+  type MessageImage,
   compactStatus,
   displayPath,
   filePreviewRequest,
@@ -83,6 +84,7 @@ type FileChangeItem = Extract<MessageItem, { type: 'fileChange' }>
 type FileChangeEntry = ReturnType<typeof readFileChangeEntries>[number]
 type AgentTaskItem = Extract<MessageItem, { type: 'agentTask' }>
 type AgentTaskEntry = AgentTaskItem['agents'][number]
+type CollabAgentToolCallItem = Extract<MessageItem, { type: 'collabAgentToolCall' }>
 type ReasoningItem = Extract<MessageItem, { type: 'reasoning' }>
 type ToolOutputItem = ToolOutputBlockItem
 type UnknownItem = UnknownOfficialBlockItem
@@ -90,6 +92,7 @@ type UserMessageItem = UserMessageBlockItem
 type PlanMessageItem = Extract<MessageItem, { type: 'plan' }>
 type ApprovalItem = Extract<MessageItem, { type: 'approval' }>
 type ImageItem = Extract<MessageItem, { type: 'image' }>
+type ImageViewItem = Extract<MessageItem, { type: 'imageView' }>
 type ErrorItem = Extract<MessageItem, { type: 'error' }>
 type GroupedOperationItem = CommandItem | FileChangeItem | ToolOutputItem
 type RenderOptions = {
@@ -133,12 +136,20 @@ function isAgentTaskMessageItem(item: MessageItem): item is AgentTaskItem {
   return messageItemType(item) === 'agentTask'
 }
 
+function isCollabAgentToolCallItem(item: MessageItem): item is CollabAgentToolCallItem {
+  return messageItemType(item) === 'collabAgentToolCall'
+}
+
 function isApprovalMessageItem(item: MessageItem): item is ApprovalItem {
   return messageItemType(item) === 'approval'
 }
 
 function isImageMessageItem(item: MessageItem): item is ImageItem {
   return messageItemType(item) === 'image'
+}
+
+function isImageViewMessageItem(item: MessageItem): item is ImageViewItem {
+  return messageItemType(item) === 'imageView'
 }
 
 function isErrorMessageItem(item: MessageItem): item is ErrorItem {
@@ -582,7 +593,7 @@ function ReasoningMessage({
     <article className={styles.assistantMessage} key={item.id}>
       <CollapsedMessageToggle
         icon={<Brain size={16} />}
-        label={active ? '正在思考' : '已思考'}
+        label={active ? '正在思考' : '思考'}
         meta={expanded ? (forceComplete ? 'completed' : turnStatus) : undefined}
         expanded={expanded}
         active={active}
@@ -629,6 +640,18 @@ function isActiveAgentStatus(value?: string | null): boolean {
   ].includes(normalized)
 }
 
+function isFailedAgentStatus(value?: string | null): boolean {
+  return ['failed', 'error', 'errored', 'notfound'].includes(compactStatus(value))
+}
+
+function isClosedAgentStatus(value?: string | null): boolean {
+  return ['shutdown', 'closed'].includes(compactStatus(value))
+}
+
+function isCompletedAgentStatus(value?: string | null): boolean {
+  return ['completed', 'complete', 'done'].includes(compactStatus(value))
+}
+
 function isAgentTaskActive(item: AgentTaskItem, turnStatus: string): boolean {
   if (!isActiveMessageStatus(turnStatus)) return false
   if (isActiveAgentStatus(item.status)) return true
@@ -636,18 +659,22 @@ function isAgentTaskActive(item: AgentTaskItem, turnStatus: string): boolean {
 }
 
 function agentTaskSummary(item: AgentTaskItem, turnStatus: string): { label: string; active: boolean } {
-  const count = Math.max(1, agentTaskEntries(item).length)
+  const entries = agentTaskEntries(item)
+  const count = Math.max(1, entries.length)
   const active = isAgentTaskActive(item, turnStatus)
+  const failed = !active && (isFailedAgentStatus(item.status) || entries.some((agent) => isFailedAgentStatus(agent.status)))
   return {
-    label: `${active ? '正在生成' : '已生成'} ${count} 个智能体`,
+    label: `${active ? '正在创建' : failed ? '生成失败' : '已创建'} ${count} 个智能体`,
     active,
   }
 }
 
 function agentTaskStatusLabel(status: string | null, active: boolean): string {
-  if (active) return '正在生成'
-  if (status && ['failed', 'error'].includes(compactStatus(status))) return '生成失败'
-  return '已生成'
+  if (active) return '正在创建'
+  if (isFailedAgentStatus(status)) return '生成失败'
+  if (isClosedAgentStatus(status)) return '已关闭'
+  if (isCompletedAgentStatus(status)) return '已完成'
+  return '已创建'
 }
 
 function splitAgentPrompt(prompt: string): { input: string; task: string } {
@@ -765,6 +792,138 @@ function AgentTaskMessage({
   )
 }
 
+function shortAgentId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id
+}
+
+function readReceiverNameById(item: CollabAgentToolCallItem, id: string): string {
+  const record = asThreadItemRecord(item)
+  const receivers = Array.isArray(record?.receiverThreads) ? record.receiverThreads : []
+  for (const receiver of receivers) {
+    const receiverRecord = asThreadItemRecord(receiver)
+    const thread = asThreadItemRecord(receiverRecord?.thread)
+    const receiverId =
+      readThreadItemString(receiverRecord?.threadId) ||
+      readThreadItemString(receiverRecord?.id) ||
+      readThreadItemString(thread?.id) ||
+      readThreadItemString(thread?.threadId)
+    if (receiverId !== id) continue
+    return (
+      readThreadItemString(receiverRecord?.name) ||
+      readThreadItemString(receiverRecord?.nickname) ||
+      readThreadItemString(receiverRecord?.agentNickname) ||
+      readThreadItemString(thread?.title) ||
+      readThreadItemString(thread?.agentNickname)
+    )
+  }
+  return ''
+}
+
+function collabAgentEntries(item: CollabAgentToolCallItem): AgentTaskEntry[] {
+  const states = asThreadItemRecord(item.agentsStates) ?? {}
+  const ids = new Set<string>()
+  item.receiverThreadIds.forEach((id) => {
+    if (id) ids.add(id)
+  })
+  Object.keys(states).forEach((id) => {
+    if (id) ids.add(id)
+  })
+  if (ids.size === 0) ids.add(`${item.id}-agent`)
+  return [...ids].map((id) => {
+    const state = asThreadItemRecord(states[id])
+    const status =
+      item.tool === 'closeAgent'
+        ? 'shutdown'
+        : readThreadItemString(state?.status) || item.status || null
+    return {
+      id,
+      name: readReceiverNameById(item, id) || `Agent ${shortAgentId(id)}`,
+      status,
+      prompt: item.prompt ?? '',
+      model: item.model,
+      reasoningEffort: item.reasoningEffort,
+    }
+  })
+}
+
+function collabAgentSummary(item: CollabAgentToolCallItem, turnStatus: string): { label: string; active: boolean } {
+  const entries = collabAgentEntries(item)
+  const active =
+    item.tool !== 'closeAgent' &&
+    isActiveMessageStatus(turnStatus) &&
+    (isActiveAgentStatus(item.status) || entries.some((entry) => isActiveAgentStatus(entry.status)))
+  const failed = !active && (isFailedAgentStatus(item.status) || entries.some((entry) => isFailedAgentStatus(entry.status)))
+  const action =
+    item.tool === 'closeAgent'
+      ? { active: '正在关闭', completed: '已关闭', failed: '关闭失败' }
+      : item.tool === 'wait'
+        ? { active: '正在等待', completed: '已等待', failed: '等待失败' }
+        : { active: '正在创建', completed: '已创建', failed: '创建失败' }
+  return {
+    label: `${active ? action.active : failed ? action.failed : action.completed} ${Math.max(1, entries.length)} 个智能体`,
+    active,
+  }
+}
+
+function CollabAgentToolCallMessage({
+  item,
+  turnStatus,
+  projectRoot,
+  onOpenFileReference,
+}: {
+  item: CollabAgentToolCallItem
+  turnStatus: string
+  projectRoot?: string | null
+  onOpenFileReference?: (path: string) => void
+}): ReactElement {
+  const summary = collabAgentSummary(item, turnStatus)
+  const [expanded, setExpanded] = useState(true)
+  const entries = collabAgentEntries(item)
+  const promptSections = splitAgentPrompt(item.prompt ?? '')
+  return (
+    <article className={styles.assistantMessage} key={item.id}>
+      <CollapsedMessageToggle
+        icon={<Bot size={16} />}
+        label={summary.label}
+        expanded={expanded}
+        active={summary.active}
+        onToggle={() => setExpanded((value) => !value)}
+      />
+      {expanded ? (
+        <div className={styles.agentTaskBody}>
+          {entries.map((agent, index) => {
+            const active = item.tool !== 'closeAgent' && isActiveAgentStatus(agent.status) && isActiveMessageStatus(turnStatus)
+            return (
+              <section className={styles.agentTaskEntry} key={agent.id || `${item.id}-agent-${index}`}>
+                <div className={styles.agentTaskStatus}>
+                  <span>{agentTaskStatusLabel(agent.status ?? item.status, active)}</span>
+                  <span>{agent.name}</span>
+                  {agent.model ? <span>{agent.model}</span> : null}
+                </div>
+                <AgentTaskSection
+                  label="输入："
+                  text={promptSections.input}
+                  projectRoot={projectRoot}
+                  onOpenFileReference={onOpenFileReference}
+                />
+                <AgentTaskSection
+                  label="任务："
+                  text={promptSections.task}
+                  projectRoot={projectRoot}
+                  onOpenFileReference={onOpenFileReference}
+                />
+                {!promptSections.input && !promptSections.task && !item.prompt ? (
+                  <span className={styles.agentTaskEmpty}>暂无智能体输入</span>
+                ) : null}
+              </section>
+            )
+          })}
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
 function isGroupedOperationItem(item: MessageItem): item is GroupedOperationItem {
   const type = messageItemType(item)
   return type === 'command' || type === 'commandExecution' || type === 'fileChange' || type === 'toolOutput'
@@ -866,6 +1025,23 @@ function OperationRow({
   )
 }
 
+function useAutoExpandedWhileActive(active: boolean): [boolean, () => void] {
+  const [expanded, setExpanded] = useState(active)
+  const previousActiveRef = useRef(active)
+  useEffect(() => {
+    const wasActive = previousActiveRef.current
+    previousActiveRef.current = active
+    if (active) {
+      setExpanded(true)
+      return
+    }
+    if (wasActive) {
+      setExpanded(false)
+    }
+  }, [active])
+  return [expanded, () => setExpanded((value) => !value)]
+}
+
 function GroupedOperationMessage({
   items,
   turnStatus,
@@ -879,8 +1055,8 @@ function GroupedOperationMessage({
   onOpenFileReference?: (path: string) => void
   forceComplete: boolean
 }): ReactElement {
-  const [expanded, setExpanded] = useState(false)
   const summary = groupedOperationSummary(items, turnStatus, forceComplete)
+  const [expanded, toggleExpanded] = useAutoExpandedWhileActive(summary.active)
   return (
     <article className={styles.assistantMessage} key={`operation-group-${items.map((item) => item.id).join('-')}`}>
       <CollapsedMessageToggle
@@ -889,7 +1065,7 @@ function GroupedOperationMessage({
         meta={summary.meta}
         expanded={expanded}
         active={summary.active}
-        onToggle={() => setExpanded((value) => !value)}
+        onToggle={toggleExpanded}
       />
       {expanded ? (
         <div className={styles.groupedMessageBody}>
@@ -922,8 +1098,8 @@ function FileChangeSummaryMessage({
   onOpenFileReference?: (path: string) => void
   forceComplete: boolean
 }): ReactElement {
-  const [expanded, setExpanded] = useState(false)
   const summary = fileChangeSummary(items, turnStatus, forceComplete)
+  const [expanded, toggleExpanded] = useAutoExpandedWhileActive(summary.active)
   return (
     <article className={styles.assistantMessage} key={`file-change-group-${items.map((item) => item.id).join('-')}`}>
       <CollapsedMessageToggle
@@ -932,7 +1108,7 @@ function FileChangeSummaryMessage({
         meta={summary.meta}
         expanded={expanded}
         active={summary.active}
-        onToggle={() => setExpanded((value) => !value)}
+        onToggle={toggleExpanded}
       />
       {expanded ? (
         <FileChangeSummaryCard
@@ -984,6 +1160,35 @@ function ErrorMessage({ item }: { item: Extract<MessageItem, { type: 'error' }>;
   )
 }
 
+function imageViewToMessageImage(item: ImageViewItem): MessageImage {
+  return {
+    url: null,
+    path: item.path,
+    mimeType: null,
+    alt: null,
+  }
+}
+
+function ImageViewGalleryMessage({
+  items,
+  projectRoot,
+}: {
+  items: ImageViewItem[]
+  projectRoot?: string | null
+}): ReactElement | null {
+  const images = items.map(imageViewToMessageImage).filter((image) => image.path || image.url)
+  if (!images.length) return null
+  return (
+    <article
+      className={`${styles.assistantMessage} ${styles.imageViewMessage}`}
+      data-testid="image-view-gallery"
+      key={`image-view-gallery-${items.map((item) => item.id).join('-')}`}
+    >
+      <MessageImages images={images} projectRoot={projectRoot} showLabels={false} />
+    </article>
+  )
+}
+
 function isChatFlowSilentItem(item: MessageItem): boolean {
   return isPlanMessageItem(item) || (isUnknownMessageItem(item) && isSilentUnknownItem(item))
 }
@@ -1003,7 +1208,7 @@ function shouldRenderReasoningItem(
 ): boolean {
   const item = items[index]
   if (!item || !isReasoningMessageItem(item)) return false
-  if (processedContext) return true
+  if (processedContext) return false
   if (!isReasoningItemActive(item, turnStatus)) return false
   return !items.slice(index + 1).some((nextItem) => !isReasoningMessageItem(nextItem))
 }
@@ -1088,6 +1293,17 @@ export function renderMessageItem(rawItem: MessageItem, turnStatus: string, opti
       />
     )
   }
+  if (isCollabAgentToolCallItem(item)) {
+    return (
+      <CollabAgentToolCallMessage
+        item={item}
+        key={item.id}
+        onOpenFileReference={options.onOpenFileReference}
+        projectRoot={options.projectRoot}
+        turnStatus={turnStatus}
+      />
+    )
+  }
   if (isApprovalMessageItem(item)) {
     return (
       <article className={styles.assistantMessage} key={item.id}>
@@ -1124,6 +1340,9 @@ export function renderMessageItem(rawItem: MessageItem, turnStatus: string, opti
         <MessageImages images={[item.image]} projectRoot={options.projectRoot} />
       </article>
     )
+  }
+  if (isImageViewMessageItem(item)) {
+    return <ImageViewGalleryMessage items={[item]} key={item.id} projectRoot={options.projectRoot} />
   }
   if (isErrorMessageItem(item)) {
     return <ErrorMessage item={item} key={item.id} turnStatus={turnStatus} />
@@ -1188,10 +1407,12 @@ export function renderTurnItems(items: MessageItem[], turnStatus: string, option
   const rendered: ReactElement[] = []
   let operationGroup: GroupedOperationItem[] = []
   let webSearchGroup: WebSearchRenderItem[] = []
+  let imageViewGroup: ImageViewItem[] = []
 
   function flushOperationGroup(forceComplete: boolean): void {
     if (operationGroup.length === 0) return
-    const groupForceComplete = options.processedContext ? true : forceComplete
+    const hasActiveItem = operationGroup.some((item) => isOperationItemActive(item, turnStatus, false))
+    const groupForceComplete = options.processedContext ? true : forceComplete && !hasActiveItem
     const fileChangeItems = operationGroup.filter((item): item is FileChangeItem => item.type === 'fileChange')
     if (fileChangeItems.length === operationGroup.length) {
       rendered.push(
@@ -1238,7 +1459,8 @@ export function renderTurnItems(items: MessageItem[], turnStatus: string, option
 
   function flushWebSearchGroup(forceComplete: boolean): void {
     if (webSearchGroup.length === 0) return
-    const groupForceComplete = options.processedContext ? true : forceComplete
+    const hasActiveItem = webSearchGroup.some((item) => isWebSearchItemActive(item, turnStatus, false))
+    const groupForceComplete = options.processedContext ? true : forceComplete && !hasActiveItem
     rendered.push(
       <WebSearchSummaryMessage
         forceComplete={groupForceComplete}
@@ -1249,6 +1471,19 @@ export function renderTurnItems(items: MessageItem[], turnStatus: string, option
       />,
     )
     webSearchGroup = []
+  }
+
+  function flushImageViewGroup(): void {
+    if (imageViewGroup.length === 0) return
+    const gallery = (
+      <ImageViewGalleryMessage
+        items={imageViewGroup}
+        key={`image-view-group-${imageViewGroup.map((item) => item.id).join('-')}`}
+        projectRoot={options.projectRoot}
+      />
+    )
+    if (gallery) rendered.push(gallery)
+    imageViewGroup = []
   }
 
   for (let index = 0; index < renderItems.length; index += 1) {
@@ -1262,6 +1497,7 @@ export function renderTurnItems(items: MessageItem[], turnStatus: string, option
     }
     if (isWebSearchRenderItem(item)) {
       flushOperationGroup(true)
+      flushImageViewGroup()
       webSearchGroup.push(item)
       continue
     }
@@ -1270,16 +1506,25 @@ export function renderTurnItems(items: MessageItem[], turnStatus: string, option
     }
     if (isGroupedOperationItem(item)) {
       flushWebSearchGroup(true)
+      flushImageViewGroup()
       operationGroup.push(item)
+      continue
+    }
+    if (isImageViewMessageItem(item)) {
+      flushWebSearchGroup(true)
+      flushOperationGroup(true)
+      imageViewGroup.push(item)
       continue
     }
     flushWebSearchGroup(!isReasoningMessageItem(item))
     flushOperationGroup(!isReasoningMessageItem(item))
+    flushImageViewGroup()
     const renderedItem = renderMessageItem(item, turnStatus, options)
     if (renderedItem) rendered.push(renderedItem)
   }
   flushWebSearchGroup(false)
   flushOperationGroup(false)
+  flushImageViewGroup()
 
   return rendered
 }

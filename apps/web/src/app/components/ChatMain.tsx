@@ -20,6 +20,7 @@ import {
   HardDrive,
   Laptop,
   MessageSquare,
+  PanelRightClose,
   PanelRightOpen,
   PauseCircle,
   Pencil,
@@ -52,6 +53,7 @@ import type { RealtimeEvent } from "@codex-web/api";
 import {
   fileContentUrl,
   getFilePreview,
+  getThreadDetail,
   getWorkspaceStatus,
   listProjectFiles,
   type AppConfig,
@@ -80,6 +82,10 @@ import {
   type TextReference,
   type TextReferenceSourceSurface,
 } from "../textReferences";
+import {
+  mergeExternalThreadDetailIntoTabs,
+  sideConversationFromThreadDetail,
+} from "../rightSidebarExternalTabs";
 import {
   asThreadItemRecord,
   isAgentMessageLikeItem,
@@ -124,6 +130,7 @@ type RightSidebarTabInstance = {
   sideConversation?: SideConversation | null;
   threadId?: string | null;
   keepMissingSideConversation?: boolean;
+  externalThread?: boolean;
 };
 
 type FileBrowserEntry = FileBrowserListing["entries"][number];
@@ -133,6 +140,20 @@ type DraftThreadView = {
   projectName: string | null;
 };
 
+type ProjectRootThread = Pick<Thread, "workspaceKind" | "projectId" | "path">;
+type ProjectRootProject = { path?: string | null } | null;
+
+export function resolveThreadProjectRoot(input: {
+  draftThread?: Pick<DraftThreadView, "cwd"> | null;
+  selectedThread?: ProjectRootThread | null;
+  selectedProject?: ProjectRootProject;
+}): string | null {
+  if (input.draftThread) return input.draftThread.cwd ?? null;
+  const thread = input.selectedThread ?? null;
+  if (thread?.workspaceKind !== "project") return null;
+  return thread.projectId ?? thread.path ?? input.selectedProject?.path ?? null;
+}
+
 type ThreadTurn = ThreadDetail["turns"][number];
 type SideConversation = ThreadDetail["sideConversations"][number];
 type TurnItem = ThreadTurn["items"][number];
@@ -141,10 +162,13 @@ type PlanMessageItem = Extract<TurnItem, { type: "plan" }>;
 type FileChangeEntry = ReturnType<typeof readFileChangeEntries>[number];
 type AgentTone = "blue" | "orange" | "green" | "red" | "violet" | "neutral";
 type AgentRow = {
+  id: string;
   name: string;
   role: string;
   tone: AgentTone;
   status: string | null;
+  model: string | null;
+  reasoningEffort: string | null;
 };
 type ComposerActivityRow = {
   key: string;
@@ -183,8 +207,7 @@ function turnItemUsesWebSearch(item: TurnItem): boolean {
   const rawType = readThreadItemString(record?.rawType ?? record?.type);
   const title = readThreadItemString(record?.title ?? record?.query);
   return (
-    sourceKeyLooksLikeWebSearch(rawType) ||
-    sourceKeyLooksLikeWebSearch(title)
+    sourceKeyLooksLikeWebSearch(rawType) || sourceKeyLooksLikeWebSearch(title)
   );
 }
 
@@ -225,21 +248,22 @@ function hasTextSelectionInside(element: HTMLElement): boolean {
 
 function elementFromSelectionContainer(container: Node): HTMLElement | null {
   const node =
-    container.nodeType === Node.ELEMENT_NODE
-      ? container
-      : container.parentNode;
+    container.nodeType === Node.ELEMENT_NODE ? container : container.parentNode;
   return node instanceof HTMLElement ? node : null;
 }
 
 function textSelectionSource(selection: Selection): TextSelectionSource | null {
   for (let index = 0; index < selection.rangeCount; index += 1) {
     const range = selection.getRangeAt(index);
-    const element = elementFromSelectionContainer(range.commonAncestorContainer);
+    const element = elementFromSelectionContainer(
+      range.commonAncestorContainer,
+    );
     const transcript = element?.closest<HTMLElement>(
       "[data-text-reference-surface]",
     );
-    const sourceSurface = transcript?.dataset
-      .textReferenceSurface as TextReferenceSourceSurface | undefined;
+    const sourceSurface = transcript?.dataset.textReferenceSurface as
+      | TextReferenceSourceSurface
+      | undefined;
     if (sourceSurface !== "main" && sourceSurface !== "side") continue;
     return {
       sourceSurface,
@@ -275,14 +299,19 @@ function selectionToolbarStyle(rect: DOMRectReadOnly): CSSProperties {
   if (typeof window === "undefined") return {};
   const toolbarWidth = 306;
   const viewportPadding = 8;
-  const maxLeft = Math.max(viewportPadding, window.innerWidth - toolbarWidth - viewportPadding);
+  const maxLeft = Math.max(
+    viewportPadding,
+    window.innerWidth - toolbarWidth - viewportPadding,
+  );
   const left = clamp(
     rect.left + rect.width / 2 - toolbarWidth / 2,
     viewportPadding,
     maxLeft,
   );
   const top =
-    rect.top > 54 ? rect.top - 42 : Math.min(rect.bottom + 10, window.innerHeight - 52);
+    rect.top > 54
+      ? rect.top - 42
+      : Math.min(rect.bottom + 10, window.innerHeight - 52);
   return {
     left,
     top: Math.max(viewportPadding, top),
@@ -425,11 +454,16 @@ function turnCopyText(turn: ThreadTurn): string {
 }
 
 function hasTurnActionRow(turn: ThreadTurn): boolean {
-  return turn.status === "completed" && turn.items.some((item) => !isUserMessageLikeItem(item));
+  return (
+    turn.status === "completed" &&
+    turn.items.some((item) => !isUserMessageLikeItem(item))
+  );
 }
 
 function isTerminalTurnStatus(status: ThreadTurn["status"]): boolean {
-  return status === "completed" || status === "failed" || status === "interrupted";
+  return (
+    status === "completed" || status === "failed" || status === "interrupted"
+  );
 }
 
 function isOrdinaryUserMessageItem(item: TurnItem): boolean {
@@ -450,7 +484,8 @@ function forkDividerAfterTurnId(detail: ThreadDetail | null): string | null {
 
   let boundaryTurnId: string | null = null;
   for (const turn of detail.turns) {
-    const turnTimeMs = timestampMs(turn.startedAtIso) ?? timestampMs(turn.completedAtIso);
+    const turnTimeMs =
+      timestampMs(turn.startedAtIso) ?? timestampMs(turn.completedAtIso);
     if (turnTimeMs !== null && turnTimeMs < forkCreatedAtMs) {
       boundaryTurnId = turn.id;
       continue;
@@ -581,22 +616,36 @@ function rightSidebarTabIcon(type: RightSidebarTab, size = 16): ReactElement {
   }
 }
 
-function previewPathLocation(path: string): { path: string; line: number | null } {
+function previewPathLocation(path: string): {
+  path: string;
+  line: number | null;
+} {
   const trimmed = path.trim();
-  const parseLocation = (value: string): { path: string; line: number | null } => {
+  const parseLocation = (
+    value: string,
+  ): { path: string; line: number | null } => {
     const cleaned = value.replace(/\s+\((?:line|行)\s+\d+\)$/i, "");
     const match = /^(.*\.[a-z0-9]{1,12})(?::(\d+)(?::\d+)?)$/i.exec(cleaned);
-    return { path: match?.[1] ?? cleaned, line: match?.[2] ? Number(match[2]) : null };
+    return {
+      path: match?.[1] ?? cleaned,
+      line: match?.[2] ? Number(match[2]) : null,
+    };
   };
   if (trimmed.toLowerCase().startsWith("file:")) {
     try {
       const url = new URL(trimmed);
       const pathname = decodeURIComponent(url.pathname);
-      if (url.hostname) return parseLocation(`\\\\${url.hostname}${pathname.replaceAll("/", "\\")}`);
-      if (/^\/[a-z]:\//i.test(pathname)) return parseLocation(pathname.slice(1).replaceAll("/", "\\"));
+      if (url.hostname)
+        return parseLocation(
+          `\\\\${url.hostname}${pathname.replaceAll("/", "\\")}`,
+        );
+      if (/^\/[a-z]:\//i.test(pathname))
+        return parseLocation(pathname.slice(1).replaceAll("/", "\\"));
       return parseLocation(pathname.replaceAll("/", "\\"));
     } catch {
-      return parseLocation(trimmed.replace(/^file:\/\/\/?/i, "").replaceAll("/", "\\"));
+      return parseLocation(
+        trimmed.replace(/^file:\/\/\/?/i, "").replaceAll("/", "\\"),
+      );
     }
   }
   if (!/%[0-9a-f]{2}/i.test(trimmed)) return parseLocation(trimmed);
@@ -612,7 +661,10 @@ function decodePreviewPath(path: string): string {
 }
 
 function normalizePathForCompare(path: string): string {
-  return decodePreviewPath(path).replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  return decodePreviewPath(path)
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "")
+    .toLowerCase();
 }
 
 function isAbsoluteFsPath(path: string): boolean {
@@ -650,7 +702,9 @@ function filePreviewRequestForPath(
   root: string | null,
 ): { path: string; root?: string | null } {
   const decodedPath = decodePreviewPath(path);
-  return isAbsoluteFsPath(decodedPath) ? { path: decodedPath } : { path: decodedPath, root };
+  return isAbsoluteFsPath(decodedPath)
+    ? { path: decodedPath }
+    : { path: decodedPath, root };
 }
 
 function fileEntryExtension(entry: FileBrowserEntry): string {
@@ -712,7 +766,8 @@ function filePreviewBreadcrumbParts(
   const relativePath = relativePathFromTarget(root, path);
   const bodyPath = relativePath ?? location.path;
   const parts = bodyPath.replaceAll("\\", "/").split("/").filter(Boolean);
-  if (relativePath !== null && root) return [projectDisplayName(root), ...parts];
+  if (relativePath !== null && root)
+    return [projectDisplayName(root), ...parts];
   return parts.length ? parts : [bodyPath];
 }
 
@@ -742,6 +797,7 @@ function clamp(value: number, min: number, max: number): number {
 
 const RIGHT_SIDEBAR_WIDTH_STORAGE_KEY = "codex_web.rightSidebarWidth.v2";
 const FILE_TREE_WIDTH_STORAGE_KEY = "codex_web.fileTreeWidth";
+const FILE_TREE_COLLAPSED_STORAGE_KEY = "codex_web.fileTreeCollapsed";
 const RIGHT_SIDEBAR_MIN_WIDTH = 300;
 const RIGHT_SIDEBAR_DEFAULT_WIDTH = 420;
 const RIGHT_SIDEBAR_MAX_WIDTH = 1320;
@@ -762,7 +818,10 @@ function rightSidebarMaxWidth(
     (summaryOpen ? DESKTOP_RIGHT_RAIL_WIDTH : 0);
   return Math.max(
     RIGHT_SIDEBAR_MIN_WIDTH,
-    Math.min(RIGHT_SIDEBAR_MAX_WIDTH, Math.floor(containerWidth - reservedWidth)),
+    Math.min(
+      RIGHT_SIDEBAR_MAX_WIDTH,
+      Math.floor(containerWidth - reservedWidth),
+    ),
   );
 }
 
@@ -786,6 +845,27 @@ function writeStoredWidth(key: string, value: number): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(key, String(Math.round(value)));
+  } catch {
+    // localStorage can be unavailable in hardened browser contexts.
+  }
+}
+
+function readStoredBoolean(key: string, fallback = false): boolean {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredBoolean(key: string, value: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value ? "true" : "false");
   } catch {
     // localStorage can be unavailable in hardened browser contexts.
   }
@@ -864,12 +944,13 @@ function ProjectFilesBrowser({
   const browserTestId = compact ? "right-file-browser" : "file-browser";
   const fileListTestId = compact ? "right-file-list" : "file-list";
   const normalizedFilter = filterText.trim().toLowerCase();
-  const visibleEntries = listing?.entries.filter((entry) => {
-    if (!normalizedFilter) return true;
-    return [entry.name, entry.relativePath, entry.extension ?? ""].some((value) =>
-      value.toLowerCase().includes(normalizedFilter),
-    );
-  }) ?? [];
+  const visibleEntries =
+    listing?.entries.filter((entry) => {
+      if (!normalizedFilter) return true;
+      return [entry.name, entry.relativePath, entry.extension ?? ""].some(
+        (value) => value.toLowerCase().includes(normalizedFilter),
+      );
+    }) ?? [];
 
   useEffect(() => {
     setRelativePath("");
@@ -1150,7 +1231,8 @@ function FilePreviewPane({
         </div>
       ) : null}
       {!loading && !error && preview?.kind === "text" ? (
-        preview.filename.toLowerCase().endsWith(".md") || preview.mimeType === "text/markdown" ? (
+        preview.filename.toLowerCase().endsWith(".md") ||
+        preview.mimeType === "text/markdown" ? (
           <div className={styles.filePreviewMarkdownPane}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {preview.content ?? ""}
@@ -1160,7 +1242,10 @@ function FilePreviewPane({
           <FilePreviewText content={preview.content ?? ""} />
         )
       ) : null}
-      {!loading && !error && preview?.kind === "binary" && preview.mimeType === "application/pdf" ? (
+      {!loading &&
+      !error &&
+      preview?.kind === "binary" &&
+      preview.mimeType === "application/pdf" ? (
         <iframe
           className={styles.filePreviewPdfFrame}
           src={fileContentUrl(previewRequest)}
@@ -1424,7 +1509,9 @@ function SideChatPane({
           ref={transcriptRef}
         >
           {sideConversation ? (
-            renderedRows.length > 0 ? renderedRows : null
+            renderedRows.length > 0 ? (
+              renderedRows
+            ) : null
           ) : (
             <div className={styles.sideChatSyncNotice}>
               <strong>{t("rightSidebar.chat.desktopSyncPending")}</strong>
@@ -1489,6 +1576,8 @@ function DesktopRightSidebar({
   onClearSideTextReferences,
   onSelectFile,
   fileTreeWidth,
+  fileTreeCollapsed,
+  onToggleFileTreeCollapsed,
   onFileTreeResizeStart,
 }: {
   tabs: RightSidebarTabInstance[];
@@ -1518,6 +1607,8 @@ function DesktopRightSidebar({
   onClearSideTextReferences: (sideConversationId: string) => void;
   onSelectFile: (path: string) => void;
   fileTreeWidth: number;
+  fileTreeCollapsed: boolean;
+  onToggleFileTreeCollapsed: () => void;
   onFileTreeResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }): ReactElement {
   const { t } = useI18n();
@@ -1532,12 +1623,14 @@ function DesktopRightSidebar({
       : selectedFilePath;
   const activeSideConversation =
     activeTab?.type === "chat" && activeTab.sideConversationId
-      ? (threadDetail?.sideConversations.find(
-          (conversation) => conversation.id === activeTab.sideConversationId,
-        ) ??
-        (activeTab.threadId === selectedThread?.id
-          ? (activeTab.sideConversation ?? null)
-          : null))
+      ? activeTab.externalThread
+        ? (activeTab.sideConversation ?? null)
+        : (threadDetail?.sideConversations.find(
+            (conversation) => conversation.id === activeTab.sideConversationId,
+          ) ??
+          (activeTab.threadId === selectedThread?.id
+            ? (activeTab.sideConversation ?? null)
+            : null))
       : null;
 
   return (
@@ -1610,7 +1703,9 @@ function DesktopRightSidebar({
           onSendSideChat={onSendSideChat}
           textReferences={
             activeSideConversation?.id
-              ? (sideTextReferencesByConversationId[activeSideConversation.id] ?? [])
+              ? (sideTextReferencesByConversationId[
+                  activeSideConversation.id
+                ] ?? [])
               : []
           }
           onClearTextReferences={() => {
@@ -1619,27 +1714,64 @@ function DesktopRightSidebar({
           }}
           focusRequestKey={
             activeSideConversation?.id
-              ? (sideComposerFocusRequestByConversationId[activeSideConversation.id] ?? 0)
+              ? (sideComposerFocusRequestByConversationId[
+                  activeSideConversation.id
+                ] ?? 0)
               : 0
           }
         />
       ) : null}
       {!showLauncher && activeTab?.type === "files" ? (
-        <div className={styles.fileSideLayout} style={fileLayoutStyle}>
+        <div
+          className={[
+            styles.fileSideLayout,
+            fileTreeCollapsed ? styles.fileSideLayoutTreeCollapsed : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          style={fileLayoutStyle}
+        >
           <FilePreviewPane root={projectRoot} path={activeFilePath} />
-          <div
-            className={styles.fileTreeResizer}
-            role="separator"
-            aria-label="调整文件树宽度"
-            aria-orientation="vertical"
-            onPointerDown={onFileTreeResizeStart}
-          />
-          <ProjectFilesBrowser
-            compact
-            root={projectRoot}
-            targetPath={activeFilePath}
-            onSelectFile={onSelectFile}
-          />
+          {fileTreeCollapsed ? (
+            <div className={styles.fileTreeCollapsedRail}>
+              <button
+                className={styles.fileTreeToggleButton}
+                type="button"
+                aria-label="展开文件树"
+                title="展开文件树"
+                onClick={onToggleFileTreeCollapsed}
+              >
+                <PanelRightOpen size={17} />
+              </button>
+            </div>
+          ) : (
+            <>
+              <div
+                className={styles.fileTreeResizer}
+                role="separator"
+                aria-label="调整文件树宽度"
+                aria-orientation="vertical"
+                onPointerDown={onFileTreeResizeStart}
+              />
+              <div className={styles.fileTreePane}>
+                <button
+                  className={styles.fileTreeToggleButton}
+                  type="button"
+                  aria-label="折叠文件树"
+                  title="折叠文件树"
+                  onClick={onToggleFileTreeCollapsed}
+                >
+                  <PanelRightClose size={17} />
+                </button>
+                <ProjectFilesBrowser
+                  compact
+                  root={projectRoot}
+                  targetPath={activeFilePath}
+                  onSelectFile={onSelectFile}
+                />
+              </div>
+            </>
+          )}
         </div>
       ) : null}
       {!showLauncher &&
@@ -1827,14 +1959,14 @@ function isDoneStatus(status: string | null | undefined): boolean {
   const normalized = compactStatus(status);
   return Boolean(
     normalized &&
-      [
-        "complete",
-        "completed",
-        "done",
-        "finished",
-        "resolved",
-        "success",
-      ].includes(normalized),
+    [
+      "complete",
+      "completed",
+      "done",
+      "finished",
+      "resolved",
+      "success",
+    ].includes(normalized),
   );
 }
 
@@ -1874,11 +2006,48 @@ const agentTones: AgentTone[] = [
 
 function subAgentRows(threadDetail: ThreadDetail | null): AgentRow[] {
   return (threadDetail?.subAgents ?? []).map((agent, index) => ({
+    id: agent.id,
     name: agent.name,
-    role: agent.role ?? agent.status ?? "子智能体",
+    role: agentStatusLabel(agent.status) || agent.role || "子智能体",
     status: agent.status,
+    model: agent.model ?? null,
+    reasoningEffort: agent.reasoningEffort ?? null,
     tone: agentTones[index % agentTones.length] ?? "neutral",
   }));
+}
+
+function agentStatusLabel(status: string | null | undefined): string {
+  const normalized = compactStatus(status);
+  if (!normalized) return "";
+  if (["running", "active", "inprogress", "pendinginit"].includes(normalized))
+    return "运行中";
+  if (["completed", "complete", "done"].includes(normalized)) return "已完成";
+  if (["shutdown", "closed"].includes(normalized)) return "已关闭";
+  if (["errored", "error", "failed"].includes(normalized)) return "错误";
+  if (["interrupted", "cancelled", "canceled"].includes(normalized))
+    return "已中断";
+  return status ?? "";
+}
+
+function AgentPixelIcon({ agent }: { agent: AgentRow }): ReactElement {
+  const seed = [...agent.id].reduce(
+    (total, char) => (total + char.charCodeAt(0)) % 97,
+    0,
+  );
+  return (
+    <span
+      className={styles.agentPixelIcon}
+      data-tone={agent.tone}
+      aria-hidden="true"
+    >
+      {Array.from({ length: 9 }, (_, index) => (
+        <span
+          key={index}
+          data-on={(seed + index * 7) % 5 < 3 ? "true" : "false"}
+        />
+      ))}
+    </span>
+  );
 }
 
 function latestActivityTurn(
@@ -1949,30 +2118,9 @@ function summarizeFileActivity(turn: ThreadTurn): ComposerActivityRow | null {
 }
 
 function summarizeCommandActivity(
-  turn: ThreadTurn,
+  _turn: ThreadTurn,
 ): ComposerActivityRow | null {
-  const commands = turn.items
-    .map(readCommandOutput)
-    .filter((item): item is NonNullable<ReturnType<typeof readCommandOutput>> => Boolean(item));
-  if (commands.length === 0) return null;
-  const active =
-    isActiveStatus(turn.status) &&
-    commands.some((item) => isActiveStatus(item.status) || item.exitCode === null);
-  const durationMs = commands.reduce(
-    (total, item) => total + (item.durationMs ?? 0),
-    0,
-  );
-  return {
-    key: "commands",
-    icon: <Command size={14} />,
-    label: `${active ? "正在运行" : "已运行"} ${commands.length} 条命令`,
-    meta:
-      active && durationMs > 0
-        ? `已持续 ${formatDurationMs(durationMs)}`
-        : durationMs > 0
-          ? formatDurationMs(durationMs)
-          : "",
-  };
+  return null;
 }
 
 function latestPlanProgress(threadDetail: ThreadDetail | null): ProgressItem[] {
@@ -1983,10 +2131,15 @@ function latestPlanProgress(threadDetail: ThreadDetail | null): ProgressItem[] {
       .reverse()
       .find(
         (item): item is PlanMessageItem =>
-          item.type === "plan" && Array.isArray(asThreadItemRecord(item)?.steps) && (asThreadItemRecord(item)?.steps as unknown[]).length > 0,
+          item.type === "plan" &&
+          Array.isArray(asThreadItemRecord(item)?.steps) &&
+          (asThreadItemRecord(item)?.steps as unknown[]).length > 0,
       ) ?? null;
   const steps = Array.isArray(asThreadItemRecord(planItem)?.steps)
-    ? (asThreadItemRecord(planItem)?.steps as Array<{ text?: unknown; status?: unknown }>)
+    ? (asThreadItemRecord(planItem)?.steps as Array<{
+        text?: unknown;
+        status?: unknown;
+      }>)
     : [];
   return (
     steps
@@ -2276,6 +2429,7 @@ function DesktopActivityPanel({
   projectRoot,
   threadListLoading,
   onOpenSideChat,
+  onOpenSubAgent,
 }: {
   config: AppConfig | null;
   ipc: OfficialIpcStatus | null;
@@ -2285,6 +2439,7 @@ function DesktopActivityPanel({
   projectRoot: string | null;
   threadListLoading: boolean;
   onOpenSideChat: (sideConversation: SideConversation) => void;
+  onOpenSubAgent: (agent: AgentRow) => void;
 }): ReactElement {
   const [workspaceStatus, setWorkspaceStatus] =
     useState<WorkspaceStatus | null>(null);
@@ -2303,7 +2458,9 @@ function DesktopActivityPanel({
             done: ipc?.connected === true,
           },
           {
-            label: appServer?.initialized ? "app-server ready" : "等待 app-server",
+            label: appServer?.initialized
+              ? "app-server ready"
+              : "等待 app-server",
             done: appServer?.initialized === true,
           },
         ]
@@ -2500,13 +2657,19 @@ function DesktopActivityPanel({
             <h2>子智能体</h2>
             <div className={styles.agentList}>
               {subAgents.map((agent) => (
-                <div className={styles.agentRow} key={agent.name}>
-                  <span className={styles.agentAvatar} data-tone={agent.tone}>
-                    {agent.name.slice(0, 1)}
-                  </span>
+                <button
+                  className={styles.agentRow}
+                  type="button"
+                  key={agent.id}
+                  title={
+                    agent.model ? `使用 ${agent.model}` : "查看子智能体会话"
+                  }
+                  onClick={() => onOpenSubAgent(agent)}
+                >
+                  <AgentPixelIcon agent={agent} />
                   <strong>{agent.name}</strong>
                   <span>{agent.role}</span>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -2627,9 +2790,7 @@ export function ChatMain({
     attachmentIds?: string[],
     options?: SendOptions,
   ) => Promise<void>;
-  onCreateSideChat: (
-    cwd?: string | null,
-  ) => Promise<SideConversation | null>;
+  onCreateSideChat: (cwd?: string | null) => Promise<SideConversation | null>;
   onCloseSideChat: (sideConversationId: string) => Promise<void>;
   onAddMainTextReference: (reference: TextReference) => void;
   onFocusMainComposer: () => void;
@@ -2670,12 +2831,11 @@ export function ChatMain({
         (project) => project.id === selectedThread.projectId,
       ) ?? null)
     : null;
-  const projectRoot =
-    draftThread?.cwd ??
-    selectedThread?.projectId ??
-    selectedThread?.path ??
-    selectedProject?.path ??
-    null;
+  const projectRoot = resolveThreadProjectRoot({
+    draftThread,
+    selectedThread,
+    selectedProject,
+  });
   const canSteerQueuedMessages = turns.some((turn) =>
     isActiveStatus(turn.status),
   );
@@ -2687,11 +2847,17 @@ export function ChatMain({
     for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
       const turn = turns[turnIndex];
       if (!turn || !isTerminalTurnStatus(turn.status)) continue;
-      for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+      for (
+        let itemIndex = turn.items.length - 1;
+        itemIndex >= 0;
+        itemIndex -= 1
+      ) {
         const item = turn.items[itemIndex];
         const itemRecord = asThreadItemRecord(item);
         if (!item || !isUserMessageLikeItem(item)) continue;
-        return readThreadItemString(itemRecord?.intent) === "guidance" ? null : item.id;
+        return readThreadItemString(itemRecord?.intent) === "guidance"
+          ? null
+          : item.id;
       }
     }
     return null;
@@ -2719,7 +2885,9 @@ export function ChatMain({
       }
     >();
     for (const turn of turns) {
-      const timeLabel = formatClockTime(turn.startedAtIso ?? turn.completedAtIso);
+      const timeLabel = formatClockTime(
+        turn.startedAtIso ?? turn.completedAtIso,
+      );
       for (const item of turn.items) {
         if (!isOrdinaryUserMessageItem(item)) continue;
         const itemText = readMessageItemText(item);
@@ -2799,6 +2967,9 @@ export function ChatMain({
   const [fileTreeWidth, setFileTreeWidth] = useState(() =>
     readStoredWidth(FILE_TREE_WIDTH_STORAGE_KEY, 270, 220, 460),
   );
+  const [fileTreeCollapsed, setFileTreeCollapsed] = useState(() =>
+    readStoredBoolean(FILE_TREE_COLLAPSED_STORAGE_KEY, false),
+  );
   const [fileSidebarTarget, setFileSidebarTarget] = useState<string | null>(
     null,
   );
@@ -2813,14 +2984,25 @@ export function ChatMain({
   const [rightSidebarCreatePendingType, setRightSidebarCreatePendingType] =
     useState<RightSidebarTab | null>(null);
   const [rightSidebarCreateError, setRightSidebarCreateError] = useState("");
-  const [sideTextReferencesByConversationId, setSideTextReferencesByConversationId] =
-    useState<Record<string, TextReference[]>>({});
+  const [
+    sideTextReferencesByConversationId,
+    setSideTextReferencesByConversationId,
+  ] = useState<Record<string, TextReference[]>>({});
   const [
     sideComposerFocusRequestByConversationId,
     setSideComposerFocusRequestByConversationId,
   ] = useState<Record<string, number>>({});
   const [textSelectionToolbar, setTextSelectionToolbar] =
     useState<TextSelectionToolbarState | null>(null);
+  const externalThreadTabIdsKey = useMemo(() => {
+    const ids = new Set<string>();
+    for (const tab of rightSidebarTabs) {
+      if (tab.type === "chat" && tab.externalThread && tab.sideConversationId) {
+        ids.add(tab.sideConversationId);
+      }
+    }
+    return [...ids].sort().join("\n");
+  }, [rightSidebarTabs]);
   const [closedSideConversationIds, setClosedSideConversationIds] = useState(
     () => new Set<string>(),
   );
@@ -2844,7 +3026,8 @@ export function ChatMain({
     if (!rightSidebarOpen) return;
     const clampRightSidebarWidth = (): void => {
       const containerWidth =
-        chatLayoutRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+        chatLayoutRef.current?.getBoundingClientRect().width ??
+        window.innerWidth;
       const maxWidth = rightSidebarMaxWidth(containerWidth, pinnedSummaryOpen);
       setRightSidebarWidth((current) =>
         clamp(current, RIGHT_SIDEBAR_MIN_WIDTH, maxWidth),
@@ -2860,6 +3043,43 @@ export function ChatMain({
   useEffect(() => {
     writeStoredWidth(FILE_TREE_WIDTH_STORAGE_KEY, fileTreeWidth);
   }, [fileTreeWidth]);
+
+  useEffect(() => {
+    if (!rightSidebarOpen || !externalThreadTabIdsKey) return;
+    const threadIds = externalThreadTabIdsKey.split("\n").filter(Boolean);
+    let disposed = false;
+
+    const refreshExternalThreads = (): void => {
+      void Promise.all(
+        threadIds.map((threadId) =>
+          getThreadDetail(threadId)
+            .then((detail) => detail)
+            .catch(() => null),
+        ),
+      ).then((details) => {
+        if (disposed) return;
+        setRightSidebarTabs((current) => {
+          let next = current;
+          for (const detail of details) {
+            if (!detail) continue;
+            next = mergeExternalThreadDetailIntoTabs(next, detail);
+          }
+          return next;
+        });
+      });
+    };
+
+    refreshExternalThreads();
+    const interval = window.setInterval(refreshExternalThreads, 1_500);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [externalThreadTabIdsKey, rightSidebarOpen]);
+
+  useEffect(() => {
+    writeStoredBoolean(FILE_TREE_COLLAPSED_STORAGE_KEY, fileTreeCollapsed);
+  }, [fileTreeCollapsed]);
 
   useEffect(() => {
     setClosedSideConversationIds(new Set());
@@ -2951,6 +3171,7 @@ export function ChatMain({
         sideConversation?: SideConversation | null;
         threadId?: string | null;
         keepMissingSideConversation?: boolean;
+        externalThread?: boolean;
         title?: string | null;
       },
     ) => {
@@ -2972,7 +3193,11 @@ export function ChatMain({
           type === "chat" ? (options?.sideConversation ?? null) : null,
         threadId: type === "chat" ? (options?.threadId ?? null) : null,
         keepMissingSideConversation:
-          type === "chat" ? (options?.keepMissingSideConversation ?? false) : false,
+          type === "chat"
+            ? (options?.keepMissingSideConversation ?? false)
+            : false,
+        externalThread:
+          type === "chat" ? (options?.externalThread ?? false) : false,
       };
       setRightSidebarTabs((current) => [...current, nextTab]);
       setActiveRightSidebarTabId(id);
@@ -3044,7 +3269,50 @@ export function ChatMain({
         title: sideConversation.title,
       });
     },
-    [createRightSidebarTab, onOpenRightSidebar, rightSidebarTabs, selectedThreadId],
+    [
+      createRightSidebarTab,
+      onOpenRightSidebar,
+      rightSidebarTabs,
+      selectedThreadId,
+    ],
+  );
+
+  const handleOpenSubAgentFromSummary = useCallback(
+    (agent: AgentRow) => {
+      const existingChatTab = rightSidebarTabs.find(
+        (tab) => tab.type === "chat" && tab.sideConversationId === agent.id,
+      );
+      if (existingChatTab) {
+        setActiveRightSidebarTabId(existingChatTab.id);
+        setRightSidebarLauncherOpen(false);
+        onOpenRightSidebar();
+        return;
+      }
+      void getThreadDetail(agent.id)
+        .then((detail) => {
+          if (!detail) throw new Error("子智能体会话不存在");
+          const sideConversation = sideConversationFromThreadDetail(
+            detail,
+            agent.name,
+          );
+          createRightSidebarTab("chat", {
+            sideConversationId: sideConversation.id,
+            sideConversation,
+            threadId: detail.thread.id,
+            keepMissingSideConversation: true,
+            externalThread: true,
+            title: sideConversation.title,
+          });
+        })
+        .catch((unknownError) => {
+          setRightSidebarCreateError(
+            unknownError instanceof Error
+              ? unknownError.message
+              : "打开子智能体会话失败",
+          );
+        });
+    },
+    [createRightSidebarTab, onOpenRightSidebar, rightSidebarTabs],
   );
 
   const handleCreateRightSidebarTab = useCallback(
@@ -3134,8 +3402,8 @@ export function ChatMain({
     ): tab is RightSidebarTabInstance =>
       Boolean(
         tab?.type === "chat" &&
-          tab.sideConversationId &&
-          (!tab.threadId || tab.threadId === selectedThreadId),
+        tab.sideConversationId &&
+        (!tab.threadId || tab.threadId === selectedThreadId),
       );
     const activeTab = rightSidebarTabs.find(
       (tab) => tab.id === activeRightSidebarTabId,
@@ -3205,6 +3473,7 @@ export function ChatMain({
     setRightSidebarTabs((current) => {
       const next = current.flatMap((tab) => {
         if (tab.type !== "chat" || !tab.sideConversationId) return tab;
+        if (tab.externalThread) return tab;
         if (tab.threadId && tab.threadId !== selectedThreadId) return [];
         const sideConversation = sideConversationById.get(
           tab.sideConversationId,
@@ -3248,6 +3517,20 @@ export function ChatMain({
           delete next[sideConversationId];
           return next;
         });
+        if (closingTab.externalThread) {
+          setRightSidebarTabs((current) => {
+            const closingIndex = current.findIndex((tab) => tab.id === id);
+            const nextTabs = current.filter((tab) => tab.id !== id);
+            if (activeRightSidebarTabId === id) {
+              const fallbackTab =
+                nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? null;
+              setActiveRightSidebarTabId(fallbackTab?.id ?? null);
+              setRightSidebarLauncherOpen(!fallbackTab);
+            }
+            return nextTabs;
+          });
+          return;
+        }
         setClosedSideConversationIds((current) => {
           const next = new Set(current);
           next.add(sideConversationId);
@@ -3382,6 +3665,9 @@ export function ChatMain({
     },
     [fileTreeWidth],
   );
+  const handleToggleFileTreeCollapsed = useCallback(() => {
+    setFileTreeCollapsed((current) => !current);
+  }, []);
 
   useEffect(() => {
     setFileSidebarTarget(null);
@@ -3553,8 +3839,8 @@ export function ChatMain({
     const dividerAfterTurnId = forkDividerAfterTurnId(threadDetail);
     const shouldShowDerivedFromRow = Boolean(
       !isDraftThread &&
-        derivedFromThreadId &&
-        derivedFromThreadId !== selectedThreadId,
+      derivedFromThreadId &&
+      derivedFromThreadId !== selectedThreadId,
     );
     let renderedDerivedFromRow = false;
 
@@ -3857,6 +4143,7 @@ export function ChatMain({
               projectRoot={projectRoot}
               threadListLoading={threadListLoading}
               onOpenSideChat={handleOpenSideChatFromSummary}
+              onOpenSubAgent={handleOpenSubAgentFromSummary}
             />
           ) : null}
           {rightSidebarOpen ? (
@@ -3896,6 +4183,8 @@ export function ChatMain({
               onClearSideTextReferences={clearSideTextReferences}
               onSelectFile={handleSelectRightSidebarFile}
               fileTreeWidth={fileTreeWidth}
+              fileTreeCollapsed={fileTreeCollapsed}
+              onToggleFileTreeCollapsed={handleToggleFileTreeCollapsed}
               onFileTreeResizeStart={handleFileTreeResizeStart}
             />
           ) : null}
